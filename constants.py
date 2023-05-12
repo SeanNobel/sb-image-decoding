@@ -1,3 +1,7 @@
 # fmt: off
-TMP_FACE_PATH = "/home/sensho/brain2face/assets/tmp_face.jpg"
-DLIB_PREDICTOR_PATH = "/home/sensho/brain2face/encoder4editing/shape_predictor_68_face_landmarks.dat"
+ROOT = "/home/sensho/brain2face"
+TMP_FACE_PATH = ROOT + "/assets/tmp_face.jpg"
+DLIB_PREDICTOR_PATH = ROOT + "/encoder4editing/shape_predictor_68_face_landmarks.dat"
+EXTRACTED_VIDEO_ROOT = ROOT + "/data/video"
+
+MONTAGE_INFO_PATH = ROOT + "/f2b_contrastive/utils/gTecUtils/settings/montage_EEGonly_32ch.xml"

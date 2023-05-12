@@ -2,12 +2,19 @@ import os, sys
 import numpy as np
 import glob
 from termcolor import cprint
-from multiprocessing import Pool
+import multiprocessing
+
+ctx = multiprocessing.get_context("spawn")
+
 from tqdm import tqdm
 import cv2
 import hydra
 from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, open_dict
+
+import torch
+
+torch.multiprocessing.set_start_method("spawn", force=True)
 
 from f2b_contrastive.data.eeg_preproc import eeg_preproc
 from f2b_contrastive.data.face_preproc import face_preproc
@@ -24,14 +31,17 @@ def run_preprocess(tmp) -> None:
         cprint(f"Processing subject number {i}", color="cyan")
         os.makedirs(data_dir, exist_ok=True)
 
-        Y, Y_times, first_frame = face_preproc(args, video_path, video_times_path)
-
-        sys.exit()
+        Y, Y_times = face_preproc(args, video_path, video_times_path)
 
         X, y_drops_prev, y_drops_after = eeg_preproc(args, eeg_path, Y_times)
         cprint(f"Subject {i} brain: {X.shape}", color="cyan")
 
-        Y = Y[y_drops_prev:-y_drops_after]
+        if y_drops_after == 0:
+            cprint("No drops after", color="yellow")
+            Y = Y[y_drops_prev:]
+        else:
+            Y = Y[y_drops_prev:-y_drops_after]
+
         cprint(f"Subject {i} face: {Y.shape}", color="cyan")
 
         assert len(X) == len(Y)
@@ -39,7 +49,7 @@ def run_preprocess(tmp) -> None:
         np.save(data_dir + "face.npy", Y)
         np.save(data_dir + "brain.npy", X)
         export_gif(data_dir + "example.gif", Y)
-        cv2.imwrite(data_dir + "first_frame.png", first_frame)
+        # cv2.imwrite(data_dir + "first_frame.png", first_frame)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -55,7 +65,6 @@ def main(args: DictConfig) -> None:
         data_root_dir = os.path.split(os.path.split(video_path)[0])[0]
 
         video_times_path = data_root_dir + "/result/camera5_timestamps.csv"
-        print(video_times_path)
 
         if os.path.exists(video_times_path):
             video_times_paths.append(video_times_path)
@@ -85,19 +94,24 @@ def main(args: DictConfig) -> None:
     # -------------------------
     #    Running preprocess
     # -------------------------
-    subj_list = [
-        (args, i, *paths)
-        for i, paths in enumerate(zip(video_paths, video_times_paths, eeg_paths))
-    ]
+    if args.subject_multiprocess:
+        subj_list = [
+            (args, i, *paths)
+            for i, paths in enumerate(zip(video_paths, video_times_paths, eeg_paths))
+        ]
 
-    with Pool(args.multiprocess) as p:
-        res = list(
-            tqdm(
-                p.imap(run_preprocess, subj_list),
-                total=len(subj_list),
-                bar_format="{desc:<5.5}{percentage:3.0f}%|{bar:10}{r_bar}",
-            )
-        )
+        # with ctx.Pool(4) as p:
+        with torch.multiprocessing.Pool(4) as p:
+            res = p.map(run_preprocess, subj_list)
+
+    else:
+        # video_paths = video_paths[args.start_subj : args.end_subj]
+        # video_times_paths = video_times_paths[args.start_subj : args.end_subj]
+        # eeg_paths = eeg_paths[args.start_subj : args.end_subj]
+
+        for i, paths in enumerate(zip(video_paths, video_times_paths, eeg_paths)):
+            if args.start_subj <= i and i < args.end_subj:
+                run_preprocess((args, i, *paths))
 
 
 if __name__ == "__main__":
