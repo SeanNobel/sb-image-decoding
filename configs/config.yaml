@@ -1,12 +1,15 @@
 # ==== Dataset ==== #
 dataset: ArayaDriving
-data_root: /home/sensho/brain2face/assets/example_data/ # /home/neurotech_nas01/driving-game/
+data_root: /mnt/neurotech_nas/driving-game/ # /home/sensho/brain2face/assets/example_data/
 
 # ==== Preprocess ==== #
 # Common
 preproc_name: test_subj_names
 seq_len: 3 # segment length in seconds
-multiprocess: 16
+subject_multiprocess: False
+start_subj: 0
+end_subj: 8
+debug: False
 
 face_extractor:
   mode: mesh
@@ -32,11 +35,13 @@ shift_brain: False
 shift_len: 150 # ms
 
 
-# ==== Pre-Training ==== #
-pretrain_name: test
+# ==== Training ==== #
+train_name: test
+
+split: shallow # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
-# subject_each: each subject has one or two test sessions
-split: subject_each # shallow / deep / subject_random / subject_each
+# subject_each: each subject has one or two test sessions (currently not working)
+
 train_ratio: 0.8
 chance: False
 # 🔥 FIXME: with too large a batchsize there isn't enough 
@@ -50,10 +55,14 @@ epochs: 500
 reduction: mean
 init_temperature: 5.0
 
+cuda_id: 2
+
+use_wandb: False
+
 
 # ==== Architecture ==== #
 # Common
-F: 128 # 1024
+F: 512 # 1024
 
 # Brain
 D1: 270

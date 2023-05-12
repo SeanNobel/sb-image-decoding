@@ -1,22 +1,37 @@
 # brain2face
 
-## StyleGAN
+## encoder4editing
 
-[CelebA Dataset](https://drive.google.com/drive/folders/11Vz0fqHS2rXDb5pprgTjpD7S2BAJhi1P)
+- Submodule -> https://github.com/SeanNobel/encoder4editing
 
 ```bash
-pip install -r annotated_deep_learning_paper_implementations/requirements.txt
-pip install -e annotated_deep_learning_paper_implementations/
-
-cd annotated_deep_learning_paper_implementations/data/stylegan2/
-gdown https://drive.google.com/uc?id=1O89DVCoWsMhrIF3G8-wMOJ0h7LukmMdP # 256 x 256
-unzip data256x256.zip
-
-cd ../../..
-python annotated_deep_learning_paper_implementations/labml_nn/gan/stylegan/experiment.py
+cd encoder4editing/weights # weights folder was created
+gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT # FFHQ Inversion model
 ```
 
-```mermaid
-flowchart TD
+## CLIP
 
+- Submodule -> https://github.com/SeanNobel/speech-decoding/tree/brennan-fixes
+
+```bash
+pip install -r speech-decoding/requirements.txt
+```
+
+## Dataset
+
+- Submodule -> https://github.com/arayabrain/f2b-contrastive
+
+## Install
+
+```bash
+pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+CUDA_VISIBLE_DEVICES=0 nohup python preproc.py start_subj=0 end_subj=8 > out1.log &
+CUDA_VISIBLE_DEVICES=1 nohup python preproc.py start_subj=8 end_subj=16 > out2.log &
+CUDA_VISIBLE_DEVICES=2 nohup python preproc.py start_subj=16 end_subj=24 > out3.log &
+CUDA_VISIBLE_DEVICES=3 nohup python preproc.py start_subj=24 end_subj=32 > out4.log &
 ```
