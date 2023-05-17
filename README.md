@@ -27,7 +27,7 @@ pip install -r speech-decoding/requirements.txt
 pip install -r requirements.txt
 ```
 
-## Run
+## Run preprocess
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 nohup python preproc.py start_subj=0 end_subj=8 > out1.log &

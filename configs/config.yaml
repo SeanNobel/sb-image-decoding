@@ -36,9 +36,9 @@ shift_len: 150 # ms
 
 
 # ==== Training ==== #
-train_name: test
+train_name: deep
 
-split: shallow # shallow / deep / subject_random / subject_each
+split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
 # subject_each: each subject has one or two test sessions (currently not working)
 
@@ -55,7 +55,7 @@ epochs: 500
 reduction: mean
 init_temperature: 5.0
 
-cuda_id: 2
+cuda_id: 0
 
 use_wandb: False
 

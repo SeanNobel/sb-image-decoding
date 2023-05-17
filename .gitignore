@@ -1,7 +1,8 @@
 assets/*
-!assets/.gitkeep
+!assets/reports.md
 
-data/
+data/*
+!data/.gitkeep
 
 outputs/
 
@@ -9,6 +10,9 @@ wandb/
 
 runs/*
 !runs/.gitkeep
+
+notebooks/*
+!notebooks/.gitkeep
 
 
 # Byte-compiled / optimized / DLL files

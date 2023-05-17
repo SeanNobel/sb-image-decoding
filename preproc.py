@@ -16,9 +16,9 @@ import torch
 
 torch.multiprocessing.set_start_method("spawn", force=True)
 
-from f2b_contrastive.data.eeg_preproc import eeg_preproc
-from f2b_contrastive.data.face_preproc import face_preproc
-from f2b_contrastive.utils.preproc_utils import export_gif
+from brain2face.preproc.eeg_preproc import eeg_preproc
+from brain2face.preproc.face_preproc import face_preproc
+from brain2face.utils.preproc_utils import export_gif
 
 
 def run_preprocess(tmp) -> None:
@@ -87,6 +87,9 @@ def main(args: DictConfig) -> None:
         f"{len(video_paths)} subjects (counting different sessions as different subjects)",
         color="cyan",
     )
+    for path in video_paths:
+        cprint(path, color="cyan")
+    sys.exit()
     assert len(video_paths) == len(eeg_paths) and len(video_paths) == len(
         video_times_paths
     )

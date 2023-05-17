@@ -9,14 +9,11 @@ import wandb
 import hydra
 from omegaconf import DictConfig
 
-from data.datasets import ArayaDrivingStyleGANDataset
-from f2b_contrastive.utils.layout import ch_locations_2d
+from brain2face.datasets import ArayaDrivingStyleGANDataset
+from brain2face.utils.layout import ch_locations_2d
 
-from speech_decoding.speech_decoding.models import BrainEncoder, Classifier
-from speech_decoding.speech_decoding.utils.loss import CLIPLoss
-
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+from brain2face.models import BrainEncoder, Classifier
+from brain2face.utils.loss import CLIPLoss
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -64,13 +61,16 @@ def train(args: DictConfig):
         test_set = ArayaDrivingStyleGANDataset(args, train=False)
 
         num_subjects = train_set.num_subjects
+        test_size = test_set.X.shape[0]
+
+    cprint(f"Test size: {test_size}", "cyan")
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
     test_loader = torch.utils.data.DataLoader(
-        dataset=test_set, batch_size=args.batch_size, shuffle=False, **loader_args
+        dataset=test_set, batch_size=test_size, shuffle=True, **loader_args
     )
 
     # ---------------------
@@ -131,7 +131,7 @@ def train(args: DictConfig):
             loss = loss_func(Y, Z)
 
             with torch.no_grad():
-                train_top1_acc, train_top10_acc = classifier(Z, Y)
+                train_top1_acc, train_top10_acc = classifier(Z, Y, test=True)
 
             train_losses.append(loss.item())
             train_top10_accs.append(train_top10_acc)
