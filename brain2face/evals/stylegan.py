@@ -9,7 +9,7 @@ import wandb
 import hydra
 from omegaconf import DictConfig
 
-from brain2face.datasets import ArayaDrivingStyleGANDataset
+from brain2face.datasets.stylegan import ArayaDrivingStyleGANDataset
 from brain2face.utils.layout import ch_locations_2d
 from brain2face.models import BrainEncoder, Classifier
 from brain2face.utils.loss import CLIPLoss

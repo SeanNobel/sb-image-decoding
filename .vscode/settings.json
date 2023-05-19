@@ -5,10 +5,10 @@
     "python.linting.flake8Enabled": false,
     "python.linting.lintOnSave": false,
     // formatter
-    // "python.formatting.provider": "none",
-    // "python.formatting.blackArgs": [
-    //     "--line-length=90",
-    // ],
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length=90",
+    ],
     "[python]": {
         "editor.formatOnSave": true,
         "editor.formatOnPaste": false,

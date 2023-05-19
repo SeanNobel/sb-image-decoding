@@ -13,8 +13,8 @@ from termcolor import cprint
 from typing import Optional, Tuple, List
 from pathlib import Path
 
-from brain2face.preproc.extractor import FaceExtractor
-from constants import DLIB_PREDICTOR_PATH, EXTRACTED_VIDEO_ROOT
+from brain2face.utils.extractor import FaceExtractor
+from brain2face.constants import DLIB_PREDICTOR_PATH, EXTRACTED_VIDEO_ROOT
 
 from encoder4editing.models.psp import pSp
 from encoder4editing.utils.alignment import align_face

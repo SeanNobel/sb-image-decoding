@@ -2,7 +2,7 @@ import mne
 import numpy as np
 import torch
 from brain2face.utils.gTecUtils.gTecUtils import loadMontage
-from constants import MONTAGE_INFO_PATH
+from brain2face.constants import MONTAGE_INFO_PATH
 
 
 def ch_locations_2d(args, training=True):

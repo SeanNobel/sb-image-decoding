@@ -14,6 +14,8 @@ mp_face_mesh = mp.solutions.face_mesh
 
 class ArayaDrivingStyleGANDataset(torch.utils.data.Dataset):
     def __init__(self, args, train: bool = True):
+        super().__init__()
+        
         # NOTE: no need to be natsorted.
         session_paths = glob.glob("data/" + args.preproc_name + "/*/")
         # NOTE: Selecting directories with preprocessed data.
