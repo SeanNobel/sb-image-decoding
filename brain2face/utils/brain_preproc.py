@@ -4,14 +4,20 @@ import mne
 from sklearn.preprocessing import RobustScaler
 from tqdm import tqdm
 from termcolor import cprint
-
-# From Esther
-from brain2face.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
+from typing import Optional
 
 
-def brain_preproc(args, brain_raw: np.ndarray, brain_times: Optional[np.ndarray], face_times: Optional[np.ndarray] = None):
-    eeg_raw, eeg_times, ch_names = eeg_subset_fromTrigger(args, eeg_path)
-    # ( num_ch=32, timesteps )
+def brain_preproc(
+    args,
+    brain_raw: np.ndarray,
+    brain_times: Optional[np.ndarray] = None,
+    face_times: Optional[np.ndarray] = None,
+):
+    """
+    Args:
+        brain_raw: ( channels, timesteps )
+        brain_times: ( timesteps, )
+    """
     assert np.all(eeg_times[:-1] <= eeg_times[1:])  # ensure it's ascending
     assert np.all(face_times[:-1] <= face_times[1:])
 
