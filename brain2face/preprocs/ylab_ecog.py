@@ -21,7 +21,8 @@ import torch
 
 torch.multiprocessing.set_start_method("spawn", force=True)
 
-from brain2face.utils.eeg_preproc import eeg_preproc
+from brain2face.utils.brain_preproc import brain_preproc
+
 # from brain2face.utils.face_preproc import face_preproc
 from brain2face.utils.preproc_utils import export_gif
 
@@ -60,7 +61,7 @@ def run_preprocess(tmp) -> None:
 def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
     brainwave_name = sync_df.brainwave_name.values[0]
     dat = h5py.File(args.ecog_data_root + brainwave_name, "r")["ecog_dat"][()]
-    
+
     brainwave_frames = sync_df.brainwave_frame.values.astype(int)
     ecog_data = []
     for i, frame in enumerate(tqdm(brainwave_frames)):
@@ -68,29 +69,27 @@ def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
             cprint("Loading new ECoG file.", "yellow")
             brainwave_name = sync_df.brainwave_name.values[i]
             dat = h5py.File(args.ecog_data_root + brainwave_name, "r")["ecog_dat"][()]
-            
+
         ecog_data.append(dat[frame])
-        
+
     return np.stack(ecog_data)
+
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="ylab_ecog")
 def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()
-        
-        
+
     sync_df_all = pd.read_csv(args.sync_data_path)
     movie_names = np.unique(sync_df_all.movie_name.values)
 
     face_paths = natsorted(glob.glob(args.face_data_root + "E0030_*.csv"))
-    
+
     session_ids = [int(re.split("[._]", path)[-2]) - 1 for path in face_paths]
 
-
-    for session_id, face_path in zip(session_ids, face_paths):
-        
+    for i, (session_id, face_path) in enumerate(zip(session_ids, face_paths)):
         sync_df = sync_df_all[sync_df_all.movie_name == movie_names[session_id]]
-        
+
         face_df = pd.read_csv(face_path)
         # face_data = face_df.filter(like="p_", axis=1).values
         face_data = face_df.drop(
@@ -99,18 +98,22 @@ def main(args: DictConfig) -> None:
         ).values
         face_data = face_data[sync_df.movie_frame.values.astype(int)]
         cprint(f"Face data: {face_data.shape}", "cyan")
-        
+        sys.exit()
+        face_data = face_data.reshape(
+            -1,
+        )
+
         ecog_data = load_ecog_data(args, sync_df)
         cprint(f"ECoG data: {ecog_data.shape}", "cyan")
         sys.exit()
-        
+
         ecog_filenames = sync_data.brainwave_name.values
         print(ecog_filenames)
         sys.exit()
         assert np.all(sync_data.brainwave_name.values == ecog_filename)
-        
+
         ecog_path = os.path.join(args.ecog_data_root, ecog_filename)
-                
+
         data_root_dir = os.path.split(os.path.split(video_path)[0])[0]
 
         video_times_path = data_root_dir + "/result/camera5_timestamps.csv"
