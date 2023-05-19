@@ -1,44 +1,32 @@
 # ==== Dataset ==== #
-dataset: YLabECoG
+dataset: Brain2FaceYLabECoGDataset
 face_data_root: /work/data/ECoG/E0030/
 ecog_data_root: /storage/data/ECoG/E0030/Raw/Mat2k/
 sync_data_path: /work/data/ECoG/rishido/E0030sync_trigger.csv
 
 # ==== Preprocess ==== #
 # Common
-preproc_name: test_subj_names
+preproc_name: first_test
 seq_len: 3 # segment length in seconds
 subject_multiprocess: False
 start_subj: 0
 end_subj: 8
 debug: False
 
-face_extractor:
-  mode: mesh
-  output_size: [256, 256]
-  eyes_dist_mult: 4
-  movement_alert_thresh: 50 # px
-
-stylegan:
-  model_path: /home/sensho/brain2face/encoder4editing/weights/e4e_ffhq_encode.pt
-
-# Face
-eye_half: 16 # number of pixels
 fps: 30
-image_size: 32
 
 # Brain
-brain_resample_rate: 120 # Hz
-brain_filter_low: 1.0 # Hz
-brain_filter_high: 60 # Hz
+# brain_resample_rate: 120 # Hz
+# brain_filter_low: 1.0 # Hz
+# brain_filter_high: 60 # Hz
 clamp_lim: 20 # values after robust scaling
 baseline_len: 0.5 # sec
-shift_brain: False
-shift_len: 150 # ms
+# shift_brain: False
+# shift_len: 150 # ms
 
 
 # ==== Training ==== #
-train_name: deep
+train_name: first_test
 
 split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
@@ -64,7 +52,7 @@ use_wandb: False
 
 # ==== Architecture ==== #
 # Common
-F: 512 # 1024
+F: 709
 
 # Brain
 D1: 270
@@ -74,9 +62,5 @@ d_drop: 0.3 # Channel distance for spatial dropout
 # NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
 final_kernel_size: 2
 final_stride: 2
-
-# Face (ViViT)
-patch_size: 8
-depth: 2
 
 seed: 1234

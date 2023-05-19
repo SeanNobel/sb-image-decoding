@@ -1,5 +1,5 @@
 # ==== Dataset ==== #
-dataset: ArayaDriving
+dataset: Brain2FaceStyleGANDataset
 data_root: /mnt/neurotech_nas/driving-game/ # /home/sensho/brain2face/assets/example_data/
 
 # ==== Preprocess ==== #

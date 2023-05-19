@@ -9,14 +9,14 @@ import wandb
 import hydra
 from omegaconf import DictConfig
 
-from brain2face.datasets import ArayaDrivingStyleGANDataset
+from brain2face.datasets import Brain2FaceYLabECoGDataset, Brain2FaceStyleGANDataset
 from brain2face.utils.layout import ch_locations_2d
 
 from brain2face.models import BrainEncoder, Classifier
 from brain2face.utils.loss import CLIPLoss
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs", config_name="ylab_ecog")
 def train(args: DictConfig):
     if args.seed is not None:
         print(f"Setting random seed: {args.seed}")
@@ -32,7 +32,7 @@ def train(args: DictConfig):
     if args.use_wandb:
         wandb.config = {k: v for k, v in args.__dict__.items() if not k.startswith("__")}
         wandb.init(
-            project="brain2face",
+            project="brain2face_ylab",
             config=wandb.config,
             save_code=True,
         )
@@ -45,7 +45,7 @@ def train(args: DictConfig):
     #       Dataloader
     # -----------------------
     if args.split == "shallow":
-        dataset = ArayaDrivingStyleGANDataset(args)
+        dataset = eval(args.dataset)(args)
 
         train_size = int(dataset.X.shape[0] * args.train_ratio)
         test_size = dataset.X.shape[0] - train_size
@@ -57,8 +57,8 @@ def train(args: DictConfig):
 
         num_subjects = dataset.num_subjects
     else:
-        train_set = ArayaDrivingStyleGANDataset(args)
-        test_set = ArayaDrivingStyleGANDataset(args, train=False)
+        train_set = eval(args.dataset)(args)
+        test_set = eval(args.dataset)(args, train=False)
 
         num_subjects = train_set.num_subjects
         test_size = test_set.X.shape[0]
@@ -131,7 +131,7 @@ def train(args: DictConfig):
             loss = loss_func(Y, Z)
 
             with torch.no_grad():
-                train_top1_acc, train_top10_acc = classifier(Z, Y, test=True)
+                train_top1_acc, train_top10_acc, _ = classifier(Z, Y)
 
             train_losses.append(loss.item())
             train_top10_accs.append(train_top10_acc)
@@ -156,7 +156,7 @@ def train(args: DictConfig):
 
                 loss = loss_func(Y, Z)
 
-                test_top1_acc, test_top10_acc = classifier(Z, Y)
+                test_top1_acc, test_top10_acc, _ = classifier(Z, Y, test=True)
 
             test_losses.append(loss.item())
             test_top10_accs.append(test_top10_acc)
