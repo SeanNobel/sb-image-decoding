@@ -7,9 +7,10 @@ h5py
 pandas
 lxml
 cmake
-dlib
+# dlib
 mediapipe
 opencv-python
 wandb
 gdown
-
+torch
+natsort
