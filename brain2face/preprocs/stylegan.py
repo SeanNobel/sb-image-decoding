@@ -16,9 +16,10 @@ import torch
 
 torch.multiprocessing.set_start_method("spawn", force=True)
 
-from brain2face.utils.eeg_preproc import eeg_preproc
+from brain2face.utils.eeg_preproc import brain_preproc
 from brain2face.utils.face_preproc import face_preproc
 from brain2face.utils.preproc_utils import export_gif
+from brain2face.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
 
 
 def run_preprocess(tmp) -> None:
@@ -33,7 +34,8 @@ def run_preprocess(tmp) -> None:
 
         Y, Y_times = face_preproc(args, video_path, video_times_path)
 
-        X, y_drops_prev, y_drops_after = eeg_preproc(args, eeg_path, Y_times)
+        eeg_raw, eeg_times, _ = eeg_subset_fromTrigger(args, eeg_path)
+        X, y_drops_prev, y_drops_after = brain_preproc(args, eeg_raw, eeg_times, Y_times)
         cprint(f"Subject {i} brain: {X.shape}", color="cyan")
 
         if y_drops_after == 0:
