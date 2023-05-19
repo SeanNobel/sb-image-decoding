@@ -9,7 +9,7 @@ from termcolor import cprint
 from brain2face.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
 
 
-def eeg_preproc(args, eeg_path, face_times):
+def brain_preproc(args, brain_raw: np.ndarray, brain_times: Optional[np.ndarray], face_times: Optional[np.ndarray] = None):
     eeg_raw, eeg_times, ch_names = eeg_subset_fromTrigger(args, eeg_path)
     # ( num_ch=32, timesteps )
     assert np.all(eeg_times[:-1] <= eeg_times[1:])  # ensure it's ascending
