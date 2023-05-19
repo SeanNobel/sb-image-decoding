@@ -1,6 +1,7 @@
 import os, sys
 import numpy as np
 import pandas as pd
+import mne
 import glob
 from natsort import natsorted
 import h5py
@@ -21,41 +22,7 @@ import torch
 
 torch.multiprocessing.set_start_method("spawn", force=True)
 
-from brain2face.utils.brain_preproc import brain_preproc
-
-# from brain2face.utils.face_preproc import face_preproc
-from brain2face.utils.preproc_utils import export_gif
-
-
-def run_preprocess(tmp) -> None:
-    args, i, video_path, video_times_path, eeg_path = tmp
-
-    data_dir = f"data/{args.preproc_name}/S{i}/"
-
-    # FIXME: remove later ?
-    if not os.path.exists(data_dir + "example.gif"):
-        cprint(f"Processing subject number {i}", color="cyan")
-        os.makedirs(data_dir, exist_ok=True)
-
-        Y, Y_times = face_preproc(args, video_path, video_times_path)
-
-        X, y_drops_prev, y_drops_after = eeg_preproc(args, eeg_path, Y_times)
-        cprint(f"Subject {i} brain: {X.shape}", color="cyan")
-
-        if y_drops_after == 0:
-            cprint("No drops after", color="yellow")
-            Y = Y[y_drops_prev:]
-        else:
-            Y = Y[y_drops_prev:-y_drops_after]
-
-        cprint(f"Subject {i} face: {Y.shape}", color="cyan")
-
-        assert len(X) == len(Y)
-
-        np.save(data_dir + "face.npy", Y)
-        np.save(data_dir + "brain.npy", X)
-        export_gif(data_dir + "example.gif", Y)
-        # cv2.imwrite(data_dir + "first_frame.png", first_frame)
+from brain2face.utils.brain_preproc import scale_and_clamp, baseline_correction
 
 
 def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
@@ -75,6 +42,72 @@ def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
     return np.stack(ecog_data)
 
 
+def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.ndarray:
+    """Loads interpolated facial features, transforms them for the dataset
+
+    Args:
+        args (_type_): _description_
+        face_path (str): _description_
+        sync_df (pd.DataFrame): _description_
+        segment_len (int): _description_
+
+    Returns:
+        np.ndarray: ( segments, features, segment_len )
+    """
+    face_df = pd.read_csv(face_path)
+
+    # face_data = face_df.filter(like="p_", axis=1).values
+    face_data = face_df.drop(
+        ["frame", " face_id", " timestamp", " confidence", " success"],
+        axis=1,
+    ).values
+
+    face_data = face_data[sync_df.movie_frame.values.astype(int)]
+
+    face_data = face_data[: -(face_data.shape[0] % segment_len)]
+    face_data = face_data.reshape(-1, segment_len, face_data.shape[-1])
+
+    return face_data.transpose(0, 2, 1)
+
+
+def ecog_preproc(args, ecog: np.ndarray, segment_len: int) -> np.ndarray:
+    """
+    Args:
+        ecog: ( channels, timesteps )
+    Returns:
+        ecog: ( segments, channels, segment_len )
+    """
+
+    """ Filtering """
+    # eeg_filtered = mne.filter.filter_data(
+    #     ecog_raw,
+    #     sfreq=250,
+    #     l_freq=args.brain_filter_low,
+    #     h_freq=args.brain_filter_high,
+    # )
+
+    """ Resampling """
+    # eeg_resampled = mne.filter.resample(
+    #     eeg_filtered,
+    #     down=250 / args.brain_resample_rate,
+    # )
+
+    """ Scaling """
+    ecog = scale_and_clamp(ecog, clamp_lim=args.clamp_lim)
+
+    """ Segmenting """
+    ecog = ecog[:, : -(ecog.shape[1] % segment_len)]
+    ecog = ecog.reshape(ecog.shape[0], segment_len, -1)
+    ecog = ecog.transpose(2, 0, 1)  # ( segments, channels, segment_len )
+
+    """ Baseline Correction """
+    ecog = baseline_correction(
+        ecog, int(args.baseline_len * args.fps) # FIXME
+    )  # ( segments, channels, segment_len )
+
+    return ecog
+
+
 @hydra.main(version_base=None, config_path="../../configs", config_name="ylab_ecog")
 def main(args: DictConfig) -> None:
     with open_dict(args):
@@ -87,86 +120,26 @@ def main(args: DictConfig) -> None:
 
     session_ids = [int(re.split("[._]", path)[-2]) - 1 for path in face_paths]
 
+    segment_len = args.seq_len * args.fps
+
     for i, (session_id, face_path) in enumerate(zip(session_ids, face_paths)):
+        cprint(f"Processing subject number {i}", color="cyan")
+
         sync_df = sync_df_all[sync_df_all.movie_name == movie_names[session_id]]
 
-        face_df = pd.read_csv(face_path)
-        # face_data = face_df.filter(like="p_", axis=1).values
-        face_data = face_df.drop(
-            ["frame", " face_id", " timestamp", " confidence", " success"],
-            axis=1,
-        ).values
-        face_data = face_data[sync_df.movie_frame.values.astype(int)]
-        cprint(f"Face data: {face_data.shape}", "cyan")
-        sys.exit()
-        face_data = face_data.reshape(
-            -1,
-        )
+        ecog_raw = load_ecog_data(args, sync_df).T
+        X = ecog_preproc(args, ecog_raw, segment_len)
+        cprint(f"Subject {i} ECoG: {X.shape}", "cyan")
 
-        ecog_data = load_ecog_data(args, sync_df)
-        cprint(f"ECoG data: {ecog_data.shape}", "cyan")
-        sys.exit()
+        Y = face_preproc(face_path, sync_df, segment_len)
+        cprint(f"Subject {i} face: {Y.shape}", "cyan")
 
-        ecog_filenames = sync_data.brainwave_name.values
-        print(ecog_filenames)
-        sys.exit()
-        assert np.all(sync_data.brainwave_name.values == ecog_filename)
+        assert len(X) == len(Y)
 
-        ecog_path = os.path.join(args.ecog_data_root, ecog_filename)
-
-        data_root_dir = os.path.split(os.path.split(video_path)[0])[0]
-
-        video_times_path = data_root_dir + "/result/camera5_timestamps.csv"
-
-        if os.path.exists(video_times_path):
-            video_times_paths.append(video_times_path)
-        else:
-            cprint(f"SKIPPING: Timestamps for camera5 not found.", color="yellow")
-            continue
-
-        eeg_path = glob.glob(data_root_dir + "/**/*.hdf5")
-
-        if len(eeg_path) == 1:
-            video_paths.append(video_path)
-            eeg_paths.append(eeg_path[0])
-        else:
-            cprint(
-                f"SKIPPING: {len(eeg_path)} corresponding EEG data found.", color="yellow"
-            )
-            continue
-
-    cprint(
-        f"{len(video_paths)} subjects (counting different sessions as different subjects)",
-        color="cyan",
-    )
-    for path in video_paths:
-        cprint(path, color="cyan")
-    sys.exit()
-    assert len(video_paths) == len(eeg_paths) and len(video_paths) == len(
-        video_times_paths
-    )
-
-    # -------------------------
-    #    Running preprocess
-    # -------------------------
-    if args.subject_multiprocess:
-        subj_list = [
-            (args, i, *paths)
-            for i, paths in enumerate(zip(video_paths, video_times_paths, eeg_paths))
-        ]
-
-        # with ctx.Pool(4) as p:
-        with torch.multiprocessing.Pool(4) as p:
-            res = p.map(run_preprocess, subj_list)
-
-    else:
-        # video_paths = video_paths[args.start_subj : args.end_subj]
-        # video_times_paths = video_times_paths[args.start_subj : args.end_subj]
-        # eeg_paths = eeg_paths[args.start_subj : args.end_subj]
-
-        for i, paths in enumerate(zip(video_paths, video_times_paths, eeg_paths)):
-            if args.start_subj <= i and i < args.end_subj:
-                run_preprocess((args, i, *paths))
+        data_dir = f"{args.root_dir}/data/YLab/{args.preproc_name}/S{i}/"
+        os.makedirs(data_dir, exist_ok=True)
+        np.save(data_dir + "brain.npy", X)
+        np.save(data_dir + "face.npy", Y)
 
 
 if __name__ == "__main__":

@@ -12,12 +12,13 @@ mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
 
 
-class ArayaDrivingStyleGANDataset(torch.utils.data.Dataset):
-    def __init__(self, args, train: bool = True):
+class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
+    def __init__(
+        self, args, session_paths: List[str], train: bool = True
+    ) -> List[torch.Tensor]:
         super().__init__()
-        
+
         # NOTE: no need to be natsorted.
-        session_paths = glob.glob("data/" + args.preproc_name + "/*/")
         # NOTE: Selecting directories with preprocessed data.
         session_paths = self.drop_bads(session_paths)
 
@@ -90,19 +91,15 @@ class ArayaDrivingStyleGANDataset(torch.utils.data.Dataset):
 
         self.session_lengths = [len(X) for X in X_list]
 
-        self.Y = self.reshape_stylegan_latent(Y_list)
-        self.Y_all = torch.cat(Y_list)
-        cprint(f"self.Y: {self.Y.shape} | self.Y_all: {self.Y_all.shape}", color="cyan")
-        del Y_list
-        cprint(f"self.Y: {self.Y.shape}", color="cyan")
+        self.subject_idx = torch.cat(subject_idx_list)
+        del subject_idx_list
+        cprint(f"self.subject_idx: {self.subject_idx.shape}", color="cyan")
 
         self.X = torch.cat(X_list)
         del X_list
         cprint(f"self.X: {self.X.shape}", color="cyan")
 
-        self.subject_idx = torch.cat(subject_idx_list)
-        del subject_idx_list
-        cprint(f"self.subject_idx: {self.subject_idx.shape}", color="cyan")
+        return Y_list
 
         if args.chance:
             self.Y = self.Y[torch.randperm(self.Y.shape[0])]
@@ -112,6 +109,35 @@ class ArayaDrivingStyleGANDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         return self.X[i], self.Y[i], self.subject_idx[i]
+
+    @staticmethod
+    def drop_bads(_subject_paths):
+        subject_paths = []
+        for path in _subject_paths:
+            if os.path.exists(path + "brain.npy") and os.path.exists(path + "face.npy"):
+                subject_paths.append(path)
+        return subject_paths
+
+
+class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
+    def __init__(self, args, train: bool = True) -> None:
+        session_paths = glob.glob("data/YLab/" + args.preproc_name + "/*/")
+        Y_list = super().__init__(args, session_paths, train)
+
+        self.Y = torch.cat(Y_list)
+        cprint(f"self.Y: {self.Y.shape}", color="cyan")
+        del Y_list
+
+
+class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
+    def __init__(self, args, train: bool = True) -> None:
+        session_paths = glob.glob("data/StyleGAN/" + args.preproc_name + "/*/")
+        Y_list = super().__init__(args, session_paths, train)
+
+        self.Y = self.reshape_stylegan_latent(Y_list)
+        self.Y_all = torch.cat(Y_list)
+        cprint(f"self.Y: {self.Y.shape} | self.Y_all: {self.Y_all.shape}", color="cyan")
+        del Y_list
 
     def reshape_stylegan_latent(self, Y: List[torch.Tensor]):
         Y = [_Y[:, :, 4:8] for _Y in Y]
@@ -125,19 +151,11 @@ class ArayaDrivingStyleGANDataset(torch.utils.data.Dataset):
 
         return Y
 
-    @staticmethod
-    def drop_bads(_subject_paths):
-        subject_paths = []
-        for path in _subject_paths:
-            if os.path.exists(path + "brain.npy") and os.path.exists(path + "face.npy"):
-                subject_paths.append(path)
-        return subject_paths
-
 
 if __name__ == "__main__":
     from hydra import initialize, compose
 
     with initialize(version_base=None, config_path="../configs/"):
-        args = compose(config_name="config.yaml")
+        args = compose(config_name="ylab_ecog.yaml")
 
-    dataset = ArayaDrivingStyleGANDataset(args)
+    dataset = Brain2FaceYLabECoGDataset(args)

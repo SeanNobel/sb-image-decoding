@@ -22,6 +22,90 @@ from brain2face.utils.preproc_utils import export_gif
 from brain2face.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
 
 
+def brain_preproc(
+    args,
+    brain_raw: np.ndarray,
+    brain_times: Optional[np.ndarray] = None,
+    face_times: Optional[np.ndarray] = None,
+):
+    """
+    Args:
+        brain_raw: ( channels, timesteps )
+        brain_times: ( timesteps, )
+    """
+    assert np.all(eeg_times[:-1] <= eeg_times[1:])  # ensure it's ascending
+    assert np.all(face_times[:-1] <= face_times[1:])
+
+    """ Filtering """
+    eeg_filtered = mne.filter.filter_data(
+        eeg_raw,
+        sfreq=250,
+        l_freq=args.brain_filter_low,
+        h_freq=args.brain_filter_high,
+    )
+
+    """ Resampling """
+    eeg_resampled = mne.filter.resample(
+        eeg_filtered,
+        down=250 / args.brain_resample_rate,
+    )
+
+    """ Scaling """
+    eeg_scaled = scale_and_clamp(eeg_resampled, clamp_lim=args.clamp_lim)
+
+    """ Segmenting """
+    # NOTE: need to ensure that we get same timings by running resample separately for
+    #       EEG and timestamps
+    eeg_times = mne.filter.resample(eeg_times, down=250 / args.brain_resample_rate)
+    segment_len = args.seq_len * args.brain_resample_rate  # 360
+
+    eeg_segmented, face_drops_prev, face_drops_after = segment(
+        eeg_scaled, face_times, eeg_times, segment_len
+    )  # ( segments=1207, C=32, T=360 )
+
+    """ Baseline Correction """
+    eeg_bl_corrected = baseline_correction(
+        eeg_segmented, int(args.baseline_len * args.brain_resample_rate)
+    )  # ( segments, C, T )
+
+    """ Scaling 2 """
+    # NOTE: scale for channels separately
+    # eeg_scaled = []
+    # for c in range(eeg_bl_corrected.shape[1]):
+    #     scaler = RobustScaler().fit(eeg_bl_corrected[:, c])
+    #     _eeg_scaled = scaler.transform(eeg_bl_corrected[:, c])
+    #     eeg_scaled.append(_eeg_scaled)
+
+    # eeg_scaled = np.stack(eeg_scaled).transpose(1, 0, 2)
+
+    del eeg_filtered, eeg_resampled, eeg_scaled, eeg_segmented
+
+    return eeg_bl_corrected, face_drops_prev, face_drops_after
+
+
+def segment(eeg, face_times, eeg_times, segment_len):
+    face_drops_prev = 0
+    face_drops_after = 0
+    x_list = []
+    for t in tqdm(face_times):
+        if t < eeg_times[0]:
+            face_drops_prev += 1
+            continue
+
+        start_idx = np.searchsorted(eeg_times, t, sorter=None)
+
+        x = eeg[:, start_idx : start_idx + segment_len]
+
+        if x.shape[1] == segment_len:
+            x_list.append(x)
+        else:
+            face_drops_after += 1
+
+    cprint(f"prev: {face_drops_prev} | after: {face_drops_after}", "yellow")
+
+    return np.stack(x_list), face_drops_prev, face_drops_after
+
+
 def run_preprocess(tmp) -> None:
     args, i, video_path, video_times_path, eeg_path = tmp
 
@@ -36,7 +120,7 @@ def run_preprocess(tmp) -> None:
 
         eeg_raw, eeg_times, _ = eeg_subset_fromTrigger(args, eeg_path)
         X, y_drops_prev, y_drops_after = brain_preproc(args, eeg_raw, eeg_times, Y_times)
-        cprint(f"Subject {i} brain: {X.shape}", color="cyan")
+        cprint(f"Subject {i} EEG: {X.shape}", color="cyan")
 
         if y_drops_after == 0:
             cprint("No drops after", color="yellow")
@@ -48,8 +132,8 @@ def run_preprocess(tmp) -> None:
 
         assert len(X) == len(Y)
 
-        np.save(data_dir + "face.npy", Y)
         np.save(data_dir + "brain.npy", X)
+        np.save(data_dir + "face.npy", Y)
         export_gif(data_dir + "example.gif", Y)
         # cv2.imwrite(data_dir + "first_frame.png", first_frame)
 

@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from time import time
 import torch.nn.functional as F
+from einops import rearrange
 from termcolor import cprint
 from tqdm import tqdm
 
@@ -228,24 +229,24 @@ class Classifier(nn.Module):
         x = Z.view(batch_size, -1)
         y = Y.view(batch_size, -1)
 
-        # x_ = rearrange(x, 'b f -> 1 b f')
-        # y_ = rearrange(y, 'b f -> b 1 f')
-        # similarity = torch.nn.functional.cosine_similarity(x_, y_, dim=-1)  # ( B, B )
-
         # NOTE: avoid CUDA out of memory like this
-        similarity = torch.empty(batch_size, batch_size).to(device=Z.device)
-
         if test:
-            pbar = tqdm(total=batch_size, desc="[Similarities]")
+            similarity = torch.empty(batch_size, batch_size).to(device=Z.device)
 
-        for i in range(batch_size):
-            for j in range(batch_size):
-                similarity[i, j] = (x[i] @ y[j]) / max((x[i].norm() * y[j].norm()), 1e-8)
+            pbar = tqdm(total=batch_size, desc="Similarity matrix of test size")
 
-            if test:
+            for i in range(batch_size):
+                for j in range(batch_size):
+                    similarity[i, j] = (x[i] @ y[j]) / max((x[i].norm() * y[j].norm()), 1e-8)
+
                 pbar.update(1)
 
-        similarity = similarity.T
+            similarity = similarity.T
+            
+        else:
+            x_ = rearrange(x, 'b f -> 1 b f')
+            y_ = rearrange(y, 'b f -> b 1 f')
+            similarity = F.cosine_similarity(x_, y_, dim=-1)  # ( B, B )
 
         # NOTE: max similarity of speech and M/EEG representations is expected for corresponding windows
         top1accuracy = (similarity.argmax(axis=1) == diags).to(torch.float).mean().item()
@@ -273,4 +274,4 @@ class Classifier(nn.Module):
             )
 
         else:
-            return top1accuracy, top10accuracy
+            return top1accuracy, top10accuracy, similarity
