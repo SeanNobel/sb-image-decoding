@@ -156,7 +156,7 @@ def train(args: DictConfig):
 
                 loss = loss_func(Y, Z)
 
-                test_top1_acc, test_top10_acc, _ = classifier(Z, Y, test=True)
+                test_top1_acc, test_top10_acc, _ = classifier(Z, Y, sequential=True)
 
             test_losses.append(loss.item())
             test_top10_accs.append(test_top10_acc)
