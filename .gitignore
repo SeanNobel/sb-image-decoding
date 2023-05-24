@@ -6,6 +6,8 @@ data/*
 
 outputs/
 
+*.out
+
 wandb/
 
 runs/*

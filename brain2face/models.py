@@ -222,7 +222,7 @@ class Classifier(nn.Module):
 
     @torch.no_grad()
     def forward(
-        self, Z: torch.Tensor, Y: torch.Tensor, test=False, return_pred=False
+        self, Z: torch.Tensor, Y: torch.Tensor, sequential=False, return_pred=False
     ) -> torch.Tensor:
         batch_size = Z.size(0)
         diags = torch.arange(batch_size).to(device=Z.device)
@@ -230,22 +230,23 @@ class Classifier(nn.Module):
         y = Y.view(batch_size, -1)
 
         # NOTE: avoid CUDA out of memory like this
-        if test:
+        if sequential:
             similarity = torch.empty(batch_size, batch_size).to(device=Z.device)
 
             pbar = tqdm(total=batch_size, desc="Similarity matrix of test size")
 
             for i in range(batch_size):
-                for j in range(batch_size):
-                    similarity[i, j] = (x[i] @ y[j]) / max((x[i].norm() * y[j].norm()), 1e-8)
+                similarity[i] = (x[i] @ y.T) / torch.clamp(
+                    (x[i].norm() * y.norm(dim=1)), min=1e-8
+                )
 
                 pbar.update(1)
 
             similarity = similarity.T
-            
+
         else:
-            x_ = rearrange(x, 'b f -> 1 b f')
-            y_ = rearrange(y, 'b f -> b 1 f')
+            x_ = rearrange(x, "b f -> 1 b f")
+            y_ = rearrange(y, "b f -> b 1 f")
             similarity = F.cosine_similarity(x_, y_, dim=-1)  # ( B, B )
 
         # NOTE: max similarity of speech and M/EEG representations is expected for corresponding windows

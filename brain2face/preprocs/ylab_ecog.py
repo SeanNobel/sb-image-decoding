@@ -26,6 +26,10 @@ from brain2face.utils.brain_preproc import scale_and_clamp, baseline_correction
 
 
 def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
+    """
+    Returns:
+        ecog_raw: ( channels, timesteps )
+    """
     brainwave_name = sync_df.brainwave_name.values[0]
     dat = h5py.File(args.ecog_data_root + brainwave_name, "r")["ecog_dat"][()]
 
@@ -39,15 +43,14 @@ def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
 
         ecog_data.append(dat[frame])
 
-    return np.stack(ecog_data)
+    return np.stack(ecog_data).T
 
 
 def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.ndarray:
     """Loads interpolated facial features, transforms them for the dataset
 
     Args:
-        args (_type_): _description_
-        face_path (str): _description_
+        face_path (str): e.g. /work/data/ECoG/E0030/E0030_3.csv
         sync_df (pd.DataFrame): _description_
         segment_len (int): _description_
 
@@ -60,12 +63,15 @@ def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.
     face_data = face_df.drop(
         ["frame", " face_id", " timestamp", " confidence", " success"],
         axis=1,
-    ).values
+    ).values  # ( frames=97540, features=709 )
 
-    face_data = face_data[sync_df.movie_frame.values.astype(int)]
+    face_data = face_data[sync_df.movie_frame.values.astype(int) - 1]
+    # ( frames=80923, features=709 )
 
     face_data = face_data[: -(face_data.shape[0] % segment_len)]
+    # ( frames=80910, features=709 )
     face_data = face_data.reshape(-1, segment_len, face_data.shape[-1])
+    # ( segments=899, segment_len=90, features=709 )
 
     return face_data.transpose(0, 2, 1)
 
@@ -102,7 +108,7 @@ def ecog_preproc(args, ecog: np.ndarray, segment_len: int) -> np.ndarray:
 
     """ Baseline Correction """
     ecog = baseline_correction(
-        ecog, int(args.baseline_len * args.fps) # FIXME
+        ecog, int(args.baseline_len * args.fps)  # FIXME
     )  # ( segments, channels, segment_len )
 
     return ecog
@@ -114,32 +120,50 @@ def main(args: DictConfig) -> None:
         args.root_dir = get_original_cwd()
 
     sync_df_all = pd.read_csv(args.sync_data_path)
-    movie_names = np.unique(sync_df_all.movie_name.values)
+    # movie_names = np.unique(sync_df_all.movie_name.values)
+    # cprint(f"> Original movies: {len(movie_names)} e.g. {movie_names[0]}", "cyan")
 
-    face_paths = natsorted(glob.glob(args.face_data_root + "E0030_*.csv"))
+    processing_df = pd.read_excel(args.processing_sheet_path)
 
-    session_ids = [int(re.split("[._]", path)[-2]) - 1 for path in face_paths]
+    face_paths = natsorted(glob.glob(args.face_data_path))
+    cprint(f"> Facial features: {len(face_paths)} e.g. {face_paths[0]}", "cyan")
+
+    session_ids = [int(re.split("[._]", path)[-2]) for path in face_paths]
+    cprint(f"> {len(session_ids)} sessions: {session_ids}", "cyan")
 
     segment_len = args.seq_len * args.fps
 
     for i, (session_id, face_path) in enumerate(zip(session_ids, face_paths)):
-        cprint(f"Processing subject number {i}", color="cyan")
+        cprint(f">> Processing subject number {i}", color="cyan")
 
-        sync_df = sync_df_all[sync_df_all.movie_name == movie_names[session_id]]
+        movie_name = (
+            processing_df[processing_df.video_id == session_id].TV_watch_name.values[0]
+            + ".MP4"
+        )
+        cprint(f">> Movie name: {movie_name}", "cyan")
 
-        ecog_raw = load_ecog_data(args, sync_df).T
-        X = ecog_preproc(args, ecog_raw, segment_len)
-        cprint(f"Subject {i} ECoG: {X.shape}", "cyan")
+        sync_df = sync_df_all[sync_df_all.movie_name == movie_name]
 
-        Y = face_preproc(face_path, sync_df, segment_len)
-        cprint(f"Subject {i} face: {Y.shape}", "cyan")
+        if sync_df.shape[0] > 0:
+            cprint(f">> Sync data: {sync_df.shape}", "cyan")
 
-        assert len(X) == len(Y)
+            ecog_raw = load_ecog_data(args, sync_df)
 
-        data_dir = f"{args.root_dir}/data/YLab/{args.preproc_name}/S{i}/"
-        os.makedirs(data_dir, exist_ok=True)
-        np.save(data_dir + "brain.npy", X)
-        np.save(data_dir + "face.npy", Y)
+            X = ecog_preproc(args, ecog_raw, segment_len)
+            cprint(f"Subject {i} ECoG: {X.shape}", "cyan")
+
+            Y = face_preproc(face_path, sync_df, segment_len)
+            cprint(f"Subject {i} face: {Y.shape}", "cyan")
+
+            assert len(X) == len(Y)
+
+            data_dir = f"{args.root_dir}/data/YLab/{args.preproc_name}/S{i}/"
+            os.makedirs(data_dir, exist_ok=True)
+            np.save(data_dir + "brain.npy", X)
+            np.save(data_dir + "face.npy", Y)
+
+        else:
+            cprint(f">> Sync data: {sync_df.shape} -> skipping.", "yellow")
 
 
 if __name__ == "__main__":
