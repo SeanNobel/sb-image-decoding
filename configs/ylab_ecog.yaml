@@ -1,12 +1,13 @@
 # ==== Dataset ==== #
 dataset: Brain2FaceYLabECoGDataset
-face_data_root: /work/data/ECoG/E0030/
 ecog_data_root: /storage/data/ECoG/E0030/Raw/Mat2k/
+face_data_path: /work/data/ECoG/E0030/E0030_*.csv
 sync_data_path: /work/data/ECoG/rishido/E0030sync_trigger.csv
+processing_sheet_path: /work/data/ECoG/E0030/E0030ProcessingSheet.xlsx
 
 # ==== Preprocess ==== #
 # Common
-preproc_name: first_test
+preproc_name: rishido_1
 seq_len: 3 # segment length in seconds
 subject_multiprocess: False
 start_subj: 0
@@ -26,7 +27,7 @@ baseline_len: 0.5 # sec
 
 
 # ==== Training ==== #
-train_name: first_test
+train_name: rishido_1
 
 split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
@@ -38,7 +39,7 @@ chance: False
 # 🔥 FIXME: samples in the eval set, and the CLIPLoss produces nans silently
 batch_size: 64
 lr: 0.005
-lr_scheduler: cosine # cosine or multistep
+lr_scheduler: multistep # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
 epochs: 500
