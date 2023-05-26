@@ -76,44 +76,6 @@ def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.
     return face_data.transpose(0, 2, 1)
 
 
-def ecog_preproc(args, ecog: np.ndarray, segment_len: int) -> np.ndarray:
-    """
-    Args:
-        ecog: ( channels, timesteps )
-    Returns:
-        ecog: ( segments, channels, segment_len )
-    """
-
-    """ Filtering """
-    # eeg_filtered = mne.filter.filter_data(
-    #     ecog_raw,
-    #     sfreq=250,
-    #     l_freq=args.brain_filter_low,
-    #     h_freq=args.brain_filter_high,
-    # )
-
-    """ Resampling """
-    # eeg_resampled = mne.filter.resample(
-    #     eeg_filtered,
-    #     down=250 / args.brain_resample_rate,
-    # )
-
-    """ Scaling """
-    ecog = scale_and_clamp(ecog, clamp_lim=args.clamp_lim)
-
-    """ Segmenting """
-    ecog = ecog[:, : -(ecog.shape[1] % segment_len)]
-    ecog = ecog.reshape(ecog.shape[0], segment_len, -1)
-    ecog = ecog.transpose(2, 0, 1)  # ( segments, channels, segment_len )
-
-    """ Baseline Correction """
-    ecog = baseline_correction(
-        ecog, int(args.baseline_len * args.fps)  # FIXME
-    )  # ( segments, channels, segment_len )
-
-    return ecog
-
-
 @hydra.main(version_base=None, config_path="../../configs", config_name="ylab_ecog")
 def main(args: DictConfig) -> None:
     with open_dict(args):
