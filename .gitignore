@@ -15,6 +15,9 @@ runs/*
 
 notebooks/*
 !notebooks/.gitkeep
+!notebooks/ica.ipynb
+
+driving_ica/
 
 
 # Byte-compiled / optimized / DLL files

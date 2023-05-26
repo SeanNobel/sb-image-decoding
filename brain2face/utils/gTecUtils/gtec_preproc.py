@@ -27,7 +27,11 @@ def eeg_subset_fromTrigger(args, raweeg_fname):
     if "Video/VideoTimestamp" in d.info.keys():
         eeg_time_trimmed = eeg_time_trimmed - eeg_time_trimmed[0]
 
-    return eeg_trimmed, eeg_time_trimmed, raw.ch_names[:eeg_chNum]
+    return (
+        eeg_trimmed,
+        eeg_time_trimmed,
+        (raw.ch_names[:eeg_chNum], raw.info["sfreq"], raw.get_montage()),
+    )
 
 
 def get_index(data, value):
