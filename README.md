@@ -1,8 +1,16 @@
 # brain2face
 
+## UHD
+
+### Overview
+
+<div align="center"><img src="assets/overview.001.jpeg" width=700></div>
+
+<br>
+
 ## Hayashi Lab @ AIST
 
-### encoder4editing
+### Install encoder4editing
 
 - Submodule -> https://github.com/SeanNobel/encoder4editing
 
@@ -19,5 +27,7 @@ CUDA_VISIBLE_DEVICES=1 nohup python brain2face/preprocs/stylegan.py start_subj=8
 CUDA_VISIBLE_DEVICES=2 nohup python brain2face/preprocs/stylegan.py start_subj=16 end_subj=24 > logs/ica/out3.log &
 CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=24 end_subj=32 > logs/ica/out4.log &
 ```
+
+<br>
 
 ## Yanagisawa Lab @ Osaka Univ.
