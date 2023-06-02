@@ -9,9 +9,9 @@ import wandb
 import hydra
 from omegaconf import DictConfig
 
-from brain2face.datasets.stylegan import ArayaDrivingStyleGANDataset
+from brain2face.datasets import Brain2FaceStyleGANDataset
 from brain2face.utils.layout import ch_locations_2d
-from brain2face.models import BrainEncoder, Classifier
+from brain2face.models.brain_encoder import BrainEncoder, Classifier
 from brain2face.utils.loss import CLIPLoss
 
 
@@ -34,7 +34,7 @@ def eval(args: DictConfig):
     #       Dataloader
     # -----------------------
     if args.split == "shallow":
-        dataset = ArayaDrivingStyleGANDataset(args)
+        dataset = Brain2FaceStyleGANDataset(args)
 
         train_size = int(dataset.X.shape[0] * args.train_ratio)
         test_size = dataset.X.shape[0] - train_size
@@ -46,7 +46,7 @@ def eval(args: DictConfig):
 
         num_subjects = dataset.num_subjects
     else:
-        test_set = ArayaDrivingStyleGANDataset(args, train=False)
+        test_set = Brain2FaceStyleGANDataset(args, train=False)
 
         num_subjects = test_set.num_subjects
         test_size = test_set.X.shape[0]
