@@ -4,7 +4,7 @@
 
 ### Overview
 
-<div align="center"><img src="assets/overview.001.jpeg" width=700></div>
+<div align="center"><img src="assets/overview.jpeg" width=700></div>
 
 <br>
 
