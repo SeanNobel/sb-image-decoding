@@ -15,3 +15,5 @@ gdown
 torch
 natsort
 pytest
+
+dalle2-pytorch
