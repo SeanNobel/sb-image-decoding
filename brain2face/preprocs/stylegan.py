@@ -16,123 +16,83 @@ ctx = multiprocessing.get_context("spawn")
 torch.multiprocessing.set_start_method("spawn", force=True)
 
 from brain2face.utils.brain_preproc import brain_preproc
-from brain2face.utils.extractor import FaceExtractor
+from brain2face.utils.face_preproc import FacePreprocessor
 from brain2face.utils.stylegan_encoder import StyleGANEncoder
-from brain2face.utils.preproc_utils import get_arayadriving_dataset_paths, export_gif
+from brain2face.utils.preproc_utils import get_face2brain_data_paths, crop_and_segment
 from brain2face.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
-from brain2face.constants import EXTRACTED_VIDEO_ROOT
 
 from encoder4editing.utils.alignment import align_face
 
 
-def face_preproc(args, video_path, video_times_path) -> Tuple[torch.Tensor, np.ndarray]:
-    # -------------------------
-    #        Input Video
-    # -------------------------
-    cap = cv2.VideoCapture(video_path)
-    input_size = np.array(
-        [int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))]
-    )
-    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
+class FaceStyleGANPreprocessor(FacePreprocessor):
+    def __init__(self, args, video_path: str, video_times_path: str) -> None:
+        super().__init__(args, video_path)
 
-    # -------------------------
-    #      Face Extractor
-    # -------------------------
-    face_extractor = FaceExtractor(args.face_extractor, input_size, "center", fps)
+        self.stylegan_encoder = StyleGANEncoder(args.stylegan.model_path)
 
-    # -------------------------
-    #         StyleGAN
-    # -------------------------
-    stylegan_encoder = StyleGANEncoder(args.stylegan.model_path)
+        self.y_times = np.loadtxt(video_times_path, delimiter=",")  # ( ~100000, )
 
-    # -------------------------
-    #         Outputs
-    # -------------------------
-    fmt = cv2.VideoWriter_fourcc("m", "p", "4", "v")
-    writer = cv2.VideoWriter(
-        f"{EXTRACTED_VIDEO_ROOT}/{Path(video_path).stem}.mp4",
-        fmt,
-        fps,
-        tuple(args.face_extractor.output_size),
-    )
+    def __call__(self, batch_size: int = 32) -> Tuple[np.ndarray, np.ndarray]:
+        y_list = []
+        no_face_idxs = []
+        transformed_list = []
 
-    y_times = np.loadtxt(video_times_path, delimiter=",")  # ( 109800, )
-
-    y_list = []
-    no_face_idxs = []
-    i = 0
-    batch_size = 32
-    transformed_list = []
-
-    segment_len = args.seq_len * fps  # 90
-
-    if not args.debug:
-        pbar = tqdm(total=num_frames)
-        while cap.isOpened():
-            ret, frame = cap.read()
+        i = 0
+        pbar = tqdm(total=self.num_frames)
+        while self.cap.isOpened():
+            ret, frame = self.cap.read()
 
             if not ret:
                 cprint("Reached to the final frame", color="yellow")
                 break
 
-            extracted = face_extractor.run(i, frame)
+            transformed_image = None
+
+            extracted = self.face_extractor.run(i, frame)
 
             if extracted is not None:
-                writer.write(extracted)
-
-                aligned_image = align_face(extracted, stylegan_encoder.predictor)
+                aligned_image = align_face(extracted, self.stylegan_encoder.predictor)
 
                 if aligned_image is not None:
-                    transformed_image = stylegan_encoder.img_transforms(aligned_image)
+                    transformed_image = self.stylegan_encoder.img_transforms(
+                        aligned_image
+                    )
 
                     transformed_list.append(transformed_image)
 
-                else:
-                    if i < len(y_times):
-                        no_face_idxs.append(i)
             else:
-                if i < len(y_times):
-                    no_face_idxs.append(i)
+                extracted = np.zeros((*self.output_size, 3), dtype=np.uint8)
 
-                writer.write(
-                    np.zeros((*args.face_extractor.output_size, 3), dtype=np.uint8)
-                )
+            if transformed_image is None and i < len(y_times):
+                no_face_idxs.append(i)
 
-            i += 1
-            if i % 100 == 0:
-                pbar.update(100)
+            self.writer.write(extracted)
 
             if len(transformed_list) == batch_size:
-                _, latents = stylegan_encoder.run_on_batch(transformed_list)
+                pbar.update(batch_size)
+
+                _, latents = self.stylegan_encoder.run_on_batch(transformed_list)
                 y_list.append(latents)
                 transformed_list = []
 
-            # if i == 5000:
-            #     break
-
             assert len(transformed_list) <= batch_size
 
+            i += 1
+
         if not len(transformed_list) == 0:
-            _, latents = stylegan_encoder.run_on_batch(transformed_list)
+            _, latents = self.stylegan_encoder.run_on_batch(transformed_list)
             y_list.append(latents)
 
-        cap.release()
+        self.cap.release()
 
-        y = torch.cat(y_list).numpy()  # ( 109797, 18, 512 )
+        y = torch.cat(y_list).numpy()  # ( ~100000, 18, 512 )
+        y = crop_and_segment(y, self.segment_len)  # ( ~1000, 90, 18, 512 )
 
-    else:
-        y = np.random.rand(100000, 18, 512)
+        y_times = np.delete(self.y_times, no_face_idxs)
+        y_times = y_times[:: self.segment_len][: y.shape[0]]  # ( ~1000, )
+        assert len(y_times) == len(y)
 
-    y = y[: -(y.shape[0] % segment_len)]  # ( 109710, 18, 512 )
-    y = y.reshape(-1, segment_len, *y.shape[-2:])  # ( 1219, 90, 18, 512 )
-
-    y_times = np.delete(y_times, no_face_idxs)
-    y_times = y_times[::segment_len][: y.shape[0]]  # ( 1219, )
-
-    assert len(y) == len(y_times)
-
-    return y, y_times
+        return y, y_times
 
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="stylegan")
@@ -140,16 +100,17 @@ def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()
 
-    video_paths, video_times_paths, eeg_paths = get_arayadriving_dataset_paths(
+    video_paths, video_times_paths, eeg_paths = get_face2brain_data_paths(
         args.data_root, args.ica_data_root, args.start_subj, args.end_subj
     )
 
-    for i, paths in enumerate(zip(video_paths, video_times_paths, eeg_paths)):
-        cprint(f"Processing subject number {args.start_subj + i}", color="cyan")
+    for _i, paths in enumerate(zip(video_paths, video_times_paths, eeg_paths)):
+        i = args.start_subj + _i
+        cprint(f"Processing subject number {i}", color="cyan")
 
         video_path, video_times_path, eeg_path = paths
 
-        Y, face_times = face_preproc(args, video_path, video_times_path)
+        Y, face_times = FaceStyleGANPreprocessor(args, video_path, video_times_path)()
 
         if eeg_path.endswith(".hdf5"):  # ICA is not done
             X, eeg_times, _ = eeg_subset_fromTrigger(args, eeg_path)

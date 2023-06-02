@@ -1,7 +1,7 @@
 from hydra import initialize, compose
 import torch
 
-from brain2face.models import Classifier
+from brain2face.models.brain_encoder import Classifier
 
 with initialize(version_base=None, config_path="../configs/"):
     args = compose(config_name="ylab_ecog.yaml")

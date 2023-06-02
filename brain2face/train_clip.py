@@ -12,7 +12,8 @@ from omegaconf import DictConfig
 from brain2face.datasets import Brain2FaceYLabECoGDataset, Brain2FaceStyleGANDataset
 from brain2face.utils.layout import ch_locations_2d
 
-from brain2face.models import BrainEncoder, Classifier
+from brain2face.models.brain_encoder import BrainEncoder
+from brain2face.models.classifier import Classifier
 from brain2face.utils.loss import CLIPLoss
 
 
