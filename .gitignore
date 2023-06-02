@@ -1,5 +1,6 @@
 assets/*
 !assets/reports.md
+!assets/overview.jpeg
 
 data/*
 !data/.gitkeep
