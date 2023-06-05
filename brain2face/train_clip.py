@@ -152,7 +152,16 @@ def train(args: DictConfig):
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
-                Z = brain_encoder(X, subject_idxs)
+                # NOTE: Avoid CUDA out of memory
+                Z = torch.cat(
+                    [
+                        brain_encoder(_X, _subject_idxs)
+                        for _X, _subject_idxs in zip(
+                            torch.split(X, args.batch_size),
+                            torch.split(subject_idxs, args.batch_size),
+                        )
+                    ]
+                )
 
                 stime = time()
                 inference_times.append(time() - stime)
