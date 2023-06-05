@@ -40,6 +40,8 @@ class Classifier(nn.Module):
 
             similarity = similarity.T
 
+            torch.cuda.empty_cache()
+
         else:
             x_ = rearrange(x, "b f -> 1 b f")
             y_ = rearrange(y, "b f -> b 1 f")

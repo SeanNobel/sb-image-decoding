@@ -126,7 +126,7 @@ def train(args: DictConfig):
 
         brain_encoder.train()
         loss_func.train()
-        for i, (X, Y, subject_idxs) in enumerate(tqdm(train_loader)):
+        for X, Y, subject_idxs in tqdm(train_loader):
             X, Y = X.to(device), Y.to(device)
 
             Z = brain_encoder(X, subject_idxs)
@@ -148,7 +148,7 @@ def train(args: DictConfig):
 
         brain_encoder.eval()
         loss_func.eval()
-        for X, Y, subject_idxs in tqdm(test_loader):
+        for X, Y, subject_idxs in test_loader:
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
