@@ -48,7 +48,7 @@ class FaceStyleGANPreprocessor(FacePreprocessor):
 
             transformed_image = None
 
-            extracted = self.face_extractor.run(i, frame)
+            extracted = self.extractor.run(i, frame)
 
             if extracted is not None:
                 aligned_image = align_face(extracted, self.stylegan_encoder.predictor)
@@ -63,7 +63,7 @@ class FaceStyleGANPreprocessor(FacePreprocessor):
             else:
                 extracted = np.zeros((*self.output_size, 3), dtype=np.uint8)
 
-            if transformed_image is None and i < len(y_times):
+            if transformed_image is None and i < len(self.y_times):
                 no_face_idxs.append(i)
 
             self.writer.write(extracted)
@@ -95,7 +95,9 @@ class FaceStyleGANPreprocessor(FacePreprocessor):
         return y, y_times
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="stylegan")
+@hydra.main(
+    version_base=None, config_path="../../configs/stylegan", config_name="ica_deep"
+)
 def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()
@@ -108,9 +110,18 @@ def main(args: DictConfig) -> None:
         i = args.start_subj + _i
         cprint(f"Processing subject number {i}", color="cyan")
 
+        data_dir = f"data/{args.preproc_name}/S{i}/"
+        os.makedirs(data_dir, exist_ok=True)
+
         video_path, video_times_path, eeg_path = paths
 
-        Y, face_times = FaceStyleGANPreprocessor(args, video_path, video_times_path)()
+        if os.path.exists(data_dir + "face_before_crop.npy"):
+            Y = np.load(data_dir + "face_before_crop.npy")
+            face_times = np.load(data_dir + "face_times.npy")
+        else:
+            Y, face_times = FaceStyleGANPreprocessor(args, video_path, video_times_path)()
+            np.save(data_dir + "face_before_crop.npy", Y)
+            np.save(data_dir + "face_times.npy", face_times)
 
         if eeg_path.endswith(".hdf5"):  # ICA is not done
             X, eeg_times, _ = eeg_subset_fromTrigger(args, eeg_path)
@@ -138,12 +149,9 @@ def main(args: DictConfig) -> None:
 
         assert len(X) == len(Y)
 
-        data_dir = f"data/{args.preproc_name}/S{i}/"
-        os.makedirs(data_dir, exist_ok=True)
         np.save(data_dir + "brain.npy", X)
         np.save(data_dir + "face.npy", Y)
         np.save(data_dir + "eeg_times.npy", eeg_times)
-        np.save(data_dir + "face_times.npy", face_times)
 
 
 if __name__ == "__main__":

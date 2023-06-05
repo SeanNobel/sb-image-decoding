@@ -51,6 +51,11 @@ def segment_with_times(eeg, face_times, eeg_times, segment_len):
     Returns:
         _type_: _description_
     """
+    cprint(eeg.shape, "yellow")
+    cprint(face_times.shape, "yellow")
+    cprint(eeg_times.shape, "yellow")
+    cprint(segment_len, "yellow")
+
     face_drops_prev = 0
     face_drops_after = 0
     x_list = []
