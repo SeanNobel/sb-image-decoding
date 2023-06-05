@@ -61,7 +61,7 @@ class FacePreprocessor:
                 cprint("Reached to the final frame", color="yellow")
                 break
 
-            extracted = self.face_extractor.run(i, frame)
+            extracted = self.extractor.run(i, frame)
 
             if extracted is None:
                 extracted = np.zeros((*self.output_size, 3), dtype=np.uint8)
