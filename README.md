@@ -1,5 +1,7 @@
 # brain2face
 
+- [DALLE-2 paper](https://arxiv.org/pdf/2204.06125.pdf)
+
 ## UHD
 
 ### Overview
@@ -10,16 +12,15 @@
 
 ## Hayashi Lab @ AIST
 
-### Install encoder4editing
+- Submodule [encoder4editing](https://github.com/SeanNobel/encoder4editing)
 
-- Submodule -> https://github.com/SeanNobel/encoder4editing
-
+- Download StyleGAN inversion model trained on FFHQ StyleGAN
 ```bash
-cd encoder4editing/weights # weights folder was created
-gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT # FFHQ Inversion model
+cd encoder4editing/weights
+gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT
 ```
 
-### Run preprocess
+- Run preprocess (using 4 GPUs)
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 nohup python brain2face/preprocs/stylegan.py start_subj=0 end_subj=8 > logs/ica/out1.log &
