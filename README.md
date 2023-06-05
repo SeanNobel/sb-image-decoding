@@ -8,6 +8,10 @@
 
 <div align="center"><img src="assets/overview.jpeg" width=700></div>
 
+### TODOs
+
+- [ ] Accept negative shifts (sessions where video recording started before EEG recording)
+
 <br>
 
 ## Hayashi Lab @ AIST
