@@ -7,7 +7,7 @@ from tqdm import tqdm
 from termcolor import cprint
 import wandb
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from brain2face.datasets import Brain2FaceYLabECoGDataset, Brain2FaceStyleGANDataset
 from brain2face.utils.layout import ch_locations_2d
@@ -17,10 +17,12 @@ from brain2face.models.classifier import Classifier
 from brain2face.utils.loss import CLIPLoss
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="ylab_ecog")
+@hydra.main(version_base=None, config_path="../configs", config_name="default")
 def train(args: DictConfig):
+    # NOTE: Using default.yaml only for specifying the experiment settings yaml.
+    args = OmegaConf.load(os.path.join("configs", args.config))
+
     if args.seed is not None:
-        print(f"Setting random seed: {args.seed}")
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
         torch.cuda.manual_seed(args.seed)
@@ -33,7 +35,7 @@ def train(args: DictConfig):
     if args.use_wandb:
         wandb.config = {k: v for k, v in args.__dict__.items() if not k.startswith("__")}
         wandb.init(
-            project="brain2face_ylab",
+            project=args.project_name,
             config=wandb.config,
             save_code=True,
         )
