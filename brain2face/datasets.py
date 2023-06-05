@@ -4,7 +4,7 @@ import numpy as np
 import glob
 import mne
 import mediapipe as mp
-from typing import Union, List
+from typing import Union, List, Optional, Callable
 from termcolor import cprint
 from omegaconf import DictConfig
 
@@ -14,11 +14,15 @@ mp_face_mesh = mp.solutions.face_mesh
 
 class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
     def __init__(
-        self, args, session_paths: List[str], train: bool = True
+        self,
+        args,
+        session_paths: List[str],
+        train: bool = True,
+        y_reformer: Optional[Callable] = None,
     ) -> List[torch.Tensor]:
         super().__init__()
 
-        # NOTE: no need to be natsorted.
+        # NOTE: No need to be natsorted.
         # NOTE: Selecting directories with preprocessed data.
         session_paths = self.drop_bads(session_paths)
 
@@ -63,6 +67,9 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         for subject_idx, subject_path in enumerate(session_paths):
             X = torch.from_numpy(np.load(subject_path + "/brain.npy").astype(np.float32))
             Y = torch.from_numpy(np.load(subject_path + "/face.npy").astype(np.float32))
+
+            if y_reformer is not None:
+                Y = y_reformer(Y)
 
             if args.split == "deep":
                 assert X.shape[0] == Y.shape[0]
@@ -131,23 +138,32 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
 
 class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
-        session_paths = glob.glob("data/StyleGAN/" + args.preproc_name + "/*/")
-        Y_list = super().__init__(args, session_paths, train)
+        session_paths = glob.glob(
+            "data/preprocessed/stylegan/" + args.preproc_name + "/*/"
+        )
+        Y_list = super().__init__(
+            args, session_paths, train, y_reformer=self.reshape_stylegan_latent
+        )
 
-        self.Y = self.reshape_stylegan_latent(Y_list)
-        self.Y_all = torch.cat(Y_list)
-        cprint(f"self.Y: {self.Y.shape} | self.Y_all: {self.Y_all.shape}", color="cyan")
+        self.Y = torch.cat(Y_list)
+        cprint(f"self.Y: {self.Y.shape}", color="cyan")
         del Y_list
 
-    def reshape_stylegan_latent(self, Y: List[torch.Tensor]):
-        Y = [_Y[:, :, 4:8] for _Y in Y]
+    @staticmethod
+    def reshape_stylegan_latent(Y: torch.Tensor) -> torch.Tensor:
+        """_summary_
+        Args:
+            Y (torch.Tensor): ( samples, segment_len=90, styles=18, features=512 )
+        Returns:
+            Y (torch.Tensor): ( samples, features=512, segment_len*sub_styles=360 )
+        """
+        # Take four styles (TODO: take all styles. But will run out of memory)
+        Y = Y[:, :, 4:8]
 
-        Y = torch.cat(Y)  # ( sample, 90, 4, 512 )
+        # NOTE: squash latent layers to time dimension ( samples, segment_len*styles=360, features )
+        Y = Y.contiguous().view(Y.shape[0], -1, Y.shape[-1])
 
-        # NOTE: squash latent layers to time dimension
-        Y = Y.contiguous().view(Y.shape[0], -1, Y.shape[-1])  # ( sample, 360, 512 )
-
-        Y = Y.permute(0, 2, 1)  # ( sample, 512, 360 )
+        Y = Y.permute(0, 2, 1)  # ( samples, features=512, segment_len*styles=360 )
 
         return Y
 
