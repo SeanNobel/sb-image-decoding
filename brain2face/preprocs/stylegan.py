@@ -12,8 +12,8 @@ from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, open_dict
 import multiprocessing
 
-ctx = multiprocessing.get_context("spawn")
-torch.multiprocessing.set_start_method("spawn", force=True)
+# ctx = multiprocessing.get_context("spawn")
+# torch.multiprocessing.set_start_method("spawn", force=True)
 
 from brain2face.utils.brain_preproc import brain_preproc
 from brain2face.utils.face_preproc import FacePreprocessor
@@ -110,7 +110,7 @@ def main(args: DictConfig) -> None:
         i = args.start_subj + _i
         cprint(f"Processing subject number {i}", color="cyan")
 
-        data_dir = f"data/{args.preproc_name}/S{i}/"
+        data_dir = f"data/preprocessed/stylegan/{args.preproc_name}/S{i}/"
         os.makedirs(data_dir, exist_ok=True)
 
         video_path, video_times_path, eeg_path = paths

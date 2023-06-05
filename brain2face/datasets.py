@@ -147,6 +147,8 @@ class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
 
         self.Y = torch.cat(Y_list)
         cprint(f"self.Y: {self.Y.shape}", color="cyan")
+        assert not self.Y.requires_grad
+
         del Y_list
 
     @staticmethod

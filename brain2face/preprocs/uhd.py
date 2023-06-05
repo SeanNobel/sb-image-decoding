@@ -87,7 +87,7 @@ def main(args: DictConfig) -> None:
         cprint(f"Session {i} EEG: {X.shape}", "cyan")
         cprint(f"Session {i} face: {Y.shape}", "cyan")
 
-        data_dir = f"data/uhd/{args.preproc_name}/S{i}/"
+        data_dir = f"data/preprocessed/uhd/{args.preproc_name}/S{i}/"
         os.makedirs(data_dir, exist_ok=True)
         np.save(data_dir + "brain.npy", X)
         np.save(data_dir + "face.npy", Y)
