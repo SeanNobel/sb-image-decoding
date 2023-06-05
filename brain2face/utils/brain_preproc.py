@@ -106,7 +106,7 @@ def brain_preproc(
     """ Filtering """
     brain = mne.filter.filter_data(
         brain,
-        sfreq=args.brain_resample_sfreq,
+        sfreq=args.brain_orig_sfreq,
         l_freq=args.brain_filter_low,
         h_freq=args.brain_filter_high,
     )

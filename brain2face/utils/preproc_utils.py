@@ -2,7 +2,7 @@ import os
 from glob import glob
 import numpy as np
 from termcolor import cprint
-from PIL import Image
+import json
 from typing import Optional, List
 
 
@@ -21,6 +21,13 @@ def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:
 
 
 def get_uhd_data_paths(data_root: str) -> List[str]:
+    """NOTE: Currently only working for sessions in which EEG recording started before
+        video recording. TODO: Accept negative shift.
+    Args:
+        data_root (str): _description_
+    Returns:
+        List[str]: _description_
+    """
     sync_paths = []
     video_paths = []
     eeg_paths = []
@@ -29,6 +36,11 @@ def get_uhd_data_paths(data_root: str) -> List[str]:
     print(f"Found {len(_sync_paths)} sync files.")
 
     for sync_path in _sync_paths:
+        shift = -json.load(open(sync_path))["estim_delay_sec"]
+        if shift < 0:
+            cprint(f"SKIPPED: {sync_path} (negative shift)", color="yellow")
+            continue
+
         dirname = os.path.dirname(sync_path)
 
         # NOTE: Loosely ensuring that the video is not a copied one or something
@@ -73,7 +85,7 @@ def get_face2brain_data_paths(
         if os.path.exists(video_times_path):
             video_times_paths.append(video_times_path)
         else:
-            cprint(f"SKIPPING: Timestamps for camera5 not found.", color="yellow")
+            cprint(f"SKIPPED: Timestamps for camera5 not found.", color="yellow")
             continue
 
         if ica_data_root is None:
@@ -86,7 +98,7 @@ def get_face2brain_data_paths(
             eeg_paths.append(eeg_path[0])
         else:
             cprint(
-                f"SKIPPING: {len(eeg_path)} corresponding EEG data found.", color="yellow"
+                f"SKIPPED: {len(eeg_path)} corresponding EEG data found.", color="yellow"
             )
             continue
 
