@@ -81,10 +81,11 @@ class FacePreprocessor:
 
         self.cap.release()
 
-        drop_segments = np.unique(drop_list)
+        # NOTE: Avoid drop_segments being float when drop_list is empty
+        drop_segments = np.unique(drop_list).astype(np.int64)
 
-        y = np.concatenate(y_list)  # ( ~100000, 256, 256, 3 )
-        y = crop_and_segment(y, self.segment_len, drop_segments)
+        y = np.stack(y_list)  # ( ~100000, 256, 256, 3 )
+        y = crop_and_segment(y, self.segment_len)
         # ( ~1000, 90, 256, 256, 3 )
 
         return y, drop_segments

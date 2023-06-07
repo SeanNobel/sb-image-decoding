@@ -89,7 +89,8 @@ class FaceStyleGANPreprocessor(FacePreprocessor):
             _, latents = self.stylegan_encoder.run_on_batch(transformed_list)
             y_list.append(latents)
 
-        drop_segments = np.unique(drop_list)
+        # NOTE: Avoid drop_segments being float when drop_list is empty
+        drop_segments = np.unique(drop_list).astype(np.int64)
 
         y = torch.cat(y_list).numpy()  # ( ~100000, 18, 512 )
         assert len(y_times) == len(y), "Number of samples for y, y_times is different."

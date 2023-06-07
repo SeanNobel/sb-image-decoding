@@ -106,7 +106,9 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         del X_list
         cprint(f"self.X: {self.X.shape}", color="cyan")
 
-        return Y_list
+        self.Y = torch.cat(Y_list)
+        del Y_list
+        cprint(f"self.Y: {self.Y.shape}", color="cyan")
 
         if args.chance:
             self.Y = self.Y[torch.randperm(self.Y.shape[0])]
@@ -126,14 +128,23 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         return subject_paths
 
 
+class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
+    def __init__(self, args, train: bool = True) -> None:
+        session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
+
+        super().__init__(args, session_paths, train)
+
+        # NOTE: Only UHD dataset needs to encode face and train that.
+        self.Y.requires_grad = True
+
+
 class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
-        session_paths = glob.glob("data/YLab/" + args.preproc_name + "/*/")
-        Y_list = super().__init__(args, session_paths, train)
+        session_paths = glob.glob("data/preprocessed/ylab/" + args.preproc_name + "/*/")
 
-        self.Y = torch.cat(Y_list)
-        cprint(f"self.Y: {self.Y.shape}", color="cyan")
-        del Y_list
+        super().__init__(args, session_paths, train)
+
+        assert not self.Y.requires_grad
 
 
 class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
@@ -141,15 +152,12 @@ class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
         session_paths = glob.glob(
             "data/preprocessed/stylegan/" + args.preproc_name + "/*/"
         )
-        Y_list = super().__init__(
+
+        super().__init__(
             args, session_paths, train, y_reformer=self.reshape_stylegan_latent
         )
 
-        self.Y = torch.cat(Y_list)
-        cprint(f"self.Y: {self.Y.shape}", color="cyan")
         assert not self.Y.requires_grad
-
-        del Y_list
 
     @staticmethod
     def reshape_stylegan_latent(Y: torch.Tensor) -> torch.Tensor:
