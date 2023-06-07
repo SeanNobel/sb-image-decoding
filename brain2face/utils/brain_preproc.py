@@ -41,13 +41,15 @@ def baseline_correction(X: np.ndarray, baseline_len_samp: int) -> np.ndarray:
     return X.transpose(1, 0, 2)  # Back to ( segments, C, T )
 
 
-def segment_with_times(eeg, face_times, eeg_times, segment_len):
+def segment_with_times(
+    eeg: np.ndarray, segment_len: int, face_times: np.ndarray, eeg_times: np.ndarray
+) -> Tuple[np.ndarray, int, int]:
     """For driving game EEG, but could be modified for other datasets later.
     Args:
-        eeg (_type_): _description_
-        face_times (_type_): _description_
-        eeg_times (_type_): _description_
-        segment_len (_type_): _description_
+        eeg (np.ndarray): ( channels, timesteps )
+        segment_len (int): Number of timesteps per segment
+        face_times (np.ndarray): ( timesteps, )
+        eeg_times (np.ndarray): ( timestep, )
     Returns:
         _type_: _description_
     """
@@ -56,7 +58,11 @@ def segment_with_times(eeg, face_times, eeg_times, segment_len):
     cprint(eeg_times.shape, "yellow")
     cprint(segment_len, "yellow")
 
-    face_drops_prev = 0
+    # NOTE: ensure they're ascending
+    assert np.all(eeg_times[:-1] <= eeg_times[1:])
+    assert np.all(face_times[:-1] <= face_times[1:])
+
+    face_drops_prev = 0  # NOTE: Number of segments
     face_drops_after = 0
     x_list = []
     for t in tqdm(face_times):
@@ -81,27 +87,21 @@ def segment_with_times(eeg, face_times, eeg_times, segment_len):
 def brain_preproc(
     args,
     brain: np.ndarray,
+    segment_len: int,
     brain_times: Optional[np.ndarray] = None,
     face_times: Optional[np.ndarray] = None,
-    segment_len: Optional[int] = None,
     shift: Optional[float] = None,
 ) -> Tuple[np.ndarray, Optional[int], Optional[int]]:
     """
     Args:
         brain: EEG or ECoG | ( channels, timesteps )
+        segment_len: Number of timesteps per segment
         brain_times: ( timesteps, )
         face_times: ( timesteps, )
-        segment_len: Number of timesteps per segment
         shift: How many seconds to shift brain data to the future (need to be positive)
     Returns:
         brain: ( segments, channels, segment_len )
     """
-    if brain_times is not None:
-        # NOTE: ensure they're ascending
-        assert np.all(brain_times[:-1] <= brain_times[1:])
-        assert np.all(face_times[:-1] <= face_times[1:])
-    else:
-        assert segment_len is not None, "Must provide segment_len if no brain_times"
 
     """ Filtering """
     brain = mne.filter.filter_data(
@@ -122,6 +122,8 @@ def brain_preproc(
 
     """ Segmenting """
     if brain_times is not None:
+        assert face_times is not None, "Must provide face_times with brain_times."
+
         # NOTE: need to ensure that we get same timings by running resample separately for
         #       EEG and timestamps
         brain_times = mne.filter.resample(
@@ -129,7 +131,7 @@ def brain_preproc(
         )
 
         brain, face_drops_prev, face_drops_after = segment_with_times(
-            brain, face_times, brain_times, segment_len
+            brain, segment_len, face_times, brain_times
         )  # ( segments, channels, segment_len )
 
     else:
@@ -138,9 +140,8 @@ def brain_preproc(
         if shift is not None:
             brain = brain[int(shift * args.brain_resample_sfreq) :]
 
-        brain = crop_and_segment(
-            brain, segment_len
-        )  # ( segments, segment_len, channels )
+        brain = crop_and_segment(brain, segment_len)
+        # ( segments, segment_len, channels )
         brain = brain.transpose(0, 2, 1)  # ( segments, channels, segment_len )
 
     """ Baseline Correction """

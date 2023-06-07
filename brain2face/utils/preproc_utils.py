@@ -8,19 +8,27 @@ from typing import Optional, List
 
 def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:
     """Crops the input to multiple of segment_len and segments it for the first dimension.
-    Rest of the dimensions are arbitrary. Applies for both EEG and video data.
+    Rest of the dimensions are arbitrary. Applies for both EEG and video data. Also works for
+    1D array.
     Args:
         x (np.ndarray): ( timesteps, ... )
         segment_len (int): _description_
     Returns:
-        np.ndarray: ( segments, segment_len, ... )
+        x (np.ndarray): ( segments, segment_len, ... )
     """
-    x = x[: -(x.shape[0] % segment_len)]  # ( ~100000, 256, 256, 3 )
+    # Crop
+    x = x[: -(x.shape[0] % segment_len)]  # ( ~100000, * )
 
-    return x.reshape(-1, segment_len, *x.shape[1:])  # ( ~1000, 90, 256, 256, 3 )
+    # Segment
+    x = x.reshape(-1, segment_len, *x.shape[1:])
+    # ( ~100000//segment_len, segment_len, * )
+
+    return x
 
 
-def get_uhd_data_paths(data_root: str) -> List[str]:
+def get_uhd_data_paths(
+    data_root: str, start_subj: Optional[int] = None, end_subj: Optional[int] = None
+) -> List[str]:
     """NOTE: Currently only working for sessions in which EEG recording started before
         video recording. TODO: Accept negative shift.
     Args:
@@ -62,7 +70,22 @@ def get_uhd_data_paths(data_root: str) -> List[str]:
             continue
 
     assert len(sync_paths) == len(video_paths) == len(eeg_paths)
-    cprint(f"Using {len(sync_paths)} sessions.", color="cyan")
+
+    cprint(f"{len(video_paths)} sessions in total.", color="cyan")
+
+    if start_subj is not None:
+        assert end_subj is not None, "If start_subj is given, end_subj must be given."
+
+        cprint(
+            f"Taking sessions from {start_subj} to {end_subj} for preprocessing",
+            color="cyan",
+        )
+        sync_paths = sync_paths[start_subj:end_subj]
+        video_paths = video_paths[start_subj:end_subj]
+        eeg_paths = eeg_paths[start_subj:end_subj]
+
+    for path in eeg_paths:
+        cprint(path, color="cyan")
 
     return sync_paths, video_paths, eeg_paths
 
@@ -102,20 +125,15 @@ def get_face2brain_data_paths(
             )
             continue
 
-    assert len(video_paths) == len(eeg_paths) and len(video_paths) == len(
-        video_times_paths
-    ), "Number of video paths, EEG paths and video times paths must be equal."
+    assert len(video_paths) == len(eeg_paths) == len(video_times_paths)
 
-    cprint(
-        f"{len(video_paths)} subjects (counting different sessions as different subjects)",
-        color="cyan",
-    )
+    cprint(f"{len(video_paths)} sessions in total.", color="cyan")
 
     if start_subj is not None:
         assert end_subj is not None, "If start_subj is given, end_subj must be given."
 
         cprint(
-            f"Taking subjects from {start_subj} to {end_subj} for preprocessing",
+            f"Taking sessions from {start_subj} to {end_subj} for preprocessing",
             color="cyan",
         )
         video_paths = video_paths[start_subj:end_subj]
@@ -126,15 +144,3 @@ def get_face2brain_data_paths(
         cprint(path, color="cyan")
 
     return video_paths, video_times_paths, eeg_paths
-
-
-def export_gif(path, example: np.ndarray) -> None:
-    example = example[:10].reshape(-1, example.shape[-2], example.shape[-1])
-    gif = [Image.fromarray(p) for p in example]
-    gif[0].save(
-        path,
-        save_all=True,
-        append_images=gif[1:],
-        duration=100,
-        loop=0,
-    )

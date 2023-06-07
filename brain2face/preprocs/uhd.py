@@ -41,7 +41,9 @@ def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()
 
-    sync_paths, video_paths, eeg_paths = get_uhd_data_paths(args.data_root)
+    sync_paths, video_paths, eeg_paths = get_uhd_data_paths(
+        args.data_root, args.start_subj, args.end_subj
+    )
 
     for _i, paths in enumerate(zip(sync_paths, video_paths, eeg_paths)):
         i = args.start_subj + _i
@@ -74,18 +76,24 @@ def main(args: DictConfig) -> None:
 
         X = brain_preproc(
             args,
-            X,
+            brain=X,
             segment_len=int(args.brain_resample_sfreq * args.seq_len),
             shift=shift,
         )
 
-        assert len(X) == len(Y), "Brain and face data have different number of segments."
+        cprint(f"Session {i} EEG: {X.shape}", "cyan")
+        cprint(f"Session {i} face: {Y.shape}", "cyan")
+        if len(X) > len(Y):
+            X = X[: len(Y)]
+        elif len(X) < len(Y):
+            Y = Y[: len(X)]
+            drop_segments = np.delete(drop_segments, np.where(drop_segments >= len(X)))
 
         X = np.delete(X, drop_segments, axis=0)
         Y = np.delete(Y, drop_segments, axis=0)
 
-        cprint(f"Session {i} EEG: {X.shape}", "cyan")
-        cprint(f"Session {i} face: {Y.shape}", "cyan")
+        cprint(f"Session {i} EEG (after drop): {X.shape}", "cyan")
+        cprint(f"Session {i} face (after drop): {Y.shape}", "cyan")
 
         data_dir = f"data/preprocessed/uhd/{args.preproc_name}/S{i}/"
         os.makedirs(data_dir, exist_ok=True)
