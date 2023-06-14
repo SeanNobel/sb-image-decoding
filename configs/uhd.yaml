@@ -1,11 +1,11 @@
 # ==== Preprocessing ==== #
-preproc_name: test
+preproc_name: init
 debug: False
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
 start_subj: 0
-end_subj: 8
+end_subj: 22
 
 seq_len: 3 # segment length in seconds
 
