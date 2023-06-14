@@ -12,6 +12,10 @@
 
 - [ ] Accept negative shifts (sessions where video recording started before EEG recording)
 
+### Usage
+
+- Run preprocess
+
 ```bash
 nohup python brain2face/preprocs/uhd.py start_subj=0 end_subj=8 > logs/uhd/out1.log &
 nohup python brain2face/preprocs/uhd.py start_subj=8 end_subj=16 > logs/uhd/out2.log &
@@ -21,6 +25,8 @@ nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out
 <br>
 
 ## Hayashi Lab @ AIST
+
+### Usage
 
 - Submodule [encoder4editing](https://github.com/SeanNobel/encoder4editing)
 
