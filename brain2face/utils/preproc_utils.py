@@ -53,7 +53,7 @@ def get_uhd_data_paths(
 
         # NOTE: Loosely ensuring that the video is not a copied one or something
         video_path = glob(dirname + "/*[0-9].mov") + glob(dirname + "/*[0-9].mkv")
-        eeg_path = glob(dirname + "/EEG_try*.h5") + glob(dirname + "/EEG_try*.xdf")
+        eeg_path = glob(dirname + "/EEG_try*139.h5") + glob(dirname + "/EEG_try*139.xdf")
 
         if len(video_path) == 1 and len(eeg_path) == 1:
             cprint(f"USED: {sync_path}", color="cyan")

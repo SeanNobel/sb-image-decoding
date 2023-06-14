@@ -37,6 +37,7 @@ project_name: brain2face_stylegan
 train_name: ica_deep
 
 dataset: Brain2FaceStyleGANDataset
+encode_face: False # Already encoded in StyleGAN latent
 
 split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
@@ -44,8 +45,7 @@ split: deep # shallow / deep / subject_random / subject_each
 
 train_ratio: 0.8
 chance: False
-# 🔥 FIXME: with too large a batchsize there isn't enough 
-# 🔥 FIXME: samples in the eval set, and the CLIPLoss produces nans silently
+
 batch_size: 64
 lr: 0.005
 lr_scheduler: cosine # cosine or multistep
