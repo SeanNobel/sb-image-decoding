@@ -7,14 +7,17 @@ import numpy as np
 import glob
 import mne
 import mediapipe as mp
+import h5py
 from functools import partial
 from typing import Union, List, Optional, Callable
 from termcolor import cprint
 from omegaconf import DictConfig
 
 import clip
+from clip.model import CLIP
 
 from brain2face.utils.train_utils import sequential_apply
+from brain2face.utils.preproc_utils import sequential_load
 
 mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
@@ -73,9 +76,12 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         Y_list = []
         subject_idx_list = []
         for subject_idx, subject_path in enumerate(session_paths):
-            X = torch.from_numpy(np.load(subject_path + "/brain.npy").astype(np.float32))
+            X = torch.from_numpy(
+                np.load(os.path.join(subject_path, "brain.npy")).astype(np.float32)
+            )
 
-            Y = torch.from_numpy(np.load(subject_path + "/face.npy"))
+            Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
+            Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
 
             if args.split == "deep":
                 assert X.shape[0] == Y.shape[0]
@@ -87,8 +93,6 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
                 else:
                     X = X[split_idx:]
                     Y = Y[split_idx:]
-
-            Y = y_reformer(Y)
 
             # NOTE: identify subject for subject_each split
             if args.split == "subject_each":
@@ -140,12 +144,17 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
 
-        if args.face == "video":
+        if args.face.type == "video":
             y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
-        elif args.face == "image":
-            device = f"cuda:{args.cuda_id}"
-            clip_model, preprocess = clip.load(args.clip_model, device=device)
-            y_reformer = partial(self.encode_single_frame, preprocess, clip_model, device)
+
+        elif args.face.type == "image":
+            if args.face.pretrained:
+                device = f"cuda:{args.cuda_id}"
+                clip_model, preprocess = clip.load(args.clip_model, device=device)
+                y_reformer = partial(self.to_single_frame, clip_model, preprocess, device)
+
+            else:
+                y_reformer = self.to_single_frame
         else:
             y_reformer = None
 
@@ -158,21 +167,33 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
         #     self.Y.requires_grad = True
 
     @staticmethod
-    def encode_single_frame(
-        Y: torch.Tensor, preprocess, clip_model, device
+    def to_single_frame(
+        Y: np.ndarray,
+        clip_model: Optional[CLIP] = None,
+        preprocess: Optional[transforms.Compose] = None,
+        device: str = "cuda",
     ) -> torch.Tensor:
         """Extracts single frame from video sequence, then encodes to pre-trained CLIP space.
         Args:
-            Y (torch.Tensor): ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            Y: ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            clip_model: Pretrained image encoder of Radford 2021.
+            preprocess: Transforms for the pretrained image encoder.
         Returns:
-            Y (torch.Tensor): ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            Y: ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+                or ( samples, F )
         """
         # NOTE: Take the frame in the middle
         Y = Y[:, Y.shape[1] // 2]
 
-        Y = preprocess(Y)
+        if clip_model is not None:
+            assert preprocess is not None, "clip_model needs preprocess."
 
-        Y = sequential_apply(Y, clip_model.encode_image, batch_size=512, device=device)
+            Y = preprocess(Y).to(device)
+            Y = clip_model.encode_image(Y).cpu()
+
+        else:
+            Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
+            Y = Y.to(torch.float32) / 255.0
 
         return Y
 

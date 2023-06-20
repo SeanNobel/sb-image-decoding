@@ -37,7 +37,31 @@ project_name: brain2face_uhd
 train_name: deep-split
 
 dataset: Brain2FaceUHDDataset
-encode_face: True
+
+F: 512 # CLIP embedding dimension
+
+face:
+  type: image # image or video
+  pretrained: False
+  clip_model: ViT-B/32 # Used if pretrained is False
+
+vit:
+  image_size: 256
+  patch_size: 32
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dropout: 0.1
+  emb_dropout: 0.1
+
+# Brain encoder
+D1: 270
+D2: 320
+K: 32
+d_drop: 0.3 # Channel distance for spatial dropout
+# NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
+final_kernel_size: 2
+final_stride: 2
 
 split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
@@ -55,24 +79,10 @@ epochs: 500
 reduction: mean
 init_temperature: 5.0
 
+montage_path: brain2face/utils/gTecUtils/montages/electrodes_uhd.xml
+
 seed: 1234
 
 cuda_id: 1
 
 use_wandb: False
-
-
-# ==== Architecture ==== #
-# Common
-F: 512 # CLIP emb dim
-
-# Brain
-D1: 270
-D2: 320
-K: 32
-d_drop: 0.3 # Channel distance for spatial dropout
-# NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
-final_kernel_size: 2
-final_stride: 2
-
-clip_model: ViT-B/32

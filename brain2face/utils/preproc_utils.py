@@ -1,9 +1,41 @@
 import os
 from glob import glob
 import numpy as np
+import torch
 from termcolor import cprint
 import json
-from typing import Optional, List
+import h5py
+from tqdm import tqdm
+from typing import Optional, List, Callable, Union
+
+
+def sequential_load(
+    data: h5py._hl.dataset.Dataset, bufsize: int, preproc_func: Optional[Callable] = None
+) -> Union[np.ndarray, torch.Tensor]:
+    """h5 EEG files are sometimes too large (~500GB) to load at once.
+    Args:
+        data: ( chunks, orig_sfreq, channels )
+        bufsize: How many chunks to process at once
+        preproc_func: e.g.) mne.filter.resample,
+    Returns:
+        np.ndarray: Shape depends on preproc_func.
+    """
+    X = []
+
+    for i in tqdm(range(len(data) // bufsize + 1)):
+        chunk = data[i * bufsize : (i + 1) * bufsize]
+
+        if preproc_func is not None:
+            chunk = preproc_func(chunk)
+
+        X.append(chunk)
+
+    if isinstance(X[0], np.ndarray):
+        return np.concatenate(X, axis=1)
+    elif isinstance(X[0], torch.Tensor):
+        return torch.cat(X, dim=0)
+    else:
+        raise TypeError(f"Encountered unknown type: {type(X[0])}")
 
 
 def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:

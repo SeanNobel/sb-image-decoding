@@ -5,6 +5,8 @@ import numpy as np
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
+from typing import Optional
+
 # helpers
 
 
@@ -103,14 +105,13 @@ class Transformer(nn.Module):
 class ViT(nn.Module):
     def __init__(
         self,
-        *,
         image_size,
         patch_size,
-        num_classes,
         dim,
         depth,
         heads,
         mlp_dim,
+        num_classes: Optional[int] = None,
         pool="cls",
         channels=3,
         dim_head=64,
@@ -150,7 +151,10 @@ class ViT(nn.Module):
         self.pool = pool
         self.to_latent = nn.Identity()
 
-        self.mlp_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, num_classes))
+        if num_classes is not None:
+            self.mlp_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, num_classes))
+        else:
+            self.mlp_head = None
 
     def forward(self, img):
         x = self.to_patch_embedding(img)
@@ -166,7 +170,11 @@ class ViT(nn.Module):
         x = x.mean(dim=1) if self.pool == "mean" else x[:, 0]
 
         x = self.to_latent(x)
-        return self.mlp_head(x)
+
+        if self.mlp_head is not None:
+            x = self.mlp_head(x)
+
+        return x
 
 
 class ViViT(nn.Module):

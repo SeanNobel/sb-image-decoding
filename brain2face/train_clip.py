@@ -34,7 +34,7 @@ def train(args: DictConfig):
         torch.cuda.manual_seed(args.seed)
         torch.cuda.manual_seed_all(args.seed)
 
-    run_dir = f"runs/{args.train_name}/"
+    run_dir = os.path.join("runs", args.train_name)
     if not os.path.exists(run_dir):
         os.mkdir(run_dir)
 
@@ -87,26 +87,25 @@ def train(args: DictConfig):
     # ---------------------
     #        Models
     # ---------------------
-    if args.face == "video":
+    if args.face.type == "video":
         brain_encoder = BrainEncoder(
             args, num_subjects=num_subjects, layout_fn=ch_locations_2d
         ).to(device)
 
         face_encoder = ViViT(
-            image_size=args.vivit.image_size,
-            patch_size=args.vivit.patch_size,
-            num_frames=args.seq_len * args.fps,
-            dim=args.F,
-            depth=args.vivit.depth,
-            in_channels=args.vivit.in_channels,
+            num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
         ).to(device)
 
-    elif args.face == "image":
+    elif args.face.type == "image":
         brain_encoder = BrainEncoderReduceTime(
             args, num_subjects=num_subjects, layout_fn=ch_locations_2d
         ).to(device)
 
-        face_encoder = None
+        if args.face.pretrained:
+            face_encoder = None
+
+        else:
+            face_encoder = ViT(dim=args.F, **args.vit).to(device)
 
     else:
         raise NotImplementedError
