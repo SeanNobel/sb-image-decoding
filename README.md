@@ -2,6 +2,8 @@
 
 - [DALLE-2 paper](https://arxiv.org/pdf/2204.06125.pdf)
 
+## TODO: Apollo-5からプッシュする．
+
 ## UHD
 
 ### Overview
@@ -11,10 +13,29 @@
 ### TODOs
 
 - [ ] Accept negative shifts (sessions where video recording started before EEG recording)
+- [ ] Preprocessingの出力を.npyから.h5にする
+
+### Usage
+
+- Run preprocess
+
+```bash
+nohup python brain2face/preprocs/uhd.py start_subj=0 end_subj=8 > logs/uhd/out1.log &
+nohup python brain2face/preprocs/uhd.py start_subj=8 end_subj=16 > logs/uhd/out2.log &
+nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out3.log &
+```
+
+- Run CLIP training
+
+```bash
+nohup python brain2face/train_clip.py config=uhd/video.yaml > logs/uhd/train_clip.log &
+```
 
 <br>
 
 ## Hayashi Lab @ AIST
+
+### Usage
 
 - Submodule [encoder4editing](https://github.com/SeanNobel/encoder4editing)
 

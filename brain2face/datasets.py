@@ -1,12 +1,23 @@
 import os, sys
 import torch
+from torchvision import transforms
+import torchvision.transforms.functional as F
+from torchvision.transforms import InterpolationMode
 import numpy as np
 import glob
 import mne
 import mediapipe as mp
+import h5py
+from functools import partial
 from typing import Union, List, Optional, Callable
 from termcolor import cprint
 from omegaconf import DictConfig
+
+import clip
+from clip.model import CLIP
+
+from brain2face.utils.train_utils import sequential_apply
+from brain2face.utils.preproc_utils import sequential_load
 
 mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
@@ -17,8 +28,8 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         self,
         args,
         session_paths: List[str],
-        train: bool = True,
-        y_reformer: Optional[Callable] = None,
+        train: bool,
+        y_reformer: Callable,
     ) -> List[torch.Tensor]:
         super().__init__()
 
@@ -65,14 +76,16 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         Y_list = []
         subject_idx_list = []
         for subject_idx, subject_path in enumerate(session_paths):
-            X = torch.from_numpy(np.load(subject_path + "/brain.npy").astype(np.float32))
-            Y = torch.from_numpy(np.load(subject_path + "/face.npy").astype(np.float32))
+            X = torch.from_numpy(
+                np.load(os.path.join(subject_path, "brain.npy")).astype(np.float32)
+            )
 
-            if y_reformer is not None:
-                Y = y_reformer(Y)
+            Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
+            Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
 
             if args.split == "deep":
                 assert X.shape[0] == Y.shape[0]
+
                 split_idx = int(X.shape[0] * args.train_ratio)
                 if train:
                     X = X[:split_idx]
@@ -85,7 +98,6 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
             if args.split == "subject_each":
                 name = subject_path.split("_")[-1]
                 subject_idx = np.where(np.array(subject_names) == name)[0][0]
-                # print(subject_idx)
 
             subject_idx *= torch.ones(X.shape[0], dtype=torch.uint8)
             print(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}")
@@ -106,7 +118,9 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         del X_list
         cprint(f"self.X: {self.X.shape}", color="cyan")
 
-        return Y_list
+        self.Y = torch.cat(Y_list)
+        del Y_list
+        cprint(f"self.Y: {self.Y.shape}", color="cyan")
 
         if args.chance:
             self.Y = self.Y[torch.randperm(self.Y.shape[0])]
@@ -126,14 +140,107 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         return subject_paths
 
 
+class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
+    def __init__(self, args, train: bool = True) -> None:
+        session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
+
+        if args.face.type == "video":
+            y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
+
+        elif args.face.type == "image":
+            if args.face.pretrained:
+                device = f"cuda:{args.cuda_id}"
+                clip_model, preprocess = clip.load(args.clip_model, device=device)
+                y_reformer = partial(self.to_single_frame, clip_model, preprocess, device)
+
+            else:
+                y_reformer = self.to_single_frame
+        else:
+            y_reformer = None
+
+        super().__init__(args, session_paths, train, y_reformer)
+
+        # FIXME
+        self.X = self.X[:, : args.num_channels]
+
+        # if args.face == "video":
+        #     self.Y.requires_grad = True
+
+    @staticmethod
+    def to_single_frame(
+        Y: np.ndarray,
+        clip_model: Optional[CLIP] = None,
+        preprocess: Optional[transforms.Compose] = None,
+        device: str = "cuda",
+    ) -> torch.Tensor:
+        """Extracts single frame from video sequence, then encodes to pre-trained CLIP space.
+        Args:
+            Y: ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            clip_model: Pretrained image encoder of Radford 2021.
+            preprocess: Transforms for the pretrained image encoder.
+        Returns:
+            Y: ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+                or ( samples, F )
+        """
+        # NOTE: Take the frame in the middle
+        Y = Y[:, Y.shape[1] // 2]
+
+        if clip_model is not None:
+            assert preprocess is not None, "clip_model needs preprocess."
+
+            Y = preprocess(Y).to(device)
+            Y = clip_model.encode_image(Y).cpu()
+
+        else:
+            Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
+            Y = Y.to(torch.float32) / 255.0
+
+        return Y
+
+    @staticmethod
+    def transform_video(
+        Y: np.ndarray, image_size: int, to_grayscale: bool = True
+    ) -> torch.Tensor:
+        """
+        - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
+        - Reduces the video frames to single channel it specified
+        - Scale [0 - 255] -> [0. - 1.]
+        Args:
+            Y: ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            image_size: args.vivit.image_size
+        Returns:
+            Y: ( samples, segment_len=90, 1, vivit.image_size, vivit.image_size )
+        """
+        segment_len = Y.shape[1]
+
+        Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
+        # ( samples*segment_len, 3, size, size )
+
+        video_transforms = [
+            transforms.Resize(image_size, interpolation=InterpolationMode.BICUBIC),
+        ]
+        if to_grayscale:
+            video_transforms += [transforms.Grayscale()]
+
+        video_transforms = transforms.Compose(video_transforms)
+
+        # NOTE: Avoid CPU out of memory
+        Y = sequential_apply(Y, video_transforms, batch_size=256)
+
+        Y = Y.contiguous().view(-1, segment_len, *Y.shape[-3:])
+
+        Y = Y.to(torch.float32) / 255.0
+
+        return Y
+
+
 class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
-        session_paths = glob.glob("data/YLab/" + args.preproc_name + "/*/")
-        Y_list = super().__init__(args, session_paths, train)
+        session_paths = glob.glob("data/preprocessed/ylab/" + args.preproc_name + "/*/")
 
-        self.Y = torch.cat(Y_list)
-        cprint(f"self.Y: {self.Y.shape}", color="cyan")
-        del Y_list
+        super().__init__(args, session_paths, train)
+
+        assert not self.Y.requires_grad
 
 
 class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
@@ -141,15 +248,12 @@ class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
         session_paths = glob.glob(
             "data/preprocessed/stylegan/" + args.preproc_name + "/*/"
         )
-        Y_list = super().__init__(
+
+        super().__init__(
             args, session_paths, train, y_reformer=self.reshape_stylegan_latent
         )
 
-        self.Y = torch.cat(Y_list)
-        cprint(f"self.Y: {self.Y.shape}", color="cyan")
         assert not self.Y.requires_grad
-
-        del Y_list
 
     @staticmethod
     def reshape_stylegan_latent(Y: torch.Tensor) -> torch.Tensor:
@@ -159,6 +263,8 @@ class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
         Returns:
             Y (torch.Tensor): ( samples, features=512, segment_len*sub_styles=360 )
         """
+        Y = Y.to(torch.float32)
+
         # Take four styles (TODO: take all styles. But will run out of memory)
         Y = Y[:, :, 4:8]
 
