@@ -41,7 +41,7 @@ class FaceExtractor:
             self.input_height //= 2
             self.input_width //= 2
 
-        self.output_size = tuple(args.output_size)
+        self.output_size = tuple([args.face_extractor.output_size] * 2)
 
         self.eyes_dist_mult = args.eyes_dist_mult
         self.movement_alert_thresh = args.movement_alert_thresh

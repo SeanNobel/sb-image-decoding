@@ -1,12 +1,20 @@
 import os, sys
 import torch
+from torchvision import transforms
+import torchvision.transforms.functional as F
+from torchvision.transforms import InterpolationMode
 import numpy as np
 import glob
 import mne
 import mediapipe as mp
+from functools import partial
 from typing import Union, List, Optional, Callable
 from termcolor import cprint
 from omegaconf import DictConfig
+
+import clip
+
+from brain2face.utils.train_utils import sequential_apply
 
 mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
@@ -17,8 +25,8 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         self,
         args,
         session_paths: List[str],
-        train: bool = True,
-        y_reformer: Optional[Callable] = None,
+        train: bool,
+        y_reformer: Callable,
     ) -> List[torch.Tensor]:
         super().__init__()
 
@@ -66,13 +74,12 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         subject_idx_list = []
         for subject_idx, subject_path in enumerate(session_paths):
             X = torch.from_numpy(np.load(subject_path + "/brain.npy").astype(np.float32))
-            Y = torch.from_numpy(np.load(subject_path + "/face.npy").astype(np.float32))
 
-            if y_reformer is not None:
-                Y = y_reformer(Y)
+            Y = torch.from_numpy(np.load(subject_path + "/face.npy"))
 
             if args.split == "deep":
                 assert X.shape[0] == Y.shape[0]
+
                 split_idx = int(X.shape[0] * args.train_ratio)
                 if train:
                     X = X[:split_idx]
@@ -81,11 +88,12 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
                     X = X[split_idx:]
                     Y = Y[split_idx:]
 
+            Y = y_reformer(Y)
+
             # NOTE: identify subject for subject_each split
             if args.split == "subject_each":
                 name = subject_path.split("_")[-1]
                 subject_idx = np.where(np.array(subject_names) == name)[0][0]
-                # print(subject_idx)
 
             subject_idx *= torch.ones(X.shape[0], dtype=torch.uint8)
             print(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}")
@@ -132,10 +140,77 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
 
-        super().__init__(args, session_paths, train)
+        if args.face == "video":
+            y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
+        elif args.face == "image":
+            device = f"cuda:{args.cuda_id}"
+            clip_model, preprocess = clip.load(args.clip_model, device=device)
+            y_reformer = partial(self.encode_single_frame, preprocess, clip_model, device)
+        else:
+            y_reformer = None
 
-        # NOTE: Only UHD dataset needs to encode face and train that.
-        self.Y.requires_grad = True
+        super().__init__(args, session_paths, train, y_reformer)
+
+        # FIXME
+        self.X = self.X[:, : args.num_channels]
+
+        # if args.face == "video":
+        #     self.Y.requires_grad = True
+
+    @staticmethod
+    def encode_single_frame(
+        Y: torch.Tensor, preprocess, clip_model, device
+    ) -> torch.Tensor:
+        """Extracts single frame from video sequence, then encodes to pre-trained CLIP space.
+        Args:
+            Y (torch.Tensor): ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+        Returns:
+            Y (torch.Tensor): ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+        """
+        # NOTE: Take the frame in the middle
+        Y = Y[:, Y.shape[1] // 2]
+
+        Y = preprocess(Y)
+
+        Y = sequential_apply(Y, clip_model.encode_image, batch_size=512, device=device)
+
+        return Y
+
+    @staticmethod
+    def transform_video(
+        Y: torch.Tensor, image_size: int, to_grayscale: bool = True
+    ) -> torch.Tensor:
+        """
+        - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
+        - Reduces the video frames to single channel it specified
+        - Scale [0 - 255] -> [0. - 1.]
+        Args:
+            Y (torch.Tensor): ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            image_size (int): args.vivit.image_size
+        Returns:
+            Y (torch.Tensor): ( samples, segment_len=90, 1, vivit.image_size, vivit.image_size )
+        """
+        segment_len = Y.shape[1]
+
+        Y = Y.view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
+        # ( samples*segment_len, 3, size, size )
+
+        video_transforms = [
+            transforms.Resize(image_size, interpolation=InterpolationMode.BICUBIC),
+        ]
+        if to_grayscale:
+            video_transforms += [transforms.Grayscale()]
+
+        video_transforms = transforms.Compose(video_transforms)
+
+        # NOTE: Avoid CPU out of memory
+        Y = sequential_apply(Y, video_transforms, batch_size=256)
+
+        Y = Y.contiguous().view(-1, segment_len, *Y.shape[-3:])
+
+        Y = Y.to(torch.float32) / 255.0
+
+        return Y
 
 
 class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
@@ -167,6 +242,8 @@ class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
         Returns:
             Y (torch.Tensor): ( samples, features=512, segment_len*sub_styles=360 )
         """
+        Y = Y.to(torch.float32)
+
         # Take four styles (TODO: take all styles. But will run out of memory)
         Y = Y[:, :, 4:8]
 

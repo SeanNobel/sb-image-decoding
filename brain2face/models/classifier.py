@@ -23,7 +23,7 @@ class Classifier(nn.Module):
         batch_size = Z.size(0)
         diags = torch.arange(batch_size).to(device=Z.device)
         x = Z.view(batch_size, -1)
-        y = Y.view(batch_size, -1)
+        y = Y.contiguous().view(batch_size, -1)
 
         # NOTE: avoid CUDA out of memory like this
         if sequential:

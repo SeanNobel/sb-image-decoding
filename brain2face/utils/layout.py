@@ -4,12 +4,11 @@ import torch
 from typing import Union
 
 from brain2face.utils.gTecUtils.gTecUtils import loadMontage
-from brain2face.constants import MONTAGE_INFO_PATH
 
 
 def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
     if args.dataset == "Brain2FaceStyleGANDataset":
-        montage = loadMontage(MONTAGE_INFO_PATH)
+        montage = loadMontage(args.montage_path)
         info = mne.create_info(ch_names=montage.ch_names, sfreq=250.0, ch_types="eeg")
         info.set_montage(montage)
 
@@ -19,6 +18,20 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
         layout = mne.channels.find_layout(info, ch_type="eeg")
 
         loc = layout.pos[:, :2]  # ( 32, 2 )
+
+    elif args.dataset == "Brain2FaceUHDDataset":
+        montage = get_montage(args.montage_path)
+        info = mne.create_info(
+            ch_names=montage.ch_names, sfreq=args.brain_resample_sfreq, ch_types="eeg"
+        )
+        info.set_montage(montage)
+
+        layout = mne.channels.find_layout(info, ch_type="eeg")
+
+        # NOTE: First 128 channels out of 144 are the electrodes
+        # TODO: Implement normalization for 3d
+        # NOTE: Projects to xy plane (look at load_montage.ipynb)
+        loc = layout.pos[: args.num_channels, :2]
 
     elif args.dataset == "Brain2FaceYLabECoGDataset":
         # FIXME: correct later
@@ -35,3 +48,42 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
     loc = loc * 0.8 + 0.1
 
     return torch.from_numpy(loc.astype(np.float32))
+
+
+def get_montage(elec_filename):
+    # Parse xml file for electrode position
+    import xml.etree.ElementTree as ET
+
+    tree = ET.parse(elec_filename)
+    root = tree.getroot()
+
+    elec_locs = {}
+    nasion, lpa, rpa = None, None, None
+    for child in root:
+        elec = int(child.attrib["Id"])
+        elec_loc = child.findtext("Positions/Subject/Head").split(",")
+        elec_loc = [0.001 * float(el) for el in elec_loc]  # [mm] -> [m]
+        assert 1 <= elec <= 147
+        if elec <= 144:
+            if elec <= 128:
+                key = f"Ch-{elec:03}"
+            else:
+                key = f"Ext-{elec - 128:02}"
+            elec_locs[key] = elec_loc
+        else:
+            if elec == 145:
+                key = "nasion"
+                nasion = elec_loc
+            elif elec == 146:
+                key = "lpa"
+                lpa = elec_loc
+            else:  # 147
+                key = "rpa"
+                rpa = elec_loc
+
+    # generate montage
+    mon = mne.channels.make_dig_montage(
+        elec_locs, nasion=nasion, lpa=lpa, rpa=rpa, coord_frame="head"
+    )
+
+    return mon

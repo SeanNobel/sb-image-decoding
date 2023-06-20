@@ -33,14 +33,14 @@ class FacePreprocessor:
         self.extractor = FaceExtractor(
             args.face_extractor, input_size, "center", self.fps
         )
-        self.output_size = args.face_extractor.output_size
+        self.output_size = [args.face_extractor.output_size] * 2
 
         fmt = cv2.VideoWriter_fourcc("m", "p", "4", "v")
         self.writer = cv2.VideoWriter(
             f"{EXTRACTED_VIDEO_ROOT}/{Path(video_path).stem}.mp4",
             fmt,
             self.fps,
-            tuple(args.face_extractor.output_size),
+            tuple(self.output_size),
         )
 
     def __call__(self) -> Tuple[np.ndarray, np.ndarray]:

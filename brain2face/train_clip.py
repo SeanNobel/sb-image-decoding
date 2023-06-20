@@ -10,42 +10,17 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from brain2face.datasets import Brain2FaceYLabECoGDataset, Brain2FaceStyleGANDataset
-from brain2face.utils.layout import ch_locations_2d
-
-from brain2face.models.brain_encoder import BrainEncoder
+from brain2face.datasets import (
+    Brain2FaceUHDDataset,
+    Brain2FaceYLabECoGDataset,
+    Brain2FaceStyleGANDataset,
+)
+from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
+from brain2face.models.face_encoders import ViT, ViViT
 from brain2face.models.classifier import Classifier
-from brain2face.models.face_encoder import ViViT as FaceEncoder
 from brain2face.utils.loss import CLIPLoss
-
-
-def sequential_inference(
-    X: torch.Tensor,
-    encoder: Union[BrainEncoder, FaceEncoder],
-    batch_size: int,
-    subject_idxs: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    """Avoid CUDA out of memory.
-    Args:
-        X (torch.Tensor): _description_
-        encoder (Union[BrainEncoder, FaceEncoder]): _description_
-        batch_size (int): _description_
-        subject_idxs (Optional[torch.Tensor], optional): _description_. Defaults to None.
-    Returns:
-        torch.Tensor: _description_
-    """
-    if subject_idxs is None:
-        return torch.cat([encoder(_X) for _X, in torch.split(X, batch_size)])
-    else:
-        return torch.cat(
-            [
-                encoder(_X, _subject_idxs)
-                for _X, _subject_idxs in zip(
-                    torch.split(X, batch_size),
-                    torch.split(subject_idxs, batch_size),
-                )
-            ]
-        )
+from brain2face.utils.layout import ch_locations_2d
+from brain2face.utils.train_utils import sequential_apply
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
@@ -90,7 +65,8 @@ def train(args: DictConfig):
         )
 
         num_subjects = dataset.num_subjects
-    # If not shallow, split is done inside dataset class
+
+    # NOTE: If not shallow, split is done inside dataset class
     else:
         train_set = eval(args.dataset)(args)
         test_set = eval(args.dataset)(args, train=False)
@@ -111,19 +87,29 @@ def train(args: DictConfig):
     # ---------------------
     #        Models
     # ---------------------
-    brain_encoder = BrainEncoder(
-        args, num_subjects=num_subjects, layout_fn=ch_locations_2d
-    ).to(device)
+    if args.face == "video":
+        brain_encoder = BrainEncoder(
+            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
+        ).to(device)
 
-    if args.encode_face:
-        face_encoder = FaceEncoder(
-            image_size=args.face_extractor.output_size[0],  # FIXME: need to fix w = h
+        face_encoder = ViViT(
+            image_size=args.vivit.image_size,
             patch_size=args.vivit.patch_size,
             num_frames=args.seq_len * args.fps,
             dim=args.F,
-            depth=args.depth,
-            in_channels=3,
+            depth=args.vivit.depth,
+            in_channels=args.vivit.in_channels,
         ).to(device)
+
+    elif args.face == "image":
+        brain_encoder = BrainEncoderReduceTime(
+            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
+        ).to(device)
+
+        face_encoder = None
+
+    else:
+        raise NotImplementedError
 
     classifier = Classifier(args)
 
@@ -136,7 +122,9 @@ def train(args: DictConfig):
     #      Optimizers
     # ---------------------
     params = list(brain_encoder.parameters()) + list(loss_func.parameters())
-    if args.encode_face:
+
+    # NOTE: Only train face encoder when it's ViViT
+    if face_encoder is not None:
         params += list(face_encoder.parameters())
 
     optimizer = torch.optim.Adam(params, lr=args.lr)
@@ -174,7 +162,7 @@ def train(args: DictConfig):
 
             Z = brain_encoder(X, subject_idxs)
 
-            if args.encode_face:
+            if face_encoder is not None:
                 # REVIEW: Is it OK to put into the same variable?
                 Y = face_encoder(Y)
 
@@ -200,9 +188,12 @@ def train(args: DictConfig):
 
             with torch.no_grad():
                 # NOTE: Avoid CUDA out of memory
-                Z = sequential_inference(X, brain_encoder, args.batch_size, subject_idxs)
+                Z = sequential_apply(
+                    X, brain_encoder, args.batch_size, subject_idxs=subject_idxs
+                )
 
-                Y = sequential_inference(Y, face_encoder, args.batch_size)
+                if face_encoder is not None:
+                    Y = sequential_apply(Y, face_encoder, args.batch_size)
 
                 stime = time()
                 inference_times.append(time() - stime)
