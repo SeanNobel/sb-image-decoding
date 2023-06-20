@@ -72,10 +72,10 @@ chance: False
 
 batch_size: 64
 lr: 0.005
-lr_scheduler: cosine # cosine or multistep
+lr_scheduler: multistep # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
-epochs: 500
+epochs: 1000
 reduction: mean
 init_temperature: 5.0
 
@@ -85,4 +85,4 @@ seed: 1234
 
 cuda_id: 1
 
-use_wandb: False
+use_wandb: True

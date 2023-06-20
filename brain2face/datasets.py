@@ -199,21 +199,21 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
 
     @staticmethod
     def transform_video(
-        Y: torch.Tensor, image_size: int, to_grayscale: bool = True
+        Y: np.ndarray, image_size: int, to_grayscale: bool = True
     ) -> torch.Tensor:
         """
         - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
         - Reduces the video frames to single channel it specified
         - Scale [0 - 255] -> [0. - 1.]
         Args:
-            Y (torch.Tensor): ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
-            image_size (int): args.vivit.image_size
+            Y: ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            image_size: args.vivit.image_size
         Returns:
-            Y (torch.Tensor): ( samples, segment_len=90, 1, vivit.image_size, vivit.image_size )
+            Y: ( samples, segment_len=90, 1, vivit.image_size, vivit.image_size )
         """
         segment_len = Y.shape[1]
 
-        Y = Y.view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
+        Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
         # ( samples*segment_len, 3, size, size )
 
         video_transforms = [
