@@ -35,41 +35,13 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
 
         # NOTE: No need to be natsorted.
         # NOTE: Selecting directories with preprocessed data.
-        session_paths = self.drop_bads(session_paths)
+        session_paths = self._drop_bads(session_paths)
 
-        # NOTE: picks 20% sessions for test, without considering subjects' identity
-        if args.split == "subject_random":
-            split_idx = int(len(session_paths) * args.train_ratio)
-            if train:
-                session_paths = session_paths[:split_idx]
-            else:
-                session_paths = session_paths[split_idx:]
-
-        # NOTE: each subject has one or two test sessions
-        # FIXME: Need to add subject names with underscore to S0, S1, ... folders for this to work
-        elif args.split == "subject_each":
-            subject_names = list(set([path.split("_")[-1] for path in session_paths]))
-            cprint(f"Subject names: {subject_names}", color="cyan")
-
-            _session_paths = []
-            for name in subject_names:
-                subsession_paths = [path for path in session_paths if name in path]
-                # print(subsession_paths)
-
-                split_idx = int(len(subsession_paths) * args.train_ratio)
-                if train:
-                    subsession_paths = subsession_paths[:split_idx]
-                else:
-                    subsession_paths = subsession_paths[split_idx:]
-
-                _session_paths += subsession_paths
-
-            session_paths = _session_paths.copy()
-
-        if args.split == "subject_each":
-            self.num_subjects = len(subject_names)
+        if args.split in ["subject_random", "subject_each"]:
+            session_paths, self.num_subjects = self._split_sessions(train)
         else:
             self.num_subjects = len(session_paths)
+
         cprint(f"Num subjects: {self.num_subjects}", color="cyan")
 
         X_list = []
@@ -132,12 +104,52 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         return self.X[i], self.Y[i], self.subject_idx[i]
 
     @staticmethod
-    def drop_bads(_subject_paths):
+    def _drop_bads(_subject_paths):
         subject_paths = []
         for path in _subject_paths:
             if os.path.exists(path + "brain.npy") and os.path.exists(path + "face.npy"):
                 subject_paths.append(path)
         return subject_paths
+
+    @staticmethod
+    def _split_sessions(train: bool):
+        # NOTE: picks 20% sessions for test, without considering subjects' identity
+        if args.split == "subject_random":
+            split_idx = int(len(session_paths) * args.train_ratio)
+            if train:
+                session_paths = session_paths[:split_idx]
+            else:
+                session_paths = session_paths[split_idx:]
+
+            num_subjects = len(session_paths)
+
+        # NOTE: each subject has one or two test sessions
+        # FIXME: Need to add subject names with underscore to S0, S1, ... folders for this to work
+        elif args.split == "subject_each":
+            subject_names = list(set([path.split("_")[-1] for path in session_paths]))
+            cprint(f"Subject names: {subject_names}", color="cyan")
+
+            _session_paths = []
+            for name in subject_names:
+                subsession_paths = [path for path in session_paths if name in path]
+                # print(subsession_paths)
+
+                split_idx = int(len(subsession_paths) * args.train_ratio)
+                if train:
+                    subsession_paths = subsession_paths[:split_idx]
+                else:
+                    subsession_paths = subsession_paths[split_idx:]
+
+                _session_paths += subsession_paths
+
+            session_paths = _session_paths.copy()
+
+            num_subjects = len(subject_names)
+
+        else:
+            raise ValueError
+
+        return session_paths, num_subjects
 
 
 class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
@@ -150,8 +162,13 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
         elif args.face.type == "image":
             if args.face.pretrained:
                 device = f"cuda:{args.cuda_id}"
-                clip_model, preprocess = clip.load(args.clip_model, device=device)
-                y_reformer = partial(self.to_single_frame, clip_model, preprocess, device)
+                clip_model, preprocess = clip.load(args.face.clip_model, device=device)
+                y_reformer = partial(
+                    self.to_single_frame,
+                    clip_model=clip_model,
+                    preprocess=preprocess,
+                    device=device,
+                )
 
             else:
                 y_reformer = self.to_single_frame
@@ -174,6 +191,7 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
         device: str = "cuda",
     ) -> torch.Tensor:
         """Extracts single frame from video sequence, then encodes to pre-trained CLIP space.
+        NOTE: This function is called from sequential_load(), so there's no need to split Y into batch.
         Args:
             Y: ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
             clip_model: Pretrained image encoder of Radford 2021.
@@ -184,12 +202,15 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
         """
         # NOTE: Take the frame in the middle
         Y = Y[:, Y.shape[1] // 2]
+        # ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3)
 
         if clip_model is not None:
             assert preprocess is not None, "clip_model needs preprocess."
 
-            Y = preprocess(Y).to(device)
-            Y = clip_model.encode_image(Y).cpu()
+            Y = sequential_apply(Y, preprocess, batch_size=1).to(device)
+
+            with torch.no_grad():
+                Y = clip_model.encode_image(Y).cpu()
 
         else:
             Y = torch.from_numpy(Y).permute(0, 3, 1, 2)

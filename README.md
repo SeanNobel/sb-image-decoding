@@ -2,8 +2,6 @@
 
 - [DALLE-2 paper](https://arxiv.org/pdf/2204.06125.pdf)
 
-## TODO: Apollo-5からプッシュする．
-
 ## UHD
 
 ### Overview
@@ -28,7 +26,7 @@ nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out
 - Run CLIP training
 
 ```bash
-nohup python brain2face/train_clip.py config=uhd/video.yaml > logs/uhd/train_clip.log &
+nohup python brain2face/train_clip.py config_path=uhd/image.yaml > logs/uhd/sweep_clip.log &
 ```
 
 <br>
