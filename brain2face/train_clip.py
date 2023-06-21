@@ -23,30 +23,19 @@ from brain2face.utils.layout import ch_locations_2d
 from brain2face.utils.train_utils import sequential_apply
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="default")
-def train(args: DictConfig):
-    # NOTE: Using default.yaml only for specifying the experiment settings yaml.
-    args = OmegaConf.load(os.path.join("configs", args.config))
+def train(sweep_config=None):
+    wandb.init(config=sweep_config)
+    wandb.run.name = "".join([k + "-" + str(v) + "_" for k, v in wandb.config.items()])
+    args.__dict__.update(wandb.config)
+    cprint(wandb.config, "cyan")
 
     if args.seed is not None:
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
-        torch.cuda.manual_seed(args.seed)
-        torch.cuda.manual_seed_all(args.seed)
 
     run_dir = os.path.join("runs", args.train_name)
     if not os.path.exists(run_dir):
         os.mkdir(run_dir)
-
-    if args.use_wandb:
-        wandb.config = {k: v for k, v in args.__dict__.items() if not k.startswith("__")}
-        wandb.init(
-            project=args.project_name,
-            config=wandb.config,
-            save_code=True,
-        )
-        wandb.run.name = args.train_name
-        wandb.run.save()
 
     device = f"cuda:{args.cuda_id}"
 
@@ -240,5 +229,23 @@ def train(args: DictConfig):
             min_test_loss = np.mean(test_losses)
 
 
+@hydra.main(version_base=None, config_path="../configs", config_name="default")
+def sweep(_args: DictConfig):
+    # global config_path
+    # config_path = args.config_path
+    global args
+
+    # NOTE: Using default.yaml only for specifying the experiment settings yaml.
+    args = OmegaConf.load(os.path.join("configs", _args.config_path))
+
+    sweep_config = OmegaConf.to_container(
+        args.sweep_config, resolve=True, throw_on_missing=True
+    )
+
+    sweep_id = wandb.sweep(sweep_config, project=args.project_name)
+
+    wandb.agent(sweep_id, train, count=args.sweep_count)
+
+
 if __name__ == "__main__":
-    train()
+    sweep()

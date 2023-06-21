@@ -1,1 +1,1 @@
-config: stylegan/ica_deep.yaml
+config_path: stylegan/ica_deep.yaml

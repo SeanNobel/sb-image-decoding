@@ -86,3 +86,15 @@ seed: 1234
 cuda_id: 0
 
 use_wandb: False
+
+sweep_count: 10
+sweep_config:
+  method: bayes
+  metric:
+    name: test_top10_acc
+    goal: maximize
+  parameters:
+    d_drop:
+      values: [0.1, 0.3, 0.5]
+    face.pretrained:
+      values: [True, False]
