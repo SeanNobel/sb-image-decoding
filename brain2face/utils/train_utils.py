@@ -1,11 +1,13 @@
+import numpy as np
 import torch
 import torch.nn as nn
 from torchvision import transforms
+from PIL import Image
 from typing import Union, Optional, Callable
 
 
 def sequential_apply(
-    X: torch.Tensor,
+    X: Union[torch.Tensor, np.ndarray],
     # nn.Module is a hint for general DNNs. Callable is a hint for CLIP encoder
     model: Union[transforms.Compose, nn.Module, Callable],
     batch_size: int,
@@ -21,6 +23,19 @@ def sequential_apply(
     Returns:
         torch.Tensor: _description_
     """
+    # NOTE: This is for torchvision transforms, which doesn't accept a batch of samples.
+    # A bit of messy implementation.
+    if batch_size == 1:
+        assert isinstance(model, transforms.Compose) and isinstance(X, np.ndarray)
+
+        # NOTE: np.split needs number of subarrays, while torch.split needs the size of chunks.
+        return torch.cat(
+            [
+                model(Image.fromarray(_X.squeeze())).unsqueeze(0)
+                for _X in np.split(X, X.shape[0])
+            ]
+        )
+
     orig_device = X.device
 
     if device is None:
