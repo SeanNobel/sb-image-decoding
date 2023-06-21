@@ -2,8 +2,6 @@
 
 - [DALLE-2 paper](https://arxiv.org/pdf/2204.06125.pdf)
 
-## TODO: Apollo-5からプッシュする．
-
 ## UHD
 
 ### Overview
