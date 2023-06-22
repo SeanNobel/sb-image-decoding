@@ -6,7 +6,7 @@ from termcolor import cprint
 import json
 import h5py
 from tqdm import tqdm
-from typing import Optional, List, Callable, Union
+from typing import Optional, List, Callable, Union, Tuple
 
 
 def sequential_load(
@@ -56,6 +56,27 @@ def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:
     # ( ~100000//segment_len, segment_len, * )
 
     return x
+
+
+def crop_longer(X: np.ndarray, Y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """FIXME: This workaround (mainly for YLab ECoG dataset) can cause temporal shift.
+    Args:
+        X: ( ~samples, * ) | Y: ( ~samples, * )
+    Returns:
+        X: ( samples, * ) | Y: ( samples, * )
+    """
+    diff = len(X) - len(Y)
+    
+    if diff > 0:
+        cprint(f"Discarding brain for {diff} samples, as it was longer.", "yellow")
+        X = X[:len(Y)]
+    elif diff < 0:
+        cprint(f"Discarding face for {-diff} samples, as it was longer.", "yellow")
+        Y = Y[:len(X)]
+        
+    assert len(X) == len(Y)
+        
+    return X, Y
 
 
 def get_uhd_data_paths(

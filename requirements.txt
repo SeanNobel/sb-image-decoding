@@ -4,6 +4,7 @@ mne
 einops
 scikit-learn
 h5py
+pyxdf
 pandas
 lxml
 cmake
