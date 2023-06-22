@@ -179,7 +179,7 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
             else:
                 y_reformer = self.to_single_frame
         else:
-            y_reformer = None
+            raise ValueError("Face type is only static or dynamic.")
 
         super().__init__(args, session_paths, train, y_reformer)
 
@@ -265,14 +265,26 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
 class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/ylab/" + args.preproc_name + "/*/")
+        
+        if args.face.type == "dynamic":
+            y_reformer = partial(self.ylab_reformer, reduce_time=False)
+        elif args.face.type == "static":
+            y_reformer = partial(self.ylab_reformer, reduce_time=True)
+        else:
+            raise ValueError("Face type is only static or dynamic.")
 
-        super().__init__(args, session_paths, train, self.ylab_reformer)
+        super().__init__(args, session_paths, train, y_reformer)
 
         assert not self.Y.requires_grad
         
     @staticmethod
-    def ylab_reformer(Y: np.ndarray) -> torch.Tensor:
-        return torch.from_numpy(Y).to(torch.float32)
+    def ylab_reformer(Y: np.ndarray, reduce_time: bool) -> torch.Tensor:
+        Y = torch.from_numpy(Y).to(torch.float32)
+        
+        if reduce_time:
+            Y = Y.mean(dim=-1)
+            
+        return Y
 
 
 class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
