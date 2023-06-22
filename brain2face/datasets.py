@@ -38,7 +38,7 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         session_paths = self._drop_bads(session_paths)
 
         if args.split in ["subject_random", "subject_each"]:
-            session_paths, self.num_subjects = self._split_sessions(train)
+            session_paths, self.num_subjects, subject_names = self._split_sessions(train)
         else:
             self.num_subjects = len(session_paths)
 
@@ -123,6 +123,8 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
 
             num_subjects = len(session_paths)
 
+            subject_names = None
+
         # NOTE: each subject has one or two test sessions
         # FIXME: Need to add subject names with underscore to S0, S1, ... folders for this to work
         elif args.split == "subject_each":
@@ -149,7 +151,7 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         else:
             raise ValueError
 
-        return session_paths, num_subjects
+        return session_paths, num_subjects, subject_names
 
 
 class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
@@ -210,7 +212,8 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
             Y = sequential_apply(Y, preprocess, batch_size=1).to(device)
 
             with torch.no_grad():
-                Y = clip_model.encode_image(Y).cpu()
+                # NOTE: CLIP model somehow returns fp16 (https://colab.research.google.com/github/openai/clip/blob/master/notebooks/Interacting_with_CLIP.ipynb#scrollTo=cuxm2Gt4Wvzt)
+                Y = clip_model.encode_image(Y).cpu().float()
 
         else:
             Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
