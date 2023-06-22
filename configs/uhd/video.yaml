@@ -4,6 +4,7 @@ debug: False
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
+
 start_subj: 0
 end_subj: 22
 
@@ -38,10 +39,13 @@ train_name: deep-split
 
 dataset: Brain2FaceUHDDataset
 
+montage_path: brain2face/utils/montages/electrodes_uhd.xml
+
 F: 512 # CLIP embedding dimension
 
 face:
-  type: video # image or video
+  type: dynamic # static (image) or dynamic (video)
+  encoded: False
   
 vivit:
   image_size: 64
@@ -64,7 +68,6 @@ split: deep # shallow / deep / subject_random / subject_each
 
 train_ratio: 0.8
 chance: False
-
 batch_size: 64
 lr: 0.005
 lr_scheduler: cosine # cosine or multistep
@@ -74,10 +77,6 @@ epochs: 500
 reduction: mean
 init_temperature: 5.0
 
-montage_path: brain2face/utils/gTecUtils/montages/electrodes_uhd.xml
-
 seed: 1234
 
-cuda_id: 1
-
-use_wandb: False
+cuda_id: 0
