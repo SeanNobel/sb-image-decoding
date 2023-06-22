@@ -52,8 +52,12 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
                 np.load(os.path.join(subject_path, "brain.npy")).astype(np.float32)
             )
 
-            Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
-            Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
+            try:
+                Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
+                Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
+            except FileNotFoundError:
+                Y = np.load(os.path.join(subject_path, "face.npy"))
+                Y = y_reformer(Y)
 
             if args.split == "deep":
                 assert X.shape[0] == Y.shape[0]
@@ -158,11 +162,11 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
 
-        if args.face.type == "video":
+        if args.face.type == "dynamic":
             y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
 
-        elif args.face.type == "image":
-            if args.face.pretrained:
+        elif args.face.type == "static":
+            if args.face.encoded:
                 device = f"cuda:{args.cuda_id}"
                 clip_model, preprocess = clip.load(args.face.clip_model, device=device)
                 y_reformer = partial(
@@ -262,9 +266,13 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/ylab/" + args.preproc_name + "/*/")
 
-        super().__init__(args, session_paths, train)
+        super().__init__(args, session_paths, train, self.ylab_reformer)
 
         assert not self.Y.requires_grad
+        
+    @staticmethod
+    def ylab_reformer(Y: np.ndarray) -> torch.Tensor:
+        return torch.from_numpy(Y).to(torch.float32)
 
 
 class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):

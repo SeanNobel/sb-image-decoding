@@ -79,28 +79,30 @@ def train():
     # ---------------------
     #        Models
     # ---------------------
-    if args.face.type == "video":
+    if args.face.type == "dynamic":
         brain_encoder = BrainEncoder(
             args, num_subjects=num_subjects, layout_fn=ch_locations_2d
         ).to(device)
 
-        face_encoder = ViViT(
-            num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
-        ).to(device)
+        if args.face.encoded:
+            face_encoder = None
+        else:
+            face_encoder = ViViT(
+                num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
+            ).to(device)
 
-    elif args.face.type == "image":
+    elif args.face.type == "static":
         brain_encoder = BrainEncoderReduceTime(
             args, num_subjects=num_subjects, layout_fn=ch_locations_2d
         ).to(device)
 
-        if args.face.pretrained:
+        if args.face.encoded:
             face_encoder = None
-
         else:
             face_encoder = ViT(dim=args.F, **args.vit).to(device)
 
     else:
-        raise NotImplementedError
+        raise ValueError("Face type is only static or dynamic.")
 
     classifier = Classifier(args)
 

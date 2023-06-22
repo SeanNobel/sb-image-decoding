@@ -110,6 +110,8 @@ def main(args: DictConfig) -> None:
             cprint(f">> Sync data: {sync_df.shape}", "cyan")
 
             ecog_raw = load_ecog_data(args, sync_df)
+            print(ecog_raw.shape)
+            sys.exit()
 
             X = ecog_preproc(args, ecog_raw, segment_len)
             cprint(f"Subject {i} ECoG: {X.shape}", "cyan")
