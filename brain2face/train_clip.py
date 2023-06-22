@@ -23,11 +23,14 @@ from brain2face.utils.layout import ch_locations_2d
 from brain2face.utils.train_utils import sequential_apply
 
 
-def train(sweep_config=None):
-    wandb.init(config=sweep_config)
-    wandb.run.name = "".join([k + "-" + str(v) + "_" for k, v in wandb.config.items()])
-    args.__dict__.update(wandb.config)
-    cprint(wandb.config, "cyan")
+def train():
+    if sweep:
+        wandb.init(config=None)
+        wandb.run.name = "".join(
+            [k + "-" + str(v) + "_" for k, v in wandb.config.items()]
+        )
+        args.__dict__.update(wandb.config)
+        cprint(wandb.config, "cyan")
 
     if args.seed is not None:
         np.random.seed(args.seed)
@@ -201,7 +204,7 @@ def train(sweep_config=None):
             f"lr: {optimizer.param_groups[0]['lr']:.5f}",
         )
 
-        if args.use_wandb:
+        if sweep:
             performance_now = {
                 "epoch": epoch,
                 "train_loss": np.mean(train_losses),
@@ -230,22 +233,26 @@ def train(sweep_config=None):
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
-def sweep(_args: DictConfig):
-    # global config_path
-    # config_path = args.config_path
-    global args
+def run(_args: DictConfig):
+    global args, sweep
 
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-    sweep_config = OmegaConf.to_container(
-        args.sweep_config, resolve=True, throw_on_missing=True
-    )
+    sweep = _args.sweep
 
-    sweep_id = wandb.sweep(sweep_config, project=args.project_name)
+    if sweep:
+        sweep_config = OmegaConf.to_container(
+            args.sweep_config, resolve=True, throw_on_missing=True
+        )
 
-    wandb.agent(sweep_id, train, count=args.sweep_count)
+        sweep_id = wandb.sweep(sweep_config, project=args.project_name)
+
+        wandb.agent(sweep_id, train, count=args.sweep_count)
+
+    else:
+        train()
 
 
 if __name__ == "__main__":
-    sweep()
+    run()
