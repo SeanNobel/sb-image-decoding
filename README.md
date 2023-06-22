@@ -56,3 +56,22 @@ CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=2
 <br>
 
 ## Yanagisawa Lab @ Osaka Univ.
+
+### TODOs
+
+- [ ] Import channel 2D map
+
+### Usage
+
+- Run preprocess
+
+```bash
+python brain2face/preprocs/ylab_ecog.py
+```
+
+- Run CLIP training
+
+```bash
+# Specify sweep configuration from .yaml
+nohup python brain2face/train_clip.py config_path=ylab_ecog.yaml sweep=True > logs/ylab/sweep_clip.log &
+```
