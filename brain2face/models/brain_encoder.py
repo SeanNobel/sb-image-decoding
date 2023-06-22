@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional, Callable
 
 from brain2face.utils.layout import ch_locations_2d
 
@@ -167,7 +168,12 @@ class ConvBlock(nn.Module):
 
 
 class BrainEncoder(nn.Module):
-    def __init__(self, args, num_subjects=None, layout_fn=None):
+    def __init__(
+        self,
+        args,
+        num_subjects: Optional[int] = None,
+        layout_fn: Optional[Callable] = None,
+    ) -> None:
         super(BrainEncoder, self).__init__()
 
         self.num_subjects = args.num_subjects if num_subjects is None else num_subjects
@@ -191,12 +197,14 @@ class BrainEncoder(nn.Module):
         self.conv_final1 = nn.Conv1d(
             in_channels=self.D2,
             out_channels=2 * self.D2,
-            kernel_size=1,
+            kernel_size=args.final_kernel_size,
+            stride=args.final_stride,
         )
         self.conv_final2 = nn.Conv1d(
             in_channels=2 * self.D2,
             out_channels=self.F,
-            kernel_size=1,
+            kernel_size=args.final_kernel_size,
+            stride=args.final_stride,
         )
 
     def forward(self, X, subject_idxs):
@@ -204,4 +212,29 @@ class BrainEncoder(nn.Module):
         X = self.conv_blocks(X)
         X = F.gelu(self.conv_final1(X))
         X = F.gelu(self.conv_final2(X))
+        return X
+
+
+class BrainEncoderReduceTime(nn.Module):
+    def __init__(
+        self,
+        args,
+        num_subjects: Optional[int] = None,
+        layout_fn: Optional[Callable] = None,
+    ) -> None:
+        super(BrainEncoderReduceTime, self).__init__()
+
+        self.brain_encoder = BrainEncoder(args, num_subjects, layout_fn)
+
+        self.flatten = nn.Flatten()
+        self.linear = nn.Linear(
+            in_features=args.F * args.seq_len * args.brain_resample_sfreq // 4,
+            out_features=args.F,
+        )
+
+    def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor) -> torch.Tensor:
+        X = self.brain_encoder(X, subject_idxs)
+
+        X = F.gelu(self.linear(self.flatten(X)))
+
         return X

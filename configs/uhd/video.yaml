@@ -1,11 +1,11 @@
 # ==== Preprocessing ==== #
-preproc_name: test
+preproc_name: init
 debug: False
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
 start_subj: 0
-end_subj: 8
+end_subj: 22
 
 seq_len: 3 # segment length in seconds
 
@@ -14,14 +14,12 @@ fps: 30
 
 face_extractor:
   mode: mesh
-  output_size: [256, 256]
+  output_size: 256
   eyes_dist_mult: 4
   movement_alert_thresh: 50 # px
 
-# stylegan:
-#   model_path: /home/sensho/brain2face/encoder4editing/weights/e4e_ffhq_encode.pt
-
 # ---- Brain ---- #
+num_channels: 128
 brain_orig_sfreq: 250 # Hz
 brain_resample_sfreq: 120 # Hz
 brain_filter_low: 1.0 # Hz
@@ -35,9 +33,30 @@ eeg_load_bufsize: 1000 # samples
 
 
 # ==== Training ==== #
-train_name: deep
+project_name: brain2face_uhd
+train_name: deep-split
 
-dataset: Brain2FaceStyleGANDataset
+dataset: Brain2FaceUHDDataset
+
+F: 512 # CLIP embedding dimension
+
+face:
+  type: video # image or video
+  
+vivit:
+  image_size: 64
+  patch_size: 16
+  depth: 2
+  in_channels: 1
+
+# Brain encoder
+D1: 270
+D2: 320
+K: 32
+d_drop: 0.3 # Channel distance for spatial dropout
+# NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
+final_kernel_size: 2
+final_stride: 2
 
 split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
@@ -45,8 +64,7 @@ split: deep # shallow / deep / subject_random / subject_each
 
 train_ratio: 0.8
 chance: False
-# 🔥 FIXME: with too large a batchsize there isn't enough 
-# 🔥 FIXME: samples in the eval set, and the CLIPLoss produces nans silently
+
 batch_size: 64
 lr: 0.005
 lr_scheduler: cosine # cosine or multistep
@@ -56,26 +74,10 @@ epochs: 500
 reduction: mean
 init_temperature: 5.0
 
+montage_path: brain2face/utils/gTecUtils/montages/electrodes_uhd.xml
+
+seed: 1234
+
 cuda_id: 1
 
 use_wandb: False
-
-
-# ==== Architecture ==== #
-# Common
-F: 512 # 1024
-
-# Brain
-D1: 270
-D2: 320
-K: 32
-d_drop: 0.3 # Channel distance for spatial dropout
-# NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
-final_kernel_size: 2
-final_stride: 2
-
-# Face (ViViT)
-patch_size: 8
-depth: 2
-
-seed: 1234

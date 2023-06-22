@@ -33,14 +33,14 @@ class FacePreprocessor:
         self.extractor = FaceExtractor(
             args.face_extractor, input_size, "center", self.fps
         )
-        self.output_size = args.face_extractor.output_size
+        self.output_size = [args.face_extractor.output_size] * 2
 
         fmt = cv2.VideoWriter_fourcc("m", "p", "4", "v")
         self.writer = cv2.VideoWriter(
             f"{EXTRACTED_VIDEO_ROOT}/{Path(video_path).stem}.mp4",
             fmt,
             self.fps,
-            tuple(args.face_extractor.output_size),
+            tuple(self.output_size),
         )
 
     def __call__(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -66,19 +66,26 @@ class FacePreprocessor:
             if extracted is None:
                 extracted = np.zeros((*self.output_size, 3), dtype=np.uint8)
 
-                # NOTE: Saving indexes of samples after segmenting
+                # NOTE: Saving indexes of segments after segmenting
                 drop_list.append(i // self.segment_len)
+                cprint(f"No face at {i}.", "yellow")
 
             y_list.append(extracted)
 
             self.writer.write(extracted)
 
-            pbar.update(1)
             i += 1
+
+            if i % 1000 == 1:
+                pbar.update(1000)
 
         self.cap.release()
 
-        y = np.concatenate(y_list)  # ( ~100000, 256, 256, 3 )
-        y = crop_and_segment(y, self.segment_len)  # ( ~1000, 90, 256, 256, 3 )
+        # NOTE: Avoid drop_segments being float when drop_list is empty
+        drop_segments = np.unique(drop_list).astype(np.int64)
 
-        return y, np.unique(drop_list)
+        y = np.stack(y_list)  # ( ~100000, 256, 256, 3 )
+        y = crop_and_segment(y, self.segment_len)
+        # ( ~1000, 90, 256, 256, 3 )
+
+        return y, drop_segments

@@ -33,9 +33,15 @@ class FaceStyleGANPreprocessor(FacePreprocessor):
         self.y_times = np.loadtxt(video_times_path, delimiter=",")  # ( ~100000, )
 
     def __call__(self, batch_size: int = 32) -> Tuple[np.ndarray, np.ndarray]:
+        """_summary_
+        Args:
+            batch_size (int, optional): Batch size to run StyleGAN encoder.
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: _description_
+        """
         y_list = []
-        no_face_idxs = []
         transformed_list = []
+        drop_list = []
 
         i = 0
         pbar = tqdm(total=self.num_frames)
@@ -46,25 +52,25 @@ class FaceStyleGANPreprocessor(FacePreprocessor):
                 cprint("Reached to the final frame", color="yellow")
                 break
 
-            transformed_image = None
+            transformed = None
 
             extracted = self.extractor.run(i, frame)
 
             if extracted is not None:
-                aligned_image = align_face(extracted, self.stylegan_encoder.predictor)
+                aligned = align_face(extracted, self.stylegan_encoder.predictor)
 
-                if aligned_image is not None:
-                    transformed_image = self.stylegan_encoder.img_transforms(
-                        aligned_image
-                    )
+                if aligned is not None:
+                    transformed = self.stylegan_encoder.img_transforms(aligned)
 
-                    transformed_list.append(transformed_image)
-
-            else:
+            if transformed is None:
                 extracted = np.zeros((*self.output_size, 3), dtype=np.uint8)
+                transformed = torch.zeros(3, *self.output_size, dtype=torch.float32)
 
-            if transformed_image is None and i < len(self.y_times):
-                no_face_idxs.append(i)
+                # NOTE: Saving indexes of segments after segmenting
+                drop_list.append(i // self.segment_len)
+                cprint(f"No face at {i}.", "yellow")
+
+            transformed_list.append(transformed)
 
             self.writer.write(extracted)
 
@@ -75,24 +81,25 @@ class FaceStyleGANPreprocessor(FacePreprocessor):
                 y_list.append(latents)
                 transformed_list = []
 
-            assert len(transformed_list) <= batch_size
-
             i += 1
+
+        self.cap.release()
 
         if not len(transformed_list) == 0:
             _, latents = self.stylegan_encoder.run_on_batch(transformed_list)
             y_list.append(latents)
 
-        self.cap.release()
+        # NOTE: Avoid drop_segments being float when drop_list is empty
+        drop_segments = np.unique(drop_list).astype(np.int64)
 
         y = torch.cat(y_list).numpy()  # ( ~100000, 18, 512 )
+        assert len(y_times) == len(y), "Number of samples for y, y_times is different."
+
         y = crop_and_segment(y, self.segment_len)  # ( ~1000, 90, 18, 512 )
 
-        y_times = np.delete(self.y_times, no_face_idxs)
-        y_times = y_times[:: self.segment_len][: y.shape[0]]  # ( ~1000, )
-        assert len(y_times) == len(y)
+        y_times = y_times[:: self.segment_len]
 
-        return y, y_times
+        return y, y_times, drop_segments
 
 
 @hydra.main(
@@ -116,12 +123,20 @@ def main(args: DictConfig) -> None:
         video_path, video_times_path, eeg_path = paths
 
         if os.path.exists(data_dir + "face_before_crop.npy"):
-            Y = np.load(data_dir + "face_before_crop.npy")
-            face_times = np.load(data_dir + "face_times.npy")
+            tmp = np.load(data_dir + "tmp.npz")
+            Y = tmp["face_before_crop"]
+            face_times = tmp["face_times"]
+            drop_segments = tmp["drop_segments"]
         else:
-            Y, face_times = FaceStyleGANPreprocessor(args, video_path, video_times_path)()
-            np.save(data_dir + "face_before_crop.npy", Y)
-            np.save(data_dir + "face_times.npy", face_times)
+            Y, face_times, drop_segments = FaceStyleGANPreprocessor(
+                args, video_path, video_times_path
+            )()
+            np.savez(
+                data_dir + "tmp",
+                face_before_crop=Y,
+                face_times=face_times,
+                drop_segments=drop_segments,
+            )
 
         if eeg_path.endswith(".hdf5"):  # ICA is not done
             X, eeg_times, _ = eeg_subset_fromTrigger(args, eeg_path)
@@ -135,9 +150,12 @@ def main(args: DictConfig) -> None:
             raise NotImplementedError
 
         X, face_drops_prev, face_drops_after = brain_preproc(
-            args, X, brain_times=eeg_times, face_times=face_times
+            args,
+            brain=X,
+            segment_len=int(args.brain_resample_sfreq * args.seq_len),
+            brain_times=eeg_times,
+            face_times=face_times,
         )
-        cprint(f"Subject {i} EEG: {X.shape}", color="cyan")
 
         if face_drops_after == 0:
             cprint("No drops after", color="yellow")
@@ -145,9 +163,15 @@ def main(args: DictConfig) -> None:
         else:
             Y = Y[face_drops_prev:-face_drops_after]
 
-        cprint(f"Subject {i} face: {Y.shape}", color="cyan")
+        assert len(X) == len(Y), "Brain and face data have different number of segments."
+        cprint(f"Session {i} EEG: {X.shape}", color="cyan")
+        cprint(f"Session {i} face: {Y.shape}", color="cyan")
 
-        assert len(X) == len(Y)
+        X = np.delete(X, drop_segments, axis=0)
+        Y = np.delete(Y, drop_segments, axis=0)
+
+        cprint(f"Session {i} EEG (after drop): {X.shape}", color="cyan")
+        cprint(f"Session {i} face (after drop): {Y.shape}", color="cyan")
 
         np.save(data_dir + "brain.npy", X)
         np.save(data_dir + "face.npy", Y)

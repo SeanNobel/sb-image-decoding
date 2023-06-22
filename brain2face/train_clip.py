@@ -5,42 +5,37 @@ import torch.nn as nn
 from time import time
 from tqdm import tqdm
 from termcolor import cprint
+from typing import Union, Optional
 import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from brain2face.datasets import Brain2FaceYLabECoGDataset, Brain2FaceStyleGANDataset
-from brain2face.utils.layout import ch_locations_2d
-
-from brain2face.models.brain_encoder import BrainEncoder
+from brain2face.datasets import (
+    Brain2FaceUHDDataset,
+    Brain2FaceYLabECoGDataset,
+    Brain2FaceStyleGANDataset,
+)
+from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
+from brain2face.models.face_encoders import ViT, ViViT
 from brain2face.models.classifier import Classifier
 from brain2face.utils.loss import CLIPLoss
+from brain2face.utils.layout import ch_locations_2d
+from brain2face.utils.train_utils import sequential_apply
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="default")
-def train(args: DictConfig):
-    # NOTE: Using default.yaml only for specifying the experiment settings yaml.
-    args = OmegaConf.load(os.path.join("configs", args.config))
+def train(sweep_config=None):
+    wandb.init(config=sweep_config)
+    wandb.run.name = "".join([k + "-" + str(v) + "_" for k, v in wandb.config.items()])
+    args.__dict__.update(wandb.config)
+    cprint(wandb.config, "cyan")
 
     if args.seed is not None:
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
-        torch.cuda.manual_seed(args.seed)
-        torch.cuda.manual_seed_all(args.seed)
 
-    run_dir = f"runs/{args.train_name}/"
+    run_dir = os.path.join("runs", args.train_name)
     if not os.path.exists(run_dir):
         os.mkdir(run_dir)
-
-    if args.use_wandb:
-        wandb.config = {k: v for k, v in args.__dict__.items() if not k.startswith("__")}
-        wandb.init(
-            project=args.project_name,
-            config=wandb.config,
-            save_code=True,
-        )
-        wandb.run.name = args.train_name
-        wandb.run.save()
 
     device = f"cuda:{args.cuda_id}"
 
@@ -59,6 +54,8 @@ def train(args: DictConfig):
         )
 
         num_subjects = dataset.num_subjects
+
+    # NOTE: If not shallow, split is done inside dataset class
     else:
         train_set = eval(args.dataset)(args)
         test_set = eval(args.dataset)(args, train=False)
@@ -79,9 +76,28 @@ def train(args: DictConfig):
     # ---------------------
     #        Models
     # ---------------------
-    brain_encoder = BrainEncoder(
-        args, num_subjects=num_subjects, layout_fn=ch_locations_2d
-    ).to(device)
+    if args.face.type == "video":
+        brain_encoder = BrainEncoder(
+            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
+        ).to(device)
+
+        face_encoder = ViViT(
+            num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
+        ).to(device)
+
+    elif args.face.type == "image":
+        brain_encoder = BrainEncoderReduceTime(
+            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
+        ).to(device)
+
+        if args.face.pretrained:
+            face_encoder = None
+
+        else:
+            face_encoder = ViT(dim=args.F, **args.vit).to(device)
+
+    else:
+        raise NotImplementedError
 
     classifier = Classifier(args)
 
@@ -93,10 +109,13 @@ def train(args: DictConfig):
     # ---------------------
     #      Optimizers
     # ---------------------
-    # NOTE: Brain optim optimizes loss temperature
-    optimizer = torch.optim.Adam(
-        list(brain_encoder.parameters()) + list(loss_func.parameters()), lr=args.lr
-    )
+    params = list(brain_encoder.parameters()) + list(loss_func.parameters())
+
+    # NOTE: Only train face encoder when it's ViViT
+    if face_encoder is not None:
+        params += list(face_encoder.parameters())
+
+    optimizer = torch.optim.Adam(params, lr=args.lr)
 
     if args.lr_scheduler == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -131,6 +150,10 @@ def train(args: DictConfig):
 
             Z = brain_encoder(X, subject_idxs)
 
+            if face_encoder is not None:
+                # REVIEW: Is it OK to put into the same variable?
+                Y = face_encoder(Y)
+
             loss = loss_func(Y, Z)
 
             with torch.no_grad():
@@ -153,15 +176,12 @@ def train(args: DictConfig):
 
             with torch.no_grad():
                 # NOTE: Avoid CUDA out of memory
-                Z = torch.cat(
-                    [
-                        brain_encoder(_X, _subject_idxs)
-                        for _X, _subject_idxs in zip(
-                            torch.split(X, args.batch_size),
-                            torch.split(subject_idxs, args.batch_size),
-                        )
-                    ]
+                Z = sequential_apply(
+                    X, brain_encoder, args.batch_size, subject_idxs=subject_idxs
                 )
+
+                if face_encoder is not None:
+                    Y = sequential_apply(Y, face_encoder, args.batch_size)
 
                 stime = time()
                 inference_times.append(time() - stime)
@@ -209,5 +229,23 @@ def train(args: DictConfig):
             min_test_loss = np.mean(test_losses)
 
 
+@hydra.main(version_base=None, config_path="../configs", config_name="default")
+def sweep(_args: DictConfig):
+    # global config_path
+    # config_path = args.config_path
+    global args
+
+    # NOTE: Using default.yaml only for specifying the experiment settings yaml.
+    args = OmegaConf.load(os.path.join("configs", _args.config_path))
+
+    sweep_config = OmegaConf.to_container(
+        args.sweep_config, resolve=True, throw_on_missing=True
+    )
+
+    sweep_id = wandb.sweep(sweep_config, project=args.project_name)
+
+    wandb.agent(sweep_id, train, count=args.sweep_count)
+
+
 if __name__ == "__main__":
-    train()
+    sweep()
