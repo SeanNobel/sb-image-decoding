@@ -20,13 +20,11 @@ from brain2face.utils.layout import ch_locations_2d
 
 
 @torch.no_grad()
-def eval(args: DictConfig):
+def infer(args: DictConfig):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    run_name = "".join(
-        [k + "-" + str(v) + "_" for k, v in sorted(args.eval.__dict__.items())]
-    )
+    run_name = "".join([k + "-" + str(v) + "_" for k, v in sorted(args.eval.items())])
     run_dir = os.path.join("runs", args.dataset.lower(), run_name)
     assert os.path.exists(run_dir), "run_dir doesn't exist."
 
@@ -120,7 +118,7 @@ def eval(args: DictConfig):
 def run(_args: DictConfig) -> None:
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-    eval(args)
+    infer(args)
 
 
 if __name__ == "__main__":

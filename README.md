@@ -31,6 +31,13 @@ nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out
 nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > logs/uhd/sweep_clip.log &
 ```
 
+- Run CLIP evaluation and generate CLIP embeddings
+
+```bash
+python brain2face/eval_clip.py config_path=uhd/image.yaml
+```
+```
+
 <br>
 
 ## Hayashi Lab @ AIST
