@@ -181,7 +181,7 @@ class BrainEncoder(nn.Module):
         self.D2 = args.D2
         self.F = args.F
         self.K = args.K
-        self.dataset_name = args.dataset
+        # self.dataset_name = args.dataset
 
         if layout_fn is None:
             layout_fn = ch_locations_2d

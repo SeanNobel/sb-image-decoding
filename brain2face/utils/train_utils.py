@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -63,6 +64,18 @@ class Models:
         if self.face_encoder is not None:
             self.face_encoder.eval()
         self.loss_func.eval()
+
+    def save(self, run_dir: str, best: bool = False) -> None:
+        torch.save(
+            self.brain_encoder.state_dict(),
+            os.path.join(run_dir, f"brain_encoder_{'best' if best else 'last'}.pt"),
+        )
+
+        if self.face_encoder is not None:
+            torch.save(
+                self.face_encoder.state_dict(),
+                os.path.join(run_dir, f"face_encoder_{'best' if best else 'last'}.pt"),
+            )
 
 
 def sequential_apply(

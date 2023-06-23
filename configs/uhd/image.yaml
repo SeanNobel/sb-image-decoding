@@ -35,9 +35,9 @@ eeg_load_bufsize: 1000 # samples
 
 # ==== Training ==== #
 project_name: brain2face_uhd
-train_name: deep-split
+train_name: test # Will be updated when it's sweep
 
-dataset: Brain2FaceUHDDataset
+dataset: UHD # UHD / YLabECoG / StyleGAN
 
 montage_path: brain2face/utils/montages/electrodes_uhd.xml
 
@@ -78,7 +78,7 @@ lr: 0.005
 lr_scheduler: multistep # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
-epochs: 1000
+epochs: 500
 reduction: mean
 init_temperature: 5.0
 
@@ -97,7 +97,7 @@ sweep_config:
       values: [deep, shallow]
     d_drop:
       values: [0.1, 0.3, 0.5]
-    face.pretrained:
+    face.encoded:
       values: [True, False]
     head_activation:
       values: [True, False]
@@ -105,3 +105,11 @@ sweep_config:
       values: [1, 2]
     face.reduction:
       values: [extract, mean]
+
+eval:
+  split: shallow
+  d_drop: 0.3
+  face.encoded: False
+  head_activation: False
+  final_ksize_stride: 1
+  face.reduction: extract
