@@ -147,7 +147,7 @@ class ConvBlock(nn.Module):
             out_channels=2 * self.D2,
             kernel_size=3,
             padding="same",
-            dilation=2,  # FIXME: The text doesn't say this, but the picture shows dilation=2
+            dilation=2,  # NOTE: The text doesn't say this, but the picture shows dilation=2
         )
 
     def forward(self, X):
@@ -197,14 +197,14 @@ class BrainEncoder(nn.Module):
         self.conv_final1 = nn.Conv1d(
             in_channels=self.D2,
             out_channels=2 * self.D2,
-            kernel_size=args.final_kernel_size,
-            stride=args.final_stride,
+            kernel_size=args.final_ksize_stride,
+            stride=args.final_ksize_stride,
         )
         self.conv_final2 = nn.Conv1d(
             in_channels=2 * self.D2,
             out_channels=self.F,
-            kernel_size=args.final_kernel_size,
-            stride=args.final_stride,
+            kernel_size=args.final_ksize_stride,
+            stride=args.final_ksize_stride,
         )
 
     def forward(self, X, subject_idxs):
@@ -228,13 +228,20 @@ class BrainEncoderReduceTime(nn.Module):
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
-            in_features=args.F * args.seq_len * args.brain_resample_sfreq // 4,
+            in_features=args.F
+            * args.seq_len
+            * args.brain_resample_sfreq
+            // (args.final_ksize_stride**2),
             out_features=args.F,
         )
+        self.activation = args.head_activation
 
     def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor) -> torch.Tensor:
         X = self.brain_encoder(X, subject_idxs)
 
-        X = F.gelu(self.linear(self.flatten(X)))
+        X = self.linear(self.flatten(X))
+
+        if self.activation:
+            X = F.gelu(X)
 
         return X

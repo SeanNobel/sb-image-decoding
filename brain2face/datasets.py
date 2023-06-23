@@ -169,29 +169,29 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
             if args.face.encoded:
                 device = f"cuda:{args.cuda_id}"
                 clip_model, preprocess = clip.load(args.face.clip_model, device=device)
+
                 y_reformer = partial(
                     self.to_single_frame,
+                    reduction=args.face.reduction,
                     clip_model=clip_model,
                     preprocess=preprocess,
                     device=device,
                 )
 
             else:
-                y_reformer = self.to_single_frame
+                y_reformer = partial(self.to_single_frame, reduction=args.face.reduction)
         else:
             raise ValueError("Face type is only static or dynamic.")
 
         super().__init__(args, session_paths, train, y_reformer)
 
-        # FIXME
+        # FIXME: I've forgot to take first 128 channels from 139 while preprocessing
         self.X = self.X[:, : args.num_channels]
-
-        # if args.face == "video":
-        #     self.Y.requires_grad = True
 
     @staticmethod
     def to_single_frame(
         Y: np.ndarray,
+        reduction: str = "extract",
         clip_model: Optional[CLIP] = None,
         preprocess: Optional[transforms.Compose] = None,
         device: str = "cuda",
@@ -206,8 +206,13 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
             Y: ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
                 or ( samples, F )
         """
-        # NOTE: Take the frame in the middle
-        Y = Y[:, Y.shape[1] // 2]
+        if reduction == "extract":
+            # NOTE: Take the frame in the middle
+            Y = Y[:, Y.shape[1] // 2]
+        elif reduction == "mean":
+            Y = Y.mean(dim=1)
+        else:
+            raise ValueError("Reduction is either extract or mean.")
         # ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3)
 
         if clip_model is not None:
@@ -265,7 +270,7 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
 class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/ylab/" + args.preproc_name + "/*/")
-        
+
         if args.face.type == "dynamic":
             y_reformer = partial(self.ylab_reformer, reduce_time=False)
         elif args.face.type == "static":
@@ -276,14 +281,14 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
         super().__init__(args, session_paths, train, y_reformer)
 
         assert not self.Y.requires_grad
-        
+
     @staticmethod
     def ylab_reformer(Y: np.ndarray, reduce_time: bool) -> torch.Tensor:
         Y = torch.from_numpy(Y).to(torch.float32)
-        
+
         if reduce_time:
             Y = Y.mean(dim=-1)
-            
+
         return Y
 
 

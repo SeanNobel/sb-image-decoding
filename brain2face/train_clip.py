@@ -32,9 +32,8 @@ def train():
         args.__dict__.update(wandb.config)
         cprint(wandb.config, "cyan")
 
-    if args.seed is not None:
-        np.random.seed(args.seed)
-        torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     run_dir = os.path.join("runs", args.train_name)
     if not os.path.exists(run_dir):
@@ -174,7 +173,6 @@ def train():
         assert models.params_updated()
 
         models.eval()
-        assert not brain_encoder.training  # FIXME: remove later
         for X, Y, subject_idxs in test_loader:
             X, Y = X.to(device), Y.to(device)
 
