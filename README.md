@@ -10,6 +10,7 @@
 
 ### TODOs
 
+- [ ] 他のconfigファイルの内容をimage.yamlに合わせる
 - [ ] Accept negative shifts (sessions where video recording started before EEG recording)
 - [ ] Preprocessingの出力を.npyから.h5にする
 

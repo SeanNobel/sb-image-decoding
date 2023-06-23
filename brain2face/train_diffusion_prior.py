@@ -701,7 +701,7 @@ def initialize_training(config_file, accelerator):
         click.secho("Grabbing data...", fg="blue", blink=True)
 
     trainer.accelerator.wait_for_everyone()
-    img_reader = get_reader(
+    img_reader, text_reader = get_reader(
         text_conditioned=trainer.text_conditioned,
         img_url=config.data.image_url,  # path to image embeddings
         # meta_url=config.data.meta_url,
@@ -712,6 +712,8 @@ def initialize_training(config_file, accelerator):
 
     trainer.accelerator.wait_for_everyone()
 
+    assert not trainer.text_conditioned  # FIXME: remove later
+
     train_loader, eval_loader, test_loader = make_splits(
         text_conditioned=trainer.text_conditioned,
         batch_size=config.data.batch_size,
@@ -719,6 +721,7 @@ def initialize_training(config_file, accelerator):
         train_split=config.data.splits.train,
         eval_split=config.data.splits.val,
         image_reader=img_reader,
+        text_reader=text_reader,
         rank=accelerator.state.process_index,
         world_size=accelerator.state.num_processes,
         start=0,

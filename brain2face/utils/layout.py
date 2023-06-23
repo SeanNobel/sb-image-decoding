@@ -7,7 +7,7 @@ from brain2face.utils.gTecUtils.gTecUtils import loadMontage
 
 
 def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
-    if args.dataset == "Brain2FaceStyleGANDataset":
+    if args.dataset == "StyleGAN":
         montage = loadMontage(args.montage_path)
         info = mne.create_info(ch_names=montage.ch_names, sfreq=250.0, ch_types="eeg")
         info.set_montage(montage)
@@ -19,7 +19,7 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
 
         loc = layout.pos[:, :2]  # ( 32, 2 )
 
-    elif args.dataset == "Brain2FaceUHDDataset":
+    elif args.dataset == "UHD":
         montage = get_montage(args.montage_path)
         info = mne.create_info(
             ch_names=montage.ch_names, sfreq=args.brain_resample_sfreq, ch_types="eeg"
@@ -33,7 +33,7 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
         # NOTE: Projects to xy plane (look at load_montage.ipynb)
         loc = layout.pos[: args.num_channels, :2]
 
-    elif args.dataset == "Brain2FaceYLabECoGDataset":
+    elif args.dataset == "YLabECoG":
         # FIXME: correct later
         loc = np.meshgrid(np.arange(7), np.arange(10))
         loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )

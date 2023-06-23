@@ -24,18 +24,22 @@ from brain2face.utils.train_utils import Models, sequential_apply
 
 
 def train():
-    if sweep:
-        wandb.init(config=None)
-        wandb.run.name = "".join(
-            [k + "-" + str(v) + "_" for k, v in wandb.config.items()]
-        )
-        args.__dict__.update(wandb.config)
-        cprint(wandb.config, "cyan")
-
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    run_dir = os.path.join("runs", args.train_name)
+    if sweep:
+        wandb.init(config=None)
+
+        run_name = "".join([k + "-" + str(v) + "_" for k, v in wandb.config.items()])
+
+        wandb.run.name = run_name
+        args.__dict__.update(wandb.config)
+        cprint(wandb.config, "cyan")
+
+    else:
+        run_name = args.train_name
+
+    run_dir = os.path.join("runs", args.dataset.lower, run_name)
     if not os.path.exists(run_dir):
         os.mkdir(run_dir)
 
@@ -45,7 +49,7 @@ def train():
     #       Dataloader
     # -----------------------
     if args.split == "shallow":
-        dataset = eval(args.dataset)(args)
+        dataset = eval(f"Brain2Face{args.dataset}Dataset")(args)
 
         train_size = int(dataset.X.shape[0] * args.train_ratio)
         test_size = dataset.X.shape[0] - train_size
@@ -59,8 +63,8 @@ def train():
 
     # NOTE: If not shallow, split is done inside dataset class
     else:
-        train_set = eval(args.dataset)(args)
-        test_set = eval(args.dataset)(args, train=False)
+        train_set = eval(f"Brain2Face{args.dataset}Dataset")(args)
+        test_set = eval(f"Brain2Face{args.dataset}Dataset")(args, train=False)
 
         num_subjects = train_set.num_subjects
         test_size = test_set.X.shape[0]
@@ -220,19 +224,17 @@ def train():
 
         scheduler.step()
 
-        # Save models
-        torch.save(brain_encoder.state_dict(), run_dir + "brain_encoder_last.pt")
+        models.save(run_dir)
 
         if np.mean(test_losses) < min_test_loss:
             cprint(f"New best. Saving models to {run_dir}", color="cyan")
-
-            torch.save(brain_encoder.state_dict(), run_dir + "brain_encoder_best.pt")
+            models.save(run_dir, best=True)
 
             min_test_loss = np.mean(test_losses)
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
-def run(_args: DictConfig):
+def run(_args: DictConfig) -> None:
     global args, sweep
 
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
