@@ -20,7 +20,7 @@ from brain2face.models.face_encoders import ViT, ViViT
 from brain2face.models.classifier import Classifier
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.layout import ch_locations_2d
-from brain2face.utils.train_utils import sequential_apply
+from brain2face.utils.train_utils import Models, sequential_apply
 
 
 def train():
@@ -32,9 +32,8 @@ def train():
         args.__dict__.update(wandb.config)
         cprint(wandb.config, "cyan")
 
-    if args.seed is not None:
-        np.random.seed(args.seed)
-        torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     run_dir = os.path.join("runs", args.train_name)
     if not os.path.exists(run_dir):
@@ -76,6 +75,11 @@ def train():
         dataset=test_set, batch_size=test_size, shuffle=True, **loader_args
     )
 
+    # ---------------
+    #      Loss
+    # ---------------
+    loss_func = CLIPLoss(args).to(device)
+
     # ---------------------
     #        Models
     # ---------------------
@@ -106,19 +110,12 @@ def train():
 
     classifier = Classifier(args)
 
-    # ---------------
-    #      Loss
-    # ---------------
-    loss_func = CLIPLoss(args).to(device)
+    models = Models(brain_encoder, face_encoder, loss_func)
 
     # ---------------------
     #      Optimizers
     # ---------------------
-    params = list(brain_encoder.parameters()) + list(loss_func.parameters())
-
-    # NOTE: Only train face encoder when it's ViViT
-    if face_encoder is not None:
-        params += list(face_encoder.parameters())
+    params = models.get_params()
 
     optimizer = torch.optim.Adam(params, lr=args.lr)
 
@@ -148,8 +145,7 @@ def train():
         test_top1_accs = []
         inference_times = []
 
-        brain_encoder.train()
-        loss_func.train()
+        models.train()
         for X, Y, subject_idxs in tqdm(train_loader):
             X, Y = X.to(device), Y.to(device)
 
@@ -174,8 +170,9 @@ def train():
 
             optimizer.step()
 
-        brain_encoder.eval()
-        loss_func.eval()
+        assert models.params_updated()
+
+        models.eval()
         for X, Y, subject_idxs in test_loader:
             X, Y = X.to(device), Y.to(device)
 
