@@ -20,6 +20,8 @@ notebooks/*
 
 driving_ica/
 
+.prior/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
