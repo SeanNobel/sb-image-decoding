@@ -107,9 +107,9 @@ sweep_config:
       values: [extract, mean]
 
 eval:
-  split: deep
+  split: shallow
   d_drop: 0.1
   face.encoded: True
   head_activation: False
   final_ksize_stride: 2
-  face.reduction: mean
+  face.reduction: extract

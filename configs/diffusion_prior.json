@@ -1,7 +1,7 @@
 {
     "prior": {
         "net": {
-            "dim": 768,
+            "dim": 512,
             "depth": 12,
             "num_timesteps": 1000,
             "max_text_len": 77,
@@ -18,7 +18,7 @@
             "normformer": true,
             "rotary_emb": true
         },
-        "image_embed_dim": 768,
+        "image_embed_dim": 512,
         "image_size": 224,
         "image_channels": 3,
         "timesteps": 1000,
@@ -33,8 +33,8 @@
         "batch_size": 128,
         "num_data_points": 100000,
         "eval_every_seconds": 1600,
-        "image_url": "data/clip_embs/uhd/face/",
-        "text_url": "data/clip_embs/uhd/brain/",
+        "image_url": "data/clip_embds/uhd/face/",
+        "text_url": "data/clip_embds/uhd/brain/",
         "meta_url": "<path to your metadata>",
         "splits": {
             "train": 0.8,
@@ -61,8 +61,8 @@
         "overwrite_data_path": true,
         "log": {
             "log_type": "wandb",
-            "wandb_entity": "<your wandb username>",
-            "wandb_project": "prior_debugging",
+            "wandb_entity": "sensho",
+            "wandb_project": "clip_prior_uhd",
             "wandb_resume": false,
             "verbose": true
         },

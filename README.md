@@ -13,6 +13,7 @@
 - [ ] 他のconfigファイルの内容をimage.yamlに合わせる
 - [ ] Accept negative shifts (sessions where video recording started before EEG recording)
 - [ ] Preprocessingの出力を.npyから.h5にする
+- [ ] EEGのCLIP embeddingsのスケールが異常に大きい原因
 
 ### Usage
 
@@ -37,6 +38,12 @@ nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > lo
 python brain2face/eval_clip.py config_path=uhd/image.yaml
 ```
 
+- Run DALLE-2 prior training
+
+```bash
+python brain2face/train_diffusion_prior.py
+```
+
 <br>
 
 ## Hayashi Lab @ AIST
@@ -46,6 +53,7 @@ python brain2face/eval_clip.py config_path=uhd/image.yaml
 - Submodule [encoder4editing](https://github.com/SeanNobel/encoder4editing)
 
 - Download StyleGAN inversion model trained on FFHQ StyleGAN
+
 ```bash
 cd encoder4editing/weights
 gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT

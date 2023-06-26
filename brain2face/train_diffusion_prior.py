@@ -22,6 +22,8 @@ from dalle2_pytorch.train_configs import (
     TrainDiffusionPriorConfig,
 )
 
+from termcolor import cprint
+
 
 # helpers
 
@@ -465,6 +467,9 @@ def train(
             trainer.train()
             current_step = trainer.step.item()
             samples_timer.reset()
+            
+            # cprint(img.shape, "yellow")
+            # cprint(txt.shape, "yellow")
 
             # place data on device
 
@@ -473,7 +478,8 @@ def train(
 
             # pass to model
 
-            loss = trainer(text=txt, image_embed=img)
+            # loss = trainer(text=txt, image_embed=img)
+            loss = trainer(text_embed=txt, image_embed=img)
 
             # perform backprop & apply EMA updates
 
@@ -767,7 +773,7 @@ def initialize_training(config_file, accelerator):
 
 
 @click.command()
-@click.option("--config_file", default="../configs/diffusion_prior.json")
+@click.option("--config_file", default="configs/diffusion_prior.json")
 def main(config_file):
     # start HFA
     accelerator = Accelerator()
