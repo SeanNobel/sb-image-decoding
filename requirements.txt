@@ -17,5 +17,7 @@ torch
 natsort
 pytest
 
-dalle2-pytorch
+# dalle2-pytorch
+-e git+https://github.com/SeanNobel/DALLE2-pytorch.git@main#egg=dalle2_pytorch
+
 -e git+https://github.com/openai/CLIP.git#egg=clip-1.0

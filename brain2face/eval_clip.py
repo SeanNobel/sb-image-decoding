@@ -20,15 +20,17 @@ from brain2face.utils.layout import ch_locations_2d
 
 
 @torch.no_grad()
-def eval(args: DictConfig):
+def infer(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    run_name = "".join(
-        [k + "-" + str(v) + "_" for k, v in sorted(args.eval.__dict__.items())]
-    )
+    run_name = "".join([k + "-" + str(v) + "_" for k, v in sorted(args.eval.items())])
     run_dir = os.path.join("runs", args.dataset.lower(), run_name)
     assert os.path.exists(run_dir), "run_dir doesn't exist."
+
+    save_dir = os.path.join("data/clip_embds", args.dataset.lower())
+    os.makedirs(os.path.join(save_dir, "face"), exist_ok=True)
+    os.makedirs(os.path.join(save_dir, "brain"), exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
 
@@ -62,7 +64,7 @@ def eval(args: DictConfig):
         shuffle=False,
         drop_last=False,
         num_workers=4,
-        pin_mamoery=True,
+        pin_memory=True,
     )
 
     # ---------------------
@@ -90,17 +92,22 @@ def eval(args: DictConfig):
         else:
             face_encoder = ViT(dim=args.F, **args.vit).to(device)
 
-    brain_encoder.load_state_dict(torch.load(run_dir + "brain_encoder_best.pt"))
+    brain_encoder.load_state_dict(
+        torch.load(os.path.join(run_dir, "brain_encoder_best.pt"))
+    )
     brain_encoder.eval()
 
     if face_encoder is not None:
-        face_encoder.load_state_dict(torch.load(run_dir + "face_encoder_best.pt"))
+        face_encoder.load_state_dict(
+            torch.load(os.path.join(run_dir, "face_encoder_best.pt"))
+        )
         face_encoder.eval()
 
     # -----------------------
     #       Evaluation
     # -----------------------
-    i = 0
+    Z_list = []
+    Y_list = []
     for X, Y, subject_idxs in tqdm(train_loader):
         X, Y = X.to(device), Y.to(device)
 
@@ -108,19 +115,26 @@ def eval(args: DictConfig):
 
         if face_encoder is not None:
             Y = face_encoder(Y)
+            
+        Z_list.append(Z.cpu().numpy())
+        Y_list.append(Y.cpu().numpy())
 
-        for z, y in zip(Z, Y):
-            np.save(z, os.path.join("data/clip_embds/uhd", f"{str(i).zfill(5)}.npy"))
-            np.save(y, os.path.join("data/clip_embds/uhd", f"{str(i).zfill(5)}.npy"))
-
-            i += 1
-
+    np.save(
+        os.path.join(save_dir, "brain", "brain_embds.npy"),
+        np.concatenate(Z_list),
+    )
+    np.save(
+        os.path.join(save_dir, "face", "face_embds.npy"),
+        np.concatenate(Y_list),
+    )
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
 def run(_args: DictConfig) -> None:
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-    eval(args)
+    args.__dict__.update(args.eval)
+
+    infer(args)
 
 
 if __name__ == "__main__":
