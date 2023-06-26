@@ -35,7 +35,7 @@ eeg_load_bufsize: 1000 # samples
 
 # ==== Training ==== #
 project_name: brain2face_uhd
-train_name: test # Will be updated when it's sweep
+train_name: test # Will be updated when it's a sweep
 
 dataset: UHD # UHD / YLabECoG / StyleGAN
 

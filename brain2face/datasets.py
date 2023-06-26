@@ -272,9 +272,9 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
         session_paths = glob.glob("data/preprocessed/ylab/" + args.preproc_name + "/*/")
 
         if args.face.type == "dynamic":
-            y_reformer = partial(self.ylab_reformer, reduce_time=False)
+            y_reformer = self.ylab_reformer
         elif args.face.type == "static":
-            y_reformer = partial(self.ylab_reformer, reduce_time=True)
+            y_reformer = partial(self.ylab_reformer, reduction=args.face.reduction)
         else:
             raise ValueError("Face type is only static or dynamic.")
 
@@ -283,11 +283,20 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
         assert not self.Y.requires_grad
 
     @staticmethod
-    def ylab_reformer(Y: np.ndarray, reduce_time: bool) -> torch.Tensor:
+    def ylab_reformer(Y: np.ndarray, reduction: Optional[bool] = None) -> torch.Tensor:
+        """
+        Args:
+            Y: ( samples, features=709, segment_len=90 )
+        """
         Y = torch.from_numpy(Y).to(torch.float32)
 
-        if reduce_time:
+        cprint(Y.shape, "yellow")
+        if reduction == "extract":
+            Y = Y[:, :, Y.shape[-1] // 2]
+        elif reduction == "mean":
             Y = Y.mean(dim=-1)
+        else:
+            assert reduction is None, "Reduction is either extract or mean."
 
         return Y
 

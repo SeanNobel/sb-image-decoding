@@ -8,7 +8,7 @@ sync_data_path: /work/data/ECoG/rishido/E0030sync_trigger.csv
 processing_sheet_path: /work/data/ECoG/E0030/E0030ProcessingSheet.xlsx
 
 start_subj: 0
-end_subj: 8
+end_subj: 18
 
 seq_len: 3 # segment length in seconds
 
@@ -28,9 +28,9 @@ baseline_len: 0.5 # sec
 
 # ==== Training ==== #
 project_name: brain2face_ylab
-train_name: rishido_1
+train_name: test # Will be updated when it's a sweep
 
-dataset: Brain2FaceYLabECoGDataset
+dataset: YLabECoG # UHD / YLabECoG / StyleGAN
 
 montage_path: brain2face/utils/montages/tobeupdated.npy
 
@@ -38,6 +38,7 @@ F: 709
 
 face:
   type: dynamic # static (image) or dynamic (video)
+  reduction: mean
   encoded: True # Face features are already encoded by OpenFace
 
 # Brain Encoder
@@ -46,8 +47,8 @@ D2: 320
 K: 32
 d_drop: 0.3 # Channel distance for spatial dropout
 # NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
-final_kernel_size: 2
-final_stride: 2
+final_ksize_stride: 2
+head_activation: False
 
 split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
@@ -75,7 +76,23 @@ sweep_config:
     name: test_top10_acc
     goal: maximize
   parameters:
+    split:
+      values: [deep, shallow]
     d_drop:
       values: [0.1, 0.3, 0.5]
+    head_activation:
+      values: [True, False]
+    final_ksize_stride:
+      values: [1, 2]
+    face.reduction:
+      values: [extract, mean]
     face.type:
-      values: ["static", "dynamic"]
+      values: [static, dynamic]
+
+eval:
+  split: shallow
+  d_drop: 0.1
+  face.encoded: True
+  head_activation: False
+  final_ksize_stride: 2
+  face.reduction: extract
