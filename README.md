@@ -36,7 +36,6 @@ nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > lo
 ```bash
 python brain2face/eval_clip.py config_path=uhd/image.yaml
 ```
-```
 
 <br>
 

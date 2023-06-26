@@ -60,7 +60,7 @@ def infer(args: DictConfig):
         shuffle=False,
         drop_last=False,
         num_workers=4,
-        pin_mamoery=True,
+        pin_memory=True,
     )
 
     # ---------------------
@@ -88,11 +88,15 @@ def infer(args: DictConfig):
         else:
             face_encoder = ViT(dim=args.F, **args.vit).to(device)
 
-    brain_encoder.load_state_dict(torch.load(run_dir + "brain_encoder_best.pt"))
+    brain_encoder.load_state_dict(
+        torch.load(os.path.join(run_dir, "brain_encoder_best.pt"))
+    )
     brain_encoder.eval()
 
     if face_encoder is not None:
-        face_encoder.load_state_dict(torch.load(run_dir + "face_encoder_best.pt"))
+        face_encoder.load_state_dict(
+            torch.load(os.path.join(run_dir, "face_encoder_best.pt"))
+        )
         face_encoder.eval()
 
     # -----------------------
@@ -108,8 +112,14 @@ def infer(args: DictConfig):
             Y = face_encoder(Y)
 
         for z, y in zip(Z, Y):
-            np.save(z, os.path.join("data/clip_embds/uhd", f"{str(i).zfill(5)}.npy"))
-            np.save(y, os.path.join("data/clip_embds/uhd", f"{str(i).zfill(5)}.npy"))
+            np.save(
+                os.path.join("data/clip_embds/uhd", f"{str(i).zfill(5)}.npy"),
+                z.cpu().numpy(),
+            )
+            np.save(
+                os.path.join("data/clip_embds/uhd", f"{str(i).zfill(5)}.npy"),
+                y.cpu().numpy(),
+            )
 
             i += 1
 
@@ -117,6 +127,8 @@ def infer(args: DictConfig):
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
 def run(_args: DictConfig) -> None:
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
+
+    args.__dict__.update(args.eval)
 
     infer(args)
 
