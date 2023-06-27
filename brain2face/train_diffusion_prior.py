@@ -54,8 +54,6 @@ def train(args: DictConfig) -> None:
         generator=torch.Generator().manual_seed(args.seed),
     )
 
-    cprint(f"Test size: {test_size}", "cyan")
-
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
@@ -85,60 +83,74 @@ def train(args: DictConfig) -> None:
     # ---------------------
     #      Optimizers
     # ---------------------
-    # diffusion_prior_trainer = DiffusionPriorTrainer(diffusion_prior)
+    diffusion_prior_trainer = DiffusionPriorTrainer(
+        diffusion_prior,
+        lr=args.lr,
+        wd=args.wd,
+        ema_beta=args.ema_beta,
+        ema_update_after_step=args.ema_update_after_step,
+        ema_update_every=args.ema_update_every,
+    )
 
-    params = diffusion_prior.parameters()
+    # params = diffusion_prior.parameters()
 
-    optimizer = torch.optim.Adam(params, lr=args.lr)
+    # optimizer = torch.optim.Adam(params, lr=args.lr)
 
-    if args.lr_scheduler == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=args.epochs, eta_min=args.lr * 0.01
-        )
-    elif args.lr_scheduler == "multistep":
-        mlstns = [int(m * args.epochs) for m in args.lr_multistep_mlstns]
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, milestones=mlstns, gamma=args.lr_step_gamma
-        )
-    else:
-        raise ValueError()
+    # if args.lr_scheduler == "cosine":
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    #         optimizer, T_max=args.epochs, eta_min=args.lr * 0.01
+    #     )
+    # elif args.lr_scheduler == "multistep":
+    #     mlstns = [int(m * args.epochs) for m in args.lr_multistep_mlstns]
+    #     scheduler = torch.optim.lr_scheduler.MultiStepLR(
+    #         optimizer, milestones=mlstns, gamma=args.lr_step_gamma
+    #     )
+    # elif args.lr_scheduler == "none":
+    #     scheduler = None
+    # else:
+    #     raise ValueError
 
     # -----------------------
     #     Strat training
     # -----------------------
-    min_test_loss = float("inf")
+    # min_test_loss = float("inf")
 
-    diffusion_prior.train()
     for epoch in range(args.epochs):
         train_losses = []
         test_losses = []
 
-        diffusion_prior.train()
+        # diffusion_prior.train()
         for Z, Y in tqdm(train_loader):
             Z, Y = Z.to(device), Y.to(device)
 
-            loss = diffusion_prior(text_embed=Z, image_embed=Y)
+            loss = diffusion_prior_trainer(
+                text_embed=Z, image_embed=Y
+            )  # , max_batch_size=4)
 
-            train_losses.append(loss.item())
+            train_losses.append(loss)
             # train_top10_accs.append(train_top10_acc)
             # train_top1_accs.append(train_top1_acc)
 
-            optimizer.zero_grad()
+            diffusion_prior_trainer.update()
 
-            loss.backward()
+            # optimizer.zero_grad()
 
-            optimizer.step()
+            # loss.backward()
+
+            # optimizer.step()
 
         # assert models.params_updated()
 
-        diffusion_prior.eval()
+        # diffusion_prior.eval()
         for Z, Y in test_loader:
             Z, Y = Z.to(device), Y.to(device)
 
-            with torch.no_grad():
-                loss = diffusion_prior(text_embed=Z, image_embed=Y)
+            # with torch.no_grad():
+            loss = diffusion_prior_trainer(
+                text_embed=Z, image_embed=Y
+            )  # , max_batch_size=4)
 
-            test_losses.append(loss.item())
+            test_losses.append(loss)
             # test_top10_accs.append(test_top10_acc)
             # test_top1_accs.append(test_top1_acc)
 
@@ -146,7 +158,7 @@ def train(args: DictConfig) -> None:
             f"Epoch {epoch}/{args.epochs} | ",
             f"avg train loss: {np.mean(train_losses):.3f} | ",
             f"avg test loss: {np.mean(test_losses):.3f} | ",
-            f"lr: {optimizer.param_groups[0]['lr']:.5f}",
+            # f"lr: {optimizer.param_groups[0]['lr']:.5f}",
         )
 
         if args.use_wandb:
@@ -154,11 +166,12 @@ def train(args: DictConfig) -> None:
                 "epoch": epoch,
                 "train_loss": np.mean(train_losses),
                 "test_loss": np.mean(test_losses),
-                "lrate": optimizer.param_groups[0]["lr"],
+                # "lrate": optimizer.param_groups[0]["lr"],
             }
             wandb.log(performance_now)
 
-        scheduler.step()
+        # if scheduler is not None:
+        #     scheduler.step()
 
         # models.save(run_dir)
 
