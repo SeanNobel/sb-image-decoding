@@ -4,7 +4,9 @@ from torchvision import transforms
 import torchvision.transforms.functional as F
 from torchvision.transforms import InterpolationMode
 import numpy as np
+import cv2
 import glob
+from natsort import natsorted
 import mne
 import mediapipe as mp
 import h5py
@@ -351,6 +353,31 @@ class Brain2FaceCLIPEmbDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         return self.Z[i], self.Y[i]
+
+
+class Brain2FaceCLIPEmbImageDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset: str) -> None:
+        super().__init__()
+
+        self.Y = torch.load(f"data/clip_embds/{dataset.lower()}/face_embds.pt")
+        self.Y_img = self._load_images(f"data/clip_embds/{dataset.lower()}/face_images")
+
+        assert len(self.Y) == len(self.Y_img)
+
+    def __len__(self):
+        return len(self.Y)
+
+    def __getitem__(self, i):
+        return self.Y[i], self.Y_img[i]
+
+    def _load_images(dir: str) -> torch.Tensor:
+        images = []
+        for path in natsorted(glob.glob(dir + "/*.jpg")):
+            image = cv2.imread(path).astype(np.float32) / 255.0
+            image = torch.from_numpy(image).permute(2, 0, 1)
+            images.append(image)
+
+        return torch.stack(images)
 
 
 if __name__ == "__main__":
