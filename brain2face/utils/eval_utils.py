@@ -14,7 +14,7 @@ class ImageSaver:
         self.chunk_idx = 0
 
         self.save_dir_prefix = os.path.join(save_dir, "face_images")
-        self.save_dir = self._update_save_dir(self.chunk_idx)
+        self.save_dir = None  # will be updated in save_for_webdataset()
 
     def save(self, Y: torch.Tensor) -> None:
         for y in Y:
@@ -32,6 +32,9 @@ class ImageSaver:
         Args:
             Y: ( batch_size, channels=3, size=256, size=256 )
         """
+        if self.sample_idx == 0:
+            self.save_dir = self._update_save_dir(self.chunk_idx)
+
         for y in Y:
             save_path = os.path.join(
                 self.save_dir,
@@ -47,7 +50,6 @@ class ImageSaver:
             if self.sample_idx == EMB_CHUNK_SIZE:
                 self.sample_idx = 0
                 self.chunk_idx += 1
-                self.save_dir = self._update_save_dir(self.chunk_idx)
 
     @staticmethod
     def _save_image(y: torch.Tensor, save_path: str) -> None:
