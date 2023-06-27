@@ -73,7 +73,8 @@ def infer(args: DictConfig) -> None:
         pin_memory=True,
     )
 
-    num_subjects = 20
+    # DEBUG
+    # num_subjects = 1
 
     # ---------------------
     #        Models
@@ -129,6 +130,9 @@ def infer(args: DictConfig) -> None:
                 image_saver.save(Y)
 
             Y = face_encoder(Y)
+
+        Z /= Z.norm(dim=-1, keepdim=True)
+        Y /= Y.norm(dim=-1, keepdim=True)
 
         Z_list.append(Z.cpu())
         Y_list.append(Y.cpu())

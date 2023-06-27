@@ -37,6 +37,7 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         # NOTE: Selecting directories with preprocessed data.
         session_paths = self._drop_bads(session_paths)
 
+        # DEBUG
         # session_paths = session_paths[:1]
 
         if args.split in ["subject_random", "subject_each"]:
