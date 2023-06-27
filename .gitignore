@@ -22,6 +22,9 @@ driving_ica/
 
 .prior/
 
+.tracker_data/
+tar_face_images.sh
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

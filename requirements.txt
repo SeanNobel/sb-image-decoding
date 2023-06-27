@@ -21,3 +21,5 @@ pytest
 -e git+https://github.com/SeanNobel/DALLE2-pytorch.git@main#egg=dalle2_pytorch
 
 -e git+https://github.com/openai/CLIP.git#egg=clip-1.0
+
+huggingface_hub
