@@ -14,6 +14,7 @@
 - [ ] Accept negative shifts (sessions where video recording started before EEG recording)
 - [ ] Preprocessingの出力を.npyから.h5にする
 - [ ] EEGのCLIP embeddingsのスケールが異常に大きい原因
+- [ ] args.face.encoded=Trueでも元の画像を保存できるようにする
 
 ### Usage
 
@@ -32,7 +33,7 @@ nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out
 nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > logs/uhd/sweep_clip.log &
 ```
 
-- Run CLIP evaluation and generate CLIP embeddings
+- Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
 
 ```bash
 python brain2face/eval_clip.py config_path=uhd/image.yaml
@@ -42,6 +43,21 @@ python brain2face/eval_clip.py config_path=uhd/image.yaml
 
 ```bash
 python brain2face/train_diffusion_prior.py
+```
+
+- Run DALLE-2 decoder training
+
+```bash
+# tar face_images
+# bash tar_face_images.sh
+
+# login to huggingface hub
+# huggingface-cli login
+
+# need to create this directory manually
+# mkdir .tracker_data
+
+python brain2face/train_decoder.py
 ```
 
 <br>
