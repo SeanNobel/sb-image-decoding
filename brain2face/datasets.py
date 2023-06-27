@@ -37,6 +37,8 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         # NOTE: Selecting directories with preprocessed data.
         session_paths = self._drop_bads(session_paths)
 
+        # session_paths = session_paths[:1]
+
         if args.split in ["subject_random", "subject_each"]:
             session_paths, self.num_subjects, subject_names = self._split_sessions(train)
         else:
@@ -332,6 +334,22 @@ class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
         Y = Y.permute(0, 2, 1)  # ( samples, features=512, segment_len*styles=360 )
 
         return Y
+
+
+class Brain2FaceCLIPEmbDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset: str) -> None:
+        super().__init__()
+
+        self.Z = torch.load(f"data/clip_embds/{dataset.lower()}/brain_embds.pt")
+        self.Y = torch.load(f"data/clip_embds/{dataset.lower()}/face_embds.pt")
+
+        assert self.Z.shape == self.Y.shape
+
+    def __len__(self):
+        return len(self.Z)
+
+    def __getitem__(self, i):
+        return self.Z[i], self.Y[i]
 
 
 if __name__ == "__main__":
