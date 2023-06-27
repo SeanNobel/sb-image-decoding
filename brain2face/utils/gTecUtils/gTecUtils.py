@@ -5,7 +5,7 @@ import pandas as pd
 from lxml import etree
 import xml.etree.ElementTree as ET
 from termcolor import cprint
-from brain2face.constants import MONTAGE_INFO_PATH
+from brain2face.utils.constants import MONTAGE_INFO_PATH
 
 mne.set_log_level(verbose="WARNING")
 
