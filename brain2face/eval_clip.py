@@ -15,7 +15,12 @@ from brain2face.datasets import (
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT
-from brain2face.utils.loss import CLIPLoss
+from brain2face.utils.eval_utils import (
+    ImageSaver,
+    EmbeddingSaver,
+    recursive_update,
+    collapse_nest,
+)
 from brain2face.utils.layout import ch_locations_2d
 
 
@@ -24,13 +29,14 @@ def infer(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    run_name = "".join([k + "-" + str(v) + "_" for k, v in sorted(args.eval.items())])
+    run_name = "".join(
+        [k + "-" + str(v) + "_" for k, v in sorted(collapse_nest(args.eval).items())]
+    )
     run_dir = os.path.join("runs", args.dataset.lower(), run_name)
     assert os.path.exists(run_dir), "run_dir doesn't exist."
 
     save_dir = os.path.join("data/clip_embds", args.dataset.lower())
-    os.makedirs(os.path.join(save_dir, "face"), exist_ok=True)
-    os.makedirs(os.path.join(save_dir, "brain"), exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
 
@@ -61,11 +67,13 @@ def infer(args: DictConfig) -> None:
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=False,  # It must be False to keep consistency between face embds and face image idxs.
         drop_last=False,
         num_workers=4,
         pin_memory=True,
     )
+
+    num_subjects = 20
 
     # ---------------------
     #        Models
@@ -108,31 +116,40 @@ def infer(args: DictConfig) -> None:
     # -----------------------
     Z_list = []
     Y_list = []
+    image_saver = ImageSaver(save_dir)
+    emb_saver = EmbeddingSaver(save_dir)
+
     for X, Y, subject_idxs in tqdm(train_loader):
         X, Y = X.to(device), Y.to(device)
 
         Z = brain_encoder(X, subject_idxs)
 
         if face_encoder is not None:
-            Y = face_encoder(Y)
-            
-        Z_list.append(Z.cpu().numpy())
-        Y_list.append(Y.cpu().numpy())
+            if args.face.type == "static":
+                image_saver.save(Y)
 
-    np.save(
-        os.path.join(save_dir, "brain", "brain_embds.npy"),
-        np.concatenate(Z_list),
-    )
-    np.save(
-        os.path.join(save_dir, "face", "face_embds.npy"),
-        np.concatenate(Y_list),
-    )
+            Y = face_encoder(Y)
+
+        Z_list.append(Z.cpu())
+        Y_list.append(Y.cpu())
+
+    emb_saver.save(torch.cat(Z_list), torch.cat(Y_list))
+
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
 def run(_args: DictConfig) -> None:
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
+    args = OmegaConf.to_container(args, resolve=True)
 
-    args.__dict__.update(args.eval)
+    args_eval = args.pop("eval")
+
+    args = recursive_update(args, args_eval)
+
+    args.update({"eval": args_eval})
+
+    args = OmegaConf.create(args)
+
+    # args.__dict__.update(args.eval)
 
     infer(args)
 
