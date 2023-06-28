@@ -1,3 +1,5 @@
+dataset: UHD
+
 unet1:
   dim: 128
   dim_mults: [1, 2, 4, 8]
@@ -9,17 +11,20 @@ unet2:
 image_embed_dim: 512
 channels: 3
 
-image_sizes: [256, 256]
+image_sizes: [128, 256]
 
 timesteps: 1000
 
+epochs: 100
+train_ratio: 0.8
+batch_size: 16
 lr: 3.0e-4
 wd: 1.0e-2
 ema_beta: 0.99
 ema_update_after_step: 1000
 ema_update_every: 10
 
-cuda_id: 1
+cuda_id: 0
 seed: 1234
 
 use_wandb: True

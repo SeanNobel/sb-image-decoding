@@ -6,6 +6,7 @@ from torchvision.transforms import InterpolationMode
 import numpy as np
 import cv2
 import glob
+from tqdm import tqdm
 from natsort import natsorted
 import mne
 import mediapipe as mp
@@ -370,9 +371,10 @@ class Brain2FaceCLIPEmbImageDataset(torch.utils.data.Dataset):
     def __getitem__(self, i):
         return self.Y[i], self.Y_img[i]
 
+    @staticmethod
     def _load_images(dir: str) -> torch.Tensor:
         images = []
-        for path in natsorted(glob.glob(dir + "/*.jpg")):
+        for path in tqdm(natsorted(glob.glob(dir + "/*.jpg")), desc="Loading images"):
             image = cv2.imread(path).astype(np.float32) / 255.0
             image = torch.from_numpy(image).permute(2, 0, 1)
             images.append(image)

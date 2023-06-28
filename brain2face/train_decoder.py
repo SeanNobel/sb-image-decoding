@@ -144,8 +144,8 @@ def train(args: DictConfig) -> None:
             )  # , max_batch_size=4)
             decoder_trainer.update(2)
 
-            train_losses_unet1.append(loss)
-            train_losses_unet2.append(loss)
+            train_losses_unet1.append(loss_unet1)
+            train_losses_unet2.append(loss_unet2)
 
             # optimizer.zero_grad()
 
