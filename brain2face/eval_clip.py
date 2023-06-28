@@ -102,13 +102,13 @@ def infer(args: DictConfig) -> None:
             face_encoder = ViT(dim=args.F, **args.vit).to(device)
 
     brain_encoder.load_state_dict(
-        torch.load(os.path.join(run_dir, "brain_encoder_best.pt"))
+        torch.load(os.path.join(run_dir, "brain_encoder_best.pt"), map_location=device)
     )
     brain_encoder.eval()
 
     if face_encoder is not None:
         face_encoder.load_state_dict(
-            torch.load(os.path.join(run_dir, "face_encoder_best.pt"))
+            torch.load(os.path.join(run_dir, "face_encoder_best.pt"), map_location=device)
         )
         face_encoder.eval()
 
@@ -117,8 +117,8 @@ def infer(args: DictConfig) -> None:
     # -----------------------
     Z_list = []
     Y_list = []
-    image_saver = ImageSaver(save_dir)
-    emb_saver = EmbeddingSaver(save_dir)
+    image_saver = ImageSaver(save_dir, args.for_webdataset)
+    emb_saver = EmbeddingSaver(save_dir, args.for_webdataset)
 
     for X, Y, subject_idxs in tqdm(train_loader):
         X, Y = X.to(device), Y.to(device)
