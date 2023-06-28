@@ -9,32 +9,37 @@ from brain2face.utils.constants import EMB_CHUNK_SIZE
 
 
 class ImageSaver:
-    def __init__(self, save_dir: str) -> None:
+    def __init__(self, save_dir: str, for_webdataset: bool) -> None:
         self.sample_idx = 0
         self.chunk_idx = 0
 
-        self.save_dir_prefix = os.path.join(save_dir, "face_images")
-        self.save_dir = None  # will be updated in save_for_webdataset()
+        if for_webdataset:
+            self.save_dir_prefix = os.path.join(save_dir, "for_webdataset", "face_images")
+            self.save_dir = self._update_save_dir(self.chunk_idx)
 
-    def save(self, Y: torch.Tensor) -> None:
+            self.save = self._save_for_webdataset
+
+        else:
+            self.save_dir = os.path.join(save_dir, "face_images")
+
+            self.save = self._save
+
+    def _save(self, Y: torch.Tensor) -> None:
         for y in Y:
             save_path = os.path.join(
-                self.save_dir_prefix, str(self.sample_idx).zfill(5) + ".jpg"
+                self.save_dir, str(self.sample_idx).zfill(5) + ".jpg"
             )
 
             self._save_image(y, save_path)
 
             self.sample_idx += 1
 
-    def save_for_webdataset(self, Y: torch.Tensor) -> None:
+    def _save_for_webdataset(self, Y: torch.Tensor) -> None:
         """Saves batch of images to save_dir. (00000.jpg, 00001.jpg, ...)
         Continues from the last index in the last batch.
         Args:
             Y: ( batch_size, channels=3, size=256, size=256 )
         """
-        if self.sample_idx == 0:
-            self.save_dir = self._update_save_dir(self.chunk_idx)
-
         for y in Y:
             save_path = os.path.join(
                 self.save_dir,
@@ -50,6 +55,8 @@ class ImageSaver:
             if self.sample_idx == EMB_CHUNK_SIZE:
                 self.sample_idx = 0
                 self.chunk_idx += 1
+
+                self.save_dir = self._update_save_dir(self.chunk_idx)
 
     @staticmethod
     def _save_image(y: torch.Tensor, save_path: str) -> None:
@@ -67,10 +74,15 @@ class ImageSaver:
 
 
 class EmbeddingSaver:
-    def __init__(self, save_dir: str) -> None:
+    def __init__(self, save_dir: str, for_webdataset: bool) -> None:
         self.save_dir = save_dir
 
-    def save(self, brain: torch.Tensor, face: torch.Tensor) -> None:
+        if for_webdataset:
+            self.save = self._save_for_webdataset
+        else:
+            self.save = self._save
+
+    def _save(self, brain: torch.Tensor, face: torch.Tensor) -> None:
         """
         Args:
             brain: ( samples, emb_dim=512 )
@@ -81,7 +93,7 @@ class EmbeddingSaver:
         torch.save(brain, os.path.join(self.save_dir, "brain_embds.pt"))
         torch.save(face, os.path.join(self.save_dir, "face_embds.pt"))
 
-    def save_for_webdataset(self, brain: torch.Tensor, face: torch.Tensor) -> None:
+    def _save_for_webdataset(self, brain: torch.Tensor, face: torch.Tensor) -> None:
         """
         Args:
             brain: ( samples~=13000, emb_dim=512 )
