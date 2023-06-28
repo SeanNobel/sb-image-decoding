@@ -18,7 +18,7 @@
 
 ### Usage
 
-- Run preprocess
+#### Run preprocess
 
 ```bash
 nohup python brain2face/preprocs/uhd.py start_subj=0 end_subj=8 > logs/uhd/out1.log &
@@ -26,38 +26,47 @@ nohup python brain2face/preprocs/uhd.py start_subj=8 end_subj=16 > logs/uhd/out2
 nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out3.log &
 ```
 
-- Run CLIP training
+#### Run CLIP training
 
 ```bash
 # Specify sweep configuration from .yaml
 nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > logs/uhd/sweep_clip.log &
 ```
 
-- Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
+#### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
 
 ```bash
 python brain2face/eval_clip.py config_path=uhd/image.yaml
+# For distributed DALLE-2 training, set for_webdataset=True in the yaml
 ```
 
-- Run DALLE-2 prior training
+#### Run DALLE-2 prior training
 
 ```bash
 python brain2face/train_diffusion_prior.py
 ```
 
-- Run DALLE-2 decoder training
+#### Run DALLE-2 decoder training
+
+- Normal training
+
+```bash
+python brain2face/train_decoder.py
+```
+
+- Distributed training
 
 ```bash
 # tar face_images
-# bash tar_face_images.sh
+bash tar_face_images.sh
 
 # login to huggingface hub
-# huggingface-cli login
+huggingface-cli login
 
 # need to create this directory manually
-# mkdir .tracker_data
+mkdir .tracker_data
 
-python brain2face/train_decoder.py
+python brain2face/train_decoder_distributed.py
 ```
 
 <br>
@@ -75,7 +84,7 @@ cd encoder4editing/weights
 gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT
 ```
 
-- Run preprocess (using 4 GPUs)
+#### Run preprocess (using 4 GPUs)
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 nohup python brain2face/preprocs/stylegan.py start_subj=0 end_subj=8 > logs/ica/out1.log &
@@ -94,13 +103,13 @@ CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=2
 
 ### Usage
 
-- Run preprocess
+#### Run preprocess
 
 ```bash
 python brain2face/preprocs/ylab_ecog.py
 ```
 
-- Run CLIP training
+#### Run CLIP training
 
 ```bash
 # Specify sweep configuration from .yaml
