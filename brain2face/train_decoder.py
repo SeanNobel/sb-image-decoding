@@ -36,8 +36,8 @@ def train(args: DictConfig) -> None:
     # else:
     #     run_name = args.train_name
 
-    # run_dir = os.path.join("runs", args.dataset.lower(), run_name)
-    # os.makedirs(run_dir, exist_ok=True)
+    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.run_name)
+    os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
 
@@ -191,6 +191,8 @@ def train(args: DictConfig) -> None:
                 # "lrate": optimizer.param_groups[0]["lr"],
             }
             wandb.log(performance_now)
+
+        torch.save(decoder.state_dict(), os.path.join(run_dir, f"decoder_last.pt"))
 
         # if scheduler is not None:
         #     scheduler.step()

@@ -13,7 +13,6 @@
 - [ ] 他のconfigファイルの内容をimage.yamlに合わせる
 - [ ] Accept negative shifts (sessions where video recording started before EEG recording)
 - [ ] Preprocessingの出力を.npyから.h5にする
-- [ ] EEGのCLIP embeddingsのスケールが異常に大きい原因
 - [ ] args.face.encoded=Trueでも元の画像を保存できるようにする
 
 ### Usage
@@ -42,8 +41,16 @@ python brain2face/eval_clip.py config_path=uhd/image.yaml
 
 #### Run DALLE-2 prior training
 
+- Normal training
+
 ```bash
 python brain2face/train_diffusion_prior.py
+```
+
+- Distributed training
+
+```bash
+python brain2face/train_diffusion_prior_distributed.py
 ```
 
 #### Run DALLE-2 decoder training
@@ -51,7 +58,7 @@ python brain2face/train_diffusion_prior.py
 - Normal training
 
 ```bash
-python brain2face/train_decoder.py
+nohup python brain2face/train_decoder.py > logs/uhd/train_decoder.log &
 ```
 
 - Distributed training
@@ -63,10 +70,18 @@ bash tar_face_images.sh
 # login to huggingface hub
 huggingface-cli login
 
+# create a repository in huggingface whose name matches tracker.save.huggingface_repo in decoder.json
+
 # need to create this directory manually
 mkdir .tracker_data
 
 python brain2face/train_decoder_distributed.py
+```
+
+#### Finally generate face images from EEG
+
+```bash
+python brain2face/eval_pipeline.py config_path=uhd/image.yaml
 ```
 
 <br>
