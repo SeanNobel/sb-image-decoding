@@ -186,8 +186,8 @@ def train(args: DictConfig) -> None:
                 "epoch": epoch,
                 "train_loss_unet1": np.mean(train_losses_unet1),
                 "train_loss_unet2": np.mean(train_losses_unet2),
-                "test_loss": np.mean(test_losses_unet1),
-                "test_loss": np.mean(test_losses_unet2),
+                "test_loss_unet1": np.mean(test_losses_unet1),
+                "test_loss_unet2": np.mean(test_losses_unet2),
                 # "lrate": optimizer.param_groups[0]["lr"],
             }
             wandb.log(performance_now)

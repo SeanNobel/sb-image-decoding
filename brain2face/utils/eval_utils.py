@@ -75,11 +75,11 @@ class ImageSaver:
 
 class EmbeddingSaver:
     def __init__(self, save_dir: str, for_webdataset: bool) -> None:
-        self.save_dir = save_dir
-
         if for_webdataset:
+            self.save_dir = os.path.join(save_dir, "for_webdataset")
             self.save = self._save_for_webdataset
         else:
+            self.save_dir = save_dir
             self.save = self._save
 
     def _save(self, brain: torch.Tensor, face: torch.Tensor) -> None:

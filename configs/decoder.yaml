@@ -11,7 +11,7 @@ unet2:
 image_embed_dim: 512
 channels: 3
 
-image_sizes: [128, 256]
+image_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
 
 timesteps: 1000
 
