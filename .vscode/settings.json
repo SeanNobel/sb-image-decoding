@@ -23,4 +23,6 @@
     "python.testing.pytestArgs": [
         "tests"
     ],
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "black-formatter.importStrategy": "useBundled",
 }

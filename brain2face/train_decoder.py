@@ -10,12 +10,12 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior, DiffusionPriorTrainer
+from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 
-from brain2face.datasets import Brain2FaceCLIPEmbDataset
+from brain2face.datasets import Brain2FaceCLIPEmbImageDataset
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="diffusion_prior")
+@hydra.main(version_base=None, config_path="../configs", config_name="decoder")
 def train(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -36,15 +36,15 @@ def train(args: DictConfig) -> None:
     # else:
     #     run_name = args.train_name
 
-    # run_dir = os.path.join("runs", args.dataset.lower(), run_name)
-    # os.makedirs(run_dir, exist_ok=True)
+    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.run_name)
+    os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
 
     # -----------------------
     #       Dataloader
     # -----------------------
-    dataset = Brain2FaceCLIPEmbDataset(args.dataset)
+    dataset = Brain2FaceCLIPEmbImageDataset(args.dataset)
 
     train_size = int(dataset.Y.shape[0] * args.train_ratio)
     test_size = dataset.Y.shape[0] - train_size
@@ -65,26 +65,35 @@ def train(args: DictConfig) -> None:
     # ---------------------
     #        Models
     # ---------------------
-    prior_network = DiffusionPriorNetwork(
-        dim=args.dim,
-        depth=args.depth,
-        dim_head=args.dim_head,
-        heads=args.heads,
+    unet1 = Unet(
+        dim=args.unet1.dim,
+        image_embed_dim=args.image_embed_dim,
+        # text_embed_dim=args.text_embed_dim,
+        channels=args.channels,
+        dim_mults=tuple(args.unet1.dim_mults),
+        cond_on_text_encodings=False,
     ).to(device)
 
-    diffusion_prior = DiffusionPrior(
-        net=prior_network,
+    unet2 = Unet(
+        dim=args.unet2.dim,
         image_embed_dim=args.image_embed_dim,
+        # text_embed_dim=args.text_embed_dim,
+        channels=args.channels,
+        dim_mults=tuple(args.unet2.dim_mults),
+        cond_on_text_encodings=False,
+    ).to(device)
+
+    decoder = Decoder(
+        unet=(unet1, unet2),
+        image_sizes=tuple(args.image_sizes),
         timesteps=args.timesteps,
-        cond_drop_prob=args.cond_drop_prob,
-        condition_on_text_encodings=False,
     ).to(device)
 
     # ---------------------
     #      Optimizers
     # ---------------------
-    diffusion_prior_trainer = DiffusionPriorTrainer(
-        diffusion_prior,
+    decoder_trainer = DecoderTrainer(
+        decoder,
         lr=args.lr,
         wd=args.wd,
         ema_beta=args.ema_beta,
@@ -116,22 +125,27 @@ def train(args: DictConfig) -> None:
     # min_test_loss = float("inf")
 
     for epoch in range(args.epochs):
-        train_losses = []
-        test_losses = []
+        train_losses_unet1 = []
+        train_losses_unet2 = []
+        test_losses_unet1 = []
+        test_losses_unet2 = []
 
         # diffusion_prior.train()
-        for Z, Y in tqdm(train_loader):
-            Z, Y = Z.to(device), Y.to(device)
+        for Y, Y_img in tqdm(train_loader):
+            Y, Y_img = Y.to(device), Y_img.to(device)
 
-            loss = diffusion_prior_trainer(
-                text_embed=Z, image_embed=Y
+            loss_unet1 = decoder_trainer(
+                image_embed=Y, image=Y_img, unet_number=1
             )  # , max_batch_size=4)
+            decoder_trainer.update(1)
 
-            train_losses.append(loss)
-            # train_top10_accs.append(train_top10_acc)
-            # train_top1_accs.append(train_top1_acc)
+            loss_unet2 = decoder_trainer(
+                image_embed=Y, image=Y_img, unet_number=2
+            )  # , max_batch_size=4)
+            decoder_trainer.update(2)
 
-            diffusion_prior_trainer.update()
+            train_losses_unet1.append(loss_unet1)
+            train_losses_unet2.append(loss_unet2)
 
             # optimizer.zero_grad()
 
@@ -142,33 +156,43 @@ def train(args: DictConfig) -> None:
         # assert models.params_updated()
 
         # diffusion_prior.eval()
-        for Z, Y in test_loader:
-            Z, Y = Z.to(device), Y.to(device)
+        for Y, Y_img in test_loader:
+            Y, Y_img = Y.to(device), Y_img.to(device)
 
             # with torch.no_grad():
-            loss = diffusion_prior_trainer(
-                text_embed=Z, image_embed=Y
+            loss_unet1 = decoder_trainer(
+                image_embed=Y, image=Y_img, unet_number=1
             )  # , max_batch_size=4)
 
-            test_losses.append(loss)
+            loss_unet2 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=2)
+
+            test_losses_unet1.append(loss_unet1)
+            test_losses_unet2.append(loss_unet2)
+
             # test_top10_accs.append(test_top10_acc)
             # test_top1_accs.append(test_top1_acc)
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
-            f"avg train loss: {np.mean(train_losses):.3f} | ",
-            f"avg test loss: {np.mean(test_losses):.3f} | ",
+            f"avg train loss unet1: {np.mean(train_losses_unet1):.3f} | ",
+            f"avg train loss unet2: {np.mean(train_losses_unet2):.3f} | ",
+            f"avg test loss unet1: {np.mean(test_losses_unet1):.3f} | ",
+            f"avg test loss unet2: {np.mean(test_losses_unet2):.3f} | ",
             # f"lr: {optimizer.param_groups[0]['lr']:.5f}",
         )
 
         if args.use_wandb:
             performance_now = {
                 "epoch": epoch,
-                "train_loss": np.mean(train_losses),
-                "test_loss": np.mean(test_losses),
+                "train_loss_unet1": np.mean(train_losses_unet1),
+                "train_loss_unet2": np.mean(train_losses_unet2),
+                "test_loss_unet1": np.mean(test_losses_unet1),
+                "test_loss_unet2": np.mean(test_losses_unet2),
                 # "lrate": optimizer.param_groups[0]["lr"],
             }
             wandb.log(performance_now)
+
+        torch.save(decoder.state_dict(), os.path.join(run_dir, f"decoder_last.pt"))
 
         # if scheduler is not None:
         #     scheduler.step()
