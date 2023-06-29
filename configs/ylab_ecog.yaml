@@ -32,13 +32,14 @@ train_name: test # Will be updated when it's a sweep
 
 dataset: YLabECoG # UHD / YLabECoG / StyleGAN
 
-montage_path: brain2face/utils/montages/tobeupdated.npy
+montage_path: brain2face/utils/montages/E0030/loc.npy
+loc_random: False # whether to use montage
 
 F: 709
 
 face:
   type: dynamic # static (image) or dynamic (video)
-  reduction: mean
+  reduction: extract # extract or mean. Only for face.type=static
   encoded: True # Face features are already encoded by OpenFace
 
 # Brain Encoder
@@ -48,9 +49,9 @@ K: 32
 d_drop: 0.3 # Channel distance for spatial dropout
 # NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
 final_ksize_stride: 2
-head_activation: False
+head_activation: True
 
-split: deep # shallow / deep / subject_random / subject_each
+split: shallow # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
 # subject_each: each subject has one or two test sessions (currently not working)
 
@@ -69,25 +70,27 @@ seed: 1234
 
 cuda_id: 0
 
-sweep_count: 20
+sweep_count: 2
 sweep_config:
-  method: bayes
+  method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    split:
-      values: [deep, shallow]
-    d_drop:
-      values: [0.1, 0.3, 0.5]
-    head_activation:
+    loc_random:
       values: [True, False]
-    final_ksize_stride:
-      values: [1, 2]
-    face.reduction:
-      values: [extract, mean]
-    face.type:
-      values: [static, dynamic]
+    # split:
+    #   values: [deep, shallow]
+    # d_drop:
+    #   values: [0.1, 0.3, 0.5]
+    # head_activation:
+    #   values: [True, False]
+    # final_ksize_stride:
+    #   values: [1, 2]
+    # face.reduction:
+    #   values: [extract, mean]
+    # face.type:
+    #   values: [static, dynamic]
 
 eval:
   split: shallow
