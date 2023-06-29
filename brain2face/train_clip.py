@@ -19,7 +19,6 @@ from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT
 from brain2face.models.classifier import Classifier
 from brain2face.utils.loss import CLIPLoss
-from brain2face.utils.layout import ch_locations_2d
 from brain2face.utils.train_utils import Models, sequential_apply
 
 
@@ -87,9 +86,7 @@ def train():
     #        Models
     # ---------------------
     if args.face.type == "dynamic":
-        brain_encoder = BrainEncoder(
-            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
-        ).to(device)
+        brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
 
         if args.face.encoded:
             face_encoder = None
@@ -99,9 +96,7 @@ def train():
             ).to(device)
 
     elif args.face.type == "static":
-        brain_encoder = BrainEncoderReduceTime(
-            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
-        ).to(device)
+        brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects).to(device)
 
         if args.face.encoded:
             face_encoder = None
