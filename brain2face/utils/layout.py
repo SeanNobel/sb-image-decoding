@@ -34,9 +34,11 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
         loc = layout.pos[: args.num_channels, :2]
 
     elif args.dataset == "YLabECoG":
-        # FIXME: correct later
-        loc = np.meshgrid(np.arange(7), np.arange(10))
-        loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )
+        if args.loc_random:
+            loc = np.meshgrid(np.arange(7), np.arange(10))
+            loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )
+        else:
+            loc = np.load(args.montage_path)
 
     else:
         raise ValueError()
