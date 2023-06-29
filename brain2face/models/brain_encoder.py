@@ -109,12 +109,25 @@ class SubjectBlock(nn.Module):
             ]
         )
 
-    def forward(self, X, subject_idxs):
+    def forward(
+        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+    ) -> torch.Tensor:
         X = self.spatial_attention(X)  # ( B, 270, 256 )
         X = self.conv(X)  # ( B, 270, 256 )
-        X = torch.cat(
-            [self.subject_layer[i](x.unsqueeze(dim=0)) for i, x in zip(subject_idxs, X)]
-        )  # ( B, 270, 256 )
+
+        if subject_idxs is not None:
+            X = torch.cat(
+                [
+                    self.subject_layer[i](x.unsqueeze(dim=0))
+                    for i, x in zip(subject_idxs, X)
+                ]
+            )  # ( B, 270, 256 )
+
+        else:
+            X = torch.stack(
+                [self.subject_layer[i](X) for i in range(self.num_subjects)]
+            ).mean(dim=0)
+
         return X
 
 
@@ -150,7 +163,7 @@ class ConvBlock(nn.Module):
             dilation=2,  # NOTE: The text doesn't say this, but the picture shows dilation=2
         )
 
-    def forward(self, X):
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
         if self.k == 0:
             X = self.conv0(X)
         else:
@@ -172,7 +185,8 @@ class BrainEncoder(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Optional[Callable] = None,
+        layout_fn: Callable = ch_locations_2d,
+        unknown_subject: bool = False,
     ) -> None:
         super(BrainEncoder, self).__init__()
 
@@ -181,14 +195,9 @@ class BrainEncoder(nn.Module):
         self.D2 = args.D2
         self.F = args.F
         self.K = args.K
-        # self.dataset_name = args.dataset
 
-        if layout_fn is None:
-            layout_fn = ch_locations_2d
-
+        self.unknown_subject = unknown_subject
         self.subject_block = SubjectBlock(args, self.num_subjects, layout_fn)
-        # self.subject_block = SubjectBlock_proto(args)
-        # cprint("USING THE OLD IMPLEMENTATION OF THE SUBJECT BLOCK", 'red', 'on_blue', attrs=['bold'])
 
         self.conv_blocks = nn.Sequential()
         for k in range(5):
@@ -207,7 +216,13 @@ class BrainEncoder(nn.Module):
             stride=args.final_ksize_stride,
         )
 
-    def forward(self, X, subject_idxs):
+    def forward(
+        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+    ) -> torch.Tensor:
+        assert (
+            self.unknown_subject or subject_idxs is not None
+        ), "You need to provide subject_idxs when it's not unknown subject."
+
         X = self.subject_block(X, subject_idxs)
         X = self.conv_blocks(X)
         X = F.gelu(self.conv_final1(X))
@@ -220,11 +235,12 @@ class BrainEncoderReduceTime(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Optional[Callable] = None,
+        layout_fn: Callable = ch_locations_2d,
+        unknown_subject: bool = False,
     ) -> None:
         super(BrainEncoderReduceTime, self).__init__()
 
-        self.brain_encoder = BrainEncoder(args, num_subjects, layout_fn)
+        self.brain_encoder = BrainEncoder(args, num_subjects, layout_fn, unknown_subject)
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
@@ -236,7 +252,9 @@ class BrainEncoderReduceTime(nn.Module):
         )
         self.activation = args.head_activation
 
-    def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+    ) -> torch.Tensor:
         X = self.brain_encoder(X, subject_idxs)
 
         X = self.linear(self.flatten(X))
