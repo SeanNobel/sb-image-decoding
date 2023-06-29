@@ -18,10 +18,9 @@ from brain2face.models.face_encoders import ViT, ViViT
 from brain2face.utils.eval_utils import (
     ImageSaver,
     EmbeddingSaver,
-    recursive_update,
-    collapse_nest,
+    update_with_eval,
+    get_run_dir,
 )
-from brain2face.utils.layout import ch_locations_2d
 
 
 @torch.no_grad()
@@ -29,11 +28,7 @@ def infer(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    run_name = "".join(
-        [k + "-" + str(v) + "_" for k, v in sorted(collapse_nest(args.eval).items())]
-    )
-    run_dir = os.path.join("runs", args.dataset.lower(), run_name)
-    assert os.path.exists(run_dir), "run_dir doesn't exist."
+    run_dir = get_run_dir(args)
 
     save_dir = os.path.join("data/clip_embds", args.dataset.lower())
     os.makedirs(save_dir, exist_ok=True)
@@ -80,9 +75,7 @@ def infer(args: DictConfig) -> None:
     #        Models
     # ---------------------
     if args.face.type == "dynamic":
-        brain_encoder = BrainEncoder(
-            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
-        ).to(device)
+        brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
 
         if args.face.encoded:
             face_encoder = None
@@ -92,9 +85,7 @@ def infer(args: DictConfig) -> None:
             ).to(device)
 
     elif args.face.type == "static":
-        brain_encoder = BrainEncoderReduceTime(
-            args, num_subjects=num_subjects, layout_fn=ch_locations_2d
-        ).to(device)
+        brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects).to(device)
 
         if args.face.encoded:
             face_encoder = None
@@ -143,16 +134,8 @@ def infer(args: DictConfig) -> None:
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
 def run(_args: DictConfig) -> None:
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
-    args = OmegaConf.to_container(args, resolve=True)
 
-    args_eval = args.pop("eval")
-
-    args = recursive_update(args, args_eval)
-
-    args.update({"eval": args_eval})
-
-    args = OmegaConf.create(args)
-
+    args = update_with_eval(args)
     # args.__dict__.update(args.eval)
 
     infer(args)
