@@ -25,6 +25,8 @@ driving_ica/
 .tracker_data/
 # tar_face_images.sh
 
+brain2face/utils/montages/E0030/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
