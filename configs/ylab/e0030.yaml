@@ -11,7 +11,7 @@ start_subj: 0
 end_subj: 18
 
 segment_in_preproc: False # for sweeping over segment length
-seq_len: 3 # segment length in seconds
+seq_len: 0.05 # 3 # segment length in seconds
 
 # ---- Face ---- #
 fps: 30

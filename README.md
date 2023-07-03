@@ -135,5 +135,5 @@ python brain2face/preprocs/ylab_ecog.py
 
 ```bash
 # Specify sweep configuration from .yaml
-nohup python brain2face/train_clip.py config_path=ylab_ecog.yaml sweep=True > logs/ylab/sweep_clip.log &
+nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > logs/ylab/sweep_clip.log &
 ```
