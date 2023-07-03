@@ -259,12 +259,12 @@ class OpenFaceMapper(nn.Module):
         super().__init__()
 
         self.conv1 = nn.Conv1d(
-            in_channels, hid_dim, kernel_size=2, stride=1, padding="same"
+            in_channels, hid_dim, kernel_size=3, stride=1, padding="same"
         )
         self.batchnorm = nn.BatchNorm1d(num_features=hid_dim)
 
         self.conv2 = nn.Conv1d(
-            hid_dim, out_channels, kernel_size=2, stride=1, padding="same"
+            hid_dim, out_channels, kernel_size=3, stride=1, padding="same"
         )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:

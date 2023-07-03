@@ -249,8 +249,8 @@ class BrainEncoderReduceTime(nn.Module):
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
-            in_features=args.F * ((args.seq_len * args.brain_resample_sfreq) // (args.final_ksize_stride**2)),
-            out_features=args.F * args.time_multiplier,
+            in_features=args.F * (int(args.seq_len * args.brain_resample_sfreq) // args.final_ksize_stride**2),
+            out_features=args.F * time_multiplier,
         )
         self.activation = args.head_activation
 

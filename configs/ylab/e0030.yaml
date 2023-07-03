@@ -20,7 +20,7 @@ fps: 30
 
 # ---- Brain---- #
 brain_orig_sfreq: 2000
-brain_resample_sfreq: 512 # Hz
+brain_resample_sfreq: 500 # Hz
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
 clamp_lim: 20 # values after robust scaling
@@ -73,19 +73,21 @@ epochs: 500
 reduction: mean
 init_temperature: 5.0
 
+test_with_whole: False
+
 seed: 1234
 
 cuda_id: 0
 
-sweep_count: 20
+sweep_count: 6
 sweep_config:
-  method: bayes # grid
+  method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
     seq_len:
-      values: [0.1, 0.5, 1, 2, 3] # 50ms, 100ms, 500ms, 1s, 2s, 3s
+      values: [0.1, 0.5, 1, 2, 3, 5] # 50ms, 100ms, 500ms, 1s, 2s, 3s
     # loc_random:
     #   values: [True, False]
     # split:
