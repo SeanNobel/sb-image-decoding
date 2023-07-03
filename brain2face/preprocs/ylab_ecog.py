@@ -22,7 +22,7 @@ import torch
 torch.multiprocessing.set_start_method("spawn", force=True)
 
 from brain2face.utils.brain_preproc import brain_preproc
-from brain2face.utils.preproc_utils import crop_longer
+from brain2face.utils.preproc_utils import crop_longer, h5_save
 
 
 def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
@@ -153,7 +153,7 @@ def main(args: DictConfig) -> None:
             data_dir = f"{args.root_dir}/data/preprocessed/ylab/{is_segmented}/{args.preproc_name}/S{i}/"
             os.makedirs(data_dir, exist_ok=True)
             np.save(data_dir + "brain.npy", X)
-            np.save(data_dir + "face.npy", Y)
+            h5_save(data_dir + "face.h5", Y)
 
         else:
             cprint(f">> Sync data: {sync_df.shape} -> skipping.", "yellow")
