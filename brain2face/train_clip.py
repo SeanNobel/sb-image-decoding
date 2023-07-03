@@ -86,7 +86,9 @@ def train():
     #        Models
     # ---------------------
     if args.face.type == "dynamic":
-        brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
+        # FIXME: Temporarily other than YLab are not working.
+        # brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
+        brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects, time_multiplier=3)
 
         if args.face.encoded:
             face_encoder = None

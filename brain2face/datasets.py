@@ -180,21 +180,13 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
         is_segmented = "segmented" if args.segment_in_preproc else "unsegmented"
         session_paths = glob.glob(f"data/preprocessed/ylab/{is_segmented}/{args.preproc_name}/*/")  # fmt: skip
 
-        if args.face.type == "dynamic":
-            y_reformer = partial(
-                self.ylab_reformer,
-                segmented=args.segment_in_preproc,
-                segment_len=int(args.fps * args.seq_len),
-            )
-        elif args.face.type == "static":
-            y_reformer = partial(
-                self.ylab_reformer,
-                segmented=args.segment_in_preproc,
-                segment_len=int(args.fps * args.seq_len),
-                reduction=args.face.reduction,
-            )
-        else:
-            raise ValueError("Face type is only static or dynamic.")
+        y_reformer = partial(
+            self.ylab_reformer,
+            segmented=args.segment_in_preproc,
+            segment_len=int(args.fps * args.seq_len),
+            face_type=args.face.type,
+            reduction=args.face.reduction,
+        )
 
         super().__init__(args, session_paths, train, y_reformer)
 
@@ -203,6 +195,7 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     @staticmethod
     def ylab_reformer(
         Y: np.ndarray,
+        face_type: str,
         segmented: bool,
         segment_len: Optional[int] = None,
         reduction: Optional[bool] = None,
@@ -212,16 +205,20 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
             Y: ( samples, features=17, segment_len=90 ) or ( features=17, timesteps )
         """
         if not segmented:
-            Y = crop_and_segment(Y.T, segment_len)
+            Y = crop_and_segment(Y.T, segment_len).transpose(0, 2, 1)
 
         Y = torch.from_numpy(Y).to(torch.float32)
 
-        if reduction == "extract":
-            Y = Y[:, :, Y.shape[-1] // 2]
-        elif reduction == "mean":
-            Y = Y.mean(dim=-1)
+        if face_type == "static":
+            if reduction == "extract":
+                Y = Y[:, :, Y.shape[-1] // 2]
+            elif reduction == "mean":
+                Y = Y.mean(dim=-1)
+            else:
+                assert reduction is None, "Reduction is either extract or mean."
+                
         else:
-            assert reduction is None, "Reduction is either extract or mean."
+            assert face_type == "dynamic", "Face type is only static or dynamic."
 
         return Y
 

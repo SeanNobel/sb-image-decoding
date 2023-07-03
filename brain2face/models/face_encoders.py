@@ -268,7 +268,7 @@ class OpenFaceMapper(nn.Module):
         )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
-        X = self.conv1(X) + X
+        X = self.conv1(X)
         X = F.gelu(self.batchnorm(X))
 
         X = F.gelu(self.conv2(X))

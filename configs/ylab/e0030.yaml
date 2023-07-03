@@ -20,7 +20,7 @@ fps: 30
 
 # ---- Brain---- #
 brain_orig_sfreq: 2000
-brain_resample_sfreq: 500 # Hz
+brain_resample_sfreq: 512 # Hz
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
 clamp_lim: 20 # values after robust scaling
