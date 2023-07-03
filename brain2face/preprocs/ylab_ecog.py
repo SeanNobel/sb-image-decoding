@@ -46,9 +46,11 @@ def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
         # NOTE: For the final frame, takes number of frames that corresponds to downsampling
         # rate caused by linear interpolation between videos and ECoG
         if i == len(bw_frames) - 1:
-            ecog_data.append(dat[bw_frames[i] : bw_frames[i] + args.brain_orig_sfreq // args.fps])
+            ecog_data.append(
+                dat[bw_frames[i] : bw_frames[i] + args.brain_orig_sfreq // args.fps]
+            )
         else:
-            ecog_data.append(dat[bw_frames[i] : bw_frames[i+1]])
+            ecog_data.append(dat[bw_frames[i] : bw_frames[i + 1]])
 
     return np.concatenate(ecog_data).T.astype(np.float64)
 
@@ -83,7 +85,7 @@ def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.
     return face_data.transpose(0, 2, 1)
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="ylab_ecog")
+@hydra.main(version_base=None, config_path="../../configs/ylab", config_name="e0030")
 def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()
@@ -114,25 +116,25 @@ def main(args: DictConfig) -> None:
         if sync_df.shape[0] > 0:
             cprint(f">> Sync data: {sync_df.shape}", "cyan")
 
-            ecog_raw = load_ecog_data(args, sync_df) # ( channels, timesteps )
+            ecog_raw = load_ecog_data(args, sync_df)  # ( channels, timesteps )
 
             X = brain_preproc(
                 args,
                 brain=ecog_raw,
-                segment_len=int(args.brain_resample_sfreq * args.seq_len)
+                segment=args.segment_in_preproc,
+                # segment_len=int(args.brain_resample_sfreq * args.seq_len),
             )
-            cprint(f"Subject {i} ECoG: {X.shape}", "cyan")
 
-            Y = face_preproc(
-                face_path,
-                sync_df,
-                segment_len=int(args.fps * args.seq_len)
-            )
-            cprint(f"Subject {i} face: {Y.shape}", "cyan")
+            Y = face_preproc(face_path, sync_df, segment_len=int(args.fps * args.seq_len))
 
-            X, Y = crop_longer(X, Y)
+            is_segmented = "segmented" if args.segment_in_preproc else "unsegmented"
+            cprint(f"Subject {i} ECoG: {X.shape} ({is_segmented})", "cyan")
+            cprint(f"Subject {i} face: {Y.shape} ({is_segmented})", "cyan")
 
-            data_dir = f"{args.root_dir}/data/preprocessed/ylab/{args.preproc_name}/S{i}/"
+            if args.segment_in_preproc:
+                X, Y = crop_longer(X, Y)
+
+            data_dir = f"{args.root_dir}/data/preprocessed/ylab/{is_segmented}/{args.preproc_name}/S{i}/"
             os.makedirs(data_dir, exist_ok=True)
             np.save(data_dir + "brain.npy", X)
             np.save(data_dir + "face.npy", Y)

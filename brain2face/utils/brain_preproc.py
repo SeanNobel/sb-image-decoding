@@ -87,7 +87,8 @@ def segment_with_times(
 def brain_preproc(
     args,
     brain: np.ndarray,
-    segment_len: int,
+    segment: bool = True,
+    segment_len: Optional[int] = None,
     brain_times: Optional[np.ndarray] = None,
     face_times: Optional[np.ndarray] = None,
     shift: Optional[float] = None,
@@ -102,6 +103,7 @@ def brain_preproc(
     Returns:
         brain: ( segments, channels, segment_len )
     """
+    assert not (segment and segment_len is None), "Must provide segment_len when segmenting."  # fmt: skip
 
     """ Filtering """
     brain = mne.filter.filter_data(
@@ -117,8 +119,11 @@ def brain_preproc(
         down=args.brain_orig_sfreq / args.brain_resample_sfreq,
     )
 
-    """ Scaling """
+    """ Scaling & clamping """
     brain = scale_and_clamp(brain, clamp_lim=args.clamp_lim)
+
+    if not segment:
+        return brain
 
     """ Segmenting """
     if brain_times is not None:

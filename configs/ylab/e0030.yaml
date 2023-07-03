@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: rishido_2
+preproc_name: upto_500hz
 debug: False
 
 ecog_data_root: /storage/data/ECoG/E0030/Raw/Mat2k/
@@ -10,6 +10,7 @@ processing_sheet_path: /work/data/ECoG/E0030/E0030ProcessingSheet.xlsx
 start_subj: 0
 end_subj: 18
 
+segment_in_preproc: False # for sweeping over segment length
 seq_len: 3 # segment length in seconds
 
 # ---- Face ---- #
@@ -17,9 +18,9 @@ fps: 30
 
 # ---- Brain---- #
 brain_orig_sfreq: 2000
-brain_resample_sfreq: 120 # Hz
+brain_resample_sfreq: 500 # Hz
 brain_filter_low: 0.1 # Hz
-brain_filter_high: 60 # Hz
+brain_filter_high: 250 # Hz
 clamp_lim: 20 # values after robust scaling
 baseline_len: 0.5 # sec
 # shift_brain: False
