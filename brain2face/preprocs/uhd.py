@@ -10,7 +10,7 @@ from omegaconf import DictConfig, open_dict
 
 from brain2face.utils.brain_preproc import brain_preproc
 from brain2face.utils.face_preproc import FacePreprocessor
-from brain2face.utils.preproc_utils import get_uhd_data_paths, sequential_load
+from brain2face.utils.preproc_utils import get_uhd_data_paths, sequential_load, h5_save
 
 
 # FIXME: might cause error when running
@@ -85,7 +85,7 @@ def main(args: DictConfig) -> None:
         data_dir = f"data/preprocessed/uhd/{args.preproc_name}/S{i}/"
         os.makedirs(data_dir, exist_ok=True)
         np.save(data_dir + "brain.npy", X)
-        np.save(data_dir + "face.npy", Y)
+        h5_save(data_dir + "face.h5", Y)
 
 
 if __name__ == "__main__":
