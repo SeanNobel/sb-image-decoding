@@ -72,11 +72,12 @@ def face_preproc(
 
     face_df = pd.read_csv(face_path)
 
-    # face_data = face_df.filter(like="p_", axis=1).values
-    face_data = face_df.drop(
-        ["frame", " face_id", " timestamp", " confidence", " success"],
-        axis=1,
-    ).values  # ( frames=97540, features=709 )
+    # NOTE: Only taking AU*_r. 'Space' is somehow in the dataframe. .* seems to be AND in regex.
+    face_data = face_df.filter(regex="^ AU.*r$", axis=1).values
+    # face_data = face_df.drop(
+    #     ["frame", " face_id", " timestamp", " confidence", " success"],
+    #     axis=1,
+    # ).values  # ( frames=97540, features=709 )
 
     face_data = face_data[sync_df.movie_frame.values.astype(int) - 1]
     # ( frames=80923, features=709 )

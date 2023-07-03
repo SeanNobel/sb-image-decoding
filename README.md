@@ -16,7 +16,7 @@
     - [x] Segmentingしないpreprocessingの追加
     - [x] Datasetsに内部でsegmentingするモードを追加
   - [ ] priorを訓練して本物のimage imbとの相関を取る
-  - [ ] AU_rだけを使う
+  - [x] AU_rだけを使う
 - UHD
   - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
 
