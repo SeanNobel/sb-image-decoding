@@ -49,7 +49,9 @@ def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:
         x (np.ndarray): ( segments, segment_len, * )
     """
     # Crop
-    x = x[: -(x.shape[0] % segment_len)]  # ( ~100000, * )
+    crop_len = x.shape[0] % segment_len
+    if crop_len > 0:
+        x = x[: -crop_len]  # ( ~100000, * )
 
     # Segment
     x = x.reshape(-1, segment_len, *x.shape[1:])

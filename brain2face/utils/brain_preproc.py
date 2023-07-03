@@ -32,6 +32,9 @@ def baseline_correction(X: np.ndarray, baseline_len_samp: int) -> np.ndarray:
         X ( segments, channels, segment_len )
     """
     X = X.transpose(1, 0, 2)  # ( C, segments, T )
+    
+    # NOTE: this could be zero with very short seq_len.
+    baseline_len_samp = max(baseline_len_samp, 1)
 
     for chunk_id in range(X.shape[1]):
         baseline = X[:, chunk_id, :baseline_len_samp].mean(axis=1)
@@ -162,7 +165,7 @@ def segment_then_blcorr(
         brain = crop_and_segment(brain, segment_len)
         # ( segments, segment_len, channels )
         brain = brain.transpose(0, 2, 1)  # ( segments, channels, segment_len )
-
+        
     """ Baseline Correction """
     brain = baseline_correction(
         brain, int(args.seq_len * args.baseline_ratio * args.brain_resample_sfreq)

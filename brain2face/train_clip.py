@@ -16,7 +16,7 @@ from brain2face.datasets import (
     Brain2FaceStyleGANDataset,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
-from brain2face.models.face_encoders import ViT, ViViT
+from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
 from brain2face.models.classifier import Classifier
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply

@@ -21,7 +21,7 @@ from clip.model import CLIP
 
 from brain2face.utils.brain_preproc import segment_then_blcorr
 from brain2face.utils.train_utils import sequential_apply
-from brain2face.utils.preproc_utils import crop_and_segment, sequential_load
+from brain2face.utils.preproc_utils import crop_and_segment, crop_longer, sequential_load
 
 mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
@@ -56,6 +56,7 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         subject_idx_list = []
         for subject_idx, subject_path in enumerate(session_paths):
             X = np.load(os.path.join(subject_path, "brain.npy"))
+            # cprint(X.shape, "yellow")
 
             if not args.segment_in_preproc:
                 X = segment_then_blcorr(
@@ -71,9 +72,13 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
                 Y = np.load(os.path.join(subject_path, "face.npy"))
                 Y = y_reformer(Y)
 
+            # cprint(X.shape, "yellow")
+            # cprint(Y.shape, "yellow")
+            if not args.segment_in_preproc:
+                X, Y = crop_longer(X, Y)
+            assert X.shape[0] == Y.shape[0]
+            
             if args.split == "deep":
-                assert X.shape[0] == Y.shape[0]
-
                 split_idx = int(X.shape[0] * args.train_ratio)
                 if train:
                     X = X[:split_idx]
@@ -179,13 +184,13 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
             y_reformer = partial(
                 self.ylab_reformer,
                 segmented=args.segment_in_preproc,
-                segment_len=int(args.fps, args.seq_len),
+                segment_len=int(args.fps * args.seq_len),
             )
         elif args.face.type == "static":
             y_reformer = partial(
                 self.ylab_reformer,
                 segmented=args.segment_in_preproc,
-                segment_len=int(args.fps, args.seq_len),
+                segment_len=int(args.fps * args.seq_len),
                 reduction=args.face.reduction,
             )
         else:
@@ -207,11 +212,10 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
             Y: ( samples, features=17, segment_len=90 ) or ( features=17, timesteps )
         """
         if not segmented:
-            crop_and_segment(Y.T, segment_len)
+            Y = crop_and_segment(Y.T, segment_len)
 
         Y = torch.from_numpy(Y).to(torch.float32)
 
-        cprint(Y.shape, "yellow")
         if reduction == "extract":
             Y = Y[:, :, Y.shape[-1] // 2]
         elif reduction == "mean":
