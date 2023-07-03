@@ -120,6 +120,42 @@ class EmbeddingSaver:
             )
 
 
+def update_with_eval(args: DictConfig) -> DictConfig:
+    """Keeps args.eval intact and updates args with args.eval.
+    Args:
+        args: Requires 'eval' key.
+    Returns:
+        args: _description_
+    """
+    args = OmegaConf.to_container(args, resolve=True)
+
+    args_eval = args.pop("eval")
+
+    args = recursive_update(args, args_eval)
+
+    args.update({"eval": args_eval})
+
+    args = OmegaConf.create(args)
+
+    return args
+
+
+def get_run_dir(args: DictConfig) -> str:
+    """_summary_
+    Args:
+        args: Requires 'eval' key.
+    Returns:
+        run_dir: _description_
+    """
+    run_name = "".join(
+        [k + "-" + str(v) + "_" for k, v in sorted(collapse_nest(args.eval).items())]
+    )
+    run_dir = os.path.join("runs", args.dataset.lower(), run_name)
+    assert os.path.exists(run_dir), "run_dir doesn't exist."
+
+    return run_dir
+
+
 def recursive_update(dict_base: dict, other: dict) -> dict:
     """Updates a dict with other dict recursively.
     Args:

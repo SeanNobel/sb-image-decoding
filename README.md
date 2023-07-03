@@ -14,6 +14,7 @@
 - [ ] Accept negative shifts (sessions where video recording started before EEG recording)
 - [ ] Preprocessingの出力を.npyから.h5にする
 - [ ] args.face.encoded=Trueでも元の画像を保存できるようにする
+- [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
 
 ### Usage
 
