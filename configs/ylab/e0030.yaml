@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: upto_500hz
+preproc_name: upto500Hz_onlyAUr
 debug: False
 
 ecog_data_root: /storage/data/ECoG/E0030/Raw/Mat2k/
