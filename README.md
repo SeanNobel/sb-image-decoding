@@ -12,7 +12,7 @@
 - [ ] 毎回のsweepで一つchance modelが走るようにする
 - YLab
   - [x] チャネル空間座標の導入
-  - [ ] 実時間を3秒からハイパラにする
+  - [x] 実時間を3秒からハイパラにする
     - [x] Segmentingしないpreprocessingの追加
     - [x] Datasetsに内部でsegmentingするモードを追加
   - [ ] priorを訓練して本物のimage imbとの相関を取る

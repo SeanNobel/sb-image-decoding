@@ -36,12 +36,16 @@ dataset: YLabECoG # UHD / YLabECoG / StyleGAN
 montage_path: brain2face/utils/montages/E0030/loc.npy
 loc_random: False # whether to use montage
 
-F: 17 # 709
+F: 256 # 709
 
 face:
   type: dynamic # static (image) or dynamic (video)
   reduction: mean # extract or mean. Only for face.type=static
-  encoded: True # Face features are already encoded by OpenFace
+  encoded: False
+  model: OpenFaceMapper
+face_model:
+  in_channels: 17
+  hid_dim: 64
 
 # Brain Encoder
 D1: 270
