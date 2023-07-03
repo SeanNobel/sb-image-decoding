@@ -8,15 +8,14 @@ import h5py
 import re
 from termcolor import cprint
 from tqdm import tqdm
-import multiprocessing
-
-ctx = multiprocessing.get_context("spawn")
-
-from tqdm import tqdm
 import cv2
+from typing import Optional
 import hydra
 from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, open_dict
+import multiprocessing
+
+ctx = multiprocessing.get_context("spawn")
 
 import torch
 
@@ -55,17 +54,22 @@ def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
     return np.concatenate(ecog_data).T.astype(np.float64)
 
 
-def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.ndarray:
+def face_preproc(
+    face_path: str,
+    sync_df: pd.DataFrame,
+    segment: bool = True,
+    segment_len: Optional[int] = None,
+) -> np.ndarray:
     """Loads interpolated facial features, transforms them for the dataset
-
     Args:
-        face_path (str): e.g. /work/data/ECoG/E0030/E0030_3.csv
+        face_path (str): e.g. /work/data/ECoG/E0030/E0030_*.csv
         sync_df (pd.DataFrame): _description_
         segment_len (int): _description_
-
     Returns:
-        np.ndarray: ( segments, features, segment_len )
+        np.ndarray: ( segments, features, segment_len ) or ( features, timesteps )
     """
+    assert not (segment and segment_len is None), "Must provide segment_len when segmenting."  # fmt: skip
+
     face_df = pd.read_csv(face_path)
 
     # face_data = face_df.filter(like="p_", axis=1).values
@@ -76,6 +80,9 @@ def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.
 
     face_data = face_data[sync_df.movie_frame.values.astype(int) - 1]
     # ( frames=80923, features=709 )
+
+    if not segment:
+        return face_data.T
 
     face_data = face_data[: -(face_data.shape[0] % segment_len)]
     # ( frames=80910, features=709 )
@@ -122,10 +129,19 @@ def main(args: DictConfig) -> None:
                 args,
                 brain=ecog_raw,
                 segment=args.segment_in_preproc,
-                # segment_len=int(args.brain_resample_sfreq * args.seq_len),
+                segment_len=int(args.brain_resample_sfreq * args.seq_len)
+                if args.segment_in_preproc
+                else None,
             )
 
-            Y = face_preproc(face_path, sync_df, segment_len=int(args.fps * args.seq_len))
+            Y = face_preproc(
+                face_path,
+                sync_df,
+                segment=args.segment_in_preptoc,
+                segment_len=int(args.fps * args.seq_len)
+                if args.segment_in_preproc
+                else None,
+            )
 
             is_segmented = "segmented" if args.segment_in_preproc else "unsegmented"
             cprint(f"Subject {i} ECoG: {X.shape} ({is_segmented})", "cyan")

@@ -101,7 +101,7 @@ def brain_preproc(
         face_times: ( timesteps, )
         shift: How many seconds to shift brain data to the future (need to be positive)
     Returns:
-        brain: ( segments, channels, segment_len )
+        brain: ( segments, channels, segment_len ) or ( channels, timesteps )
     """
     assert not (segment and segment_len is None), "Must provide segment_len when segmenting."  # fmt: skip
 
