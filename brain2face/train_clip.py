@@ -91,9 +91,12 @@ def train():
         if args.face.encoded:
             face_encoder = None
         else:
-            face_encoder = ViViT(
-                num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
+            face_encoder = eval(args.face.model)(
+                out_channels=args.F, **args.face_encoder
             ).to(device)
+            # FIXME: Temporarily other than YLab are not working.
+            #     num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
+            # ).to(device)
 
     elif args.face.type == "static":
         brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects).to(device)
@@ -150,7 +153,6 @@ def train():
             Z = brain_encoder(X, subject_idxs)
 
             if face_encoder is not None:
-                # REVIEW: Is it OK to put into the same variable?
                 Y = face_encoder(Y)
 
             loss = loss_func(Y, Z)

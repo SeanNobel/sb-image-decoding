@@ -299,7 +299,7 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     def ylab_reformer(Y: np.ndarray, reduction: Optional[bool] = None) -> torch.Tensor:
         """
         Args:
-            Y: ( samples, features=709, segment_len=90 )
+            Y: ( samples, features=17, segment_len=90 )
         """
         Y = torch.from_numpy(Y).to(torch.float32)
 

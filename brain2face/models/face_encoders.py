@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 import numpy as np
 
 from einops import rearrange, repeat
@@ -251,6 +252,28 @@ class ViViT(nn.Module):
         # x = h.mean(dim=1) if self.pool == 'mean' else h[:, 0]
 
         return h.permute(0, 2, 1)
+
+
+class OpenFaceMapper(nn.Module):
+    def __init__(self, in_channels: int, hid_dim: int, out_channels: int):
+        super().__init__()
+
+        self.conv1 = nn.Conv1d(
+            in_channels, hid_dim, kernel_size=2, stride=1, padding="same"
+        )
+        self.batchnorm = nn.BatchNorm1d(num_features=hid_dim)
+
+        self.conv2 = nn.Conv1d(
+            hid_dim, out_channels, kernel_size=2, stride=1, padding="same"
+        )
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        X = self.conv1(X) + X
+        X = F.gelu(self.batchnorm(X))
+
+        X = F.gelu(self.conv2(X))
+
+        return X
 
 
 if __name__ == "__main__":

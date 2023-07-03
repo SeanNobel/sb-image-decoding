@@ -27,7 +27,7 @@ brain_resample_sfreq: 120 # Hz
 brain_filter_low: 1.0 # Hz
 brain_filter_high: 60 # Hz
 clamp_lim: 20 # values after robust scaling
-baseline_len: 0.5 # sec
+baseline_ratio: 0.2 # ratio compared to segment length
 # shift_brain: False
 # shift_len: 150 # ms
 
