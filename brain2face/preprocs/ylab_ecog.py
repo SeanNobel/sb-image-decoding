@@ -137,7 +137,7 @@ def main(args: DictConfig) -> None:
             Y = face_preproc(
                 face_path,
                 sync_df,
-                segment=args.segment_in_preptoc,
+                segment=args.segment_in_preproc,
                 segment_len=int(args.fps * args.seq_len)
                 if args.segment_in_preproc
                 else None,
