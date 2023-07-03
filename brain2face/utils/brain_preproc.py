@@ -4,7 +4,7 @@ import mne
 from sklearn.preprocessing import RobustScaler
 from tqdm import tqdm
 from termcolor import cprint
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from brain2face.utils.preproc_utils import crop_and_segment
 
@@ -92,7 +92,7 @@ def brain_preproc(
     brain_times: Optional[np.ndarray] = None,
     face_times: Optional[np.ndarray] = None,
     shift: Optional[float] = None,
-) -> Tuple[np.ndarray, Optional[int], Optional[int]]:
+) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
     """
     Args:
         brain: EEG or ECoG | ( channels, timesteps )
@@ -125,7 +125,21 @@ def brain_preproc(
     if not segment:
         return brain
 
-    """ Segmenting """
+    """ Segmenting & Baseline Correction """
+    brain = segment_then_blcorr(args, brain, segment_len, brain_times, face_times, shift)
+
+    return brain  # NOTE: This could be tuple.
+
+
+def segment_then_blcorr(
+    args,
+    brain: np.ndarray,
+    segment_len: int,
+    brain_times: Optional[np.ndarray] = None,
+    face_times: Optional[np.ndarray] = None,
+    shift: Optional[float] = None,
+) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
+    """Segmenting"""
     if brain_times is not None:
         assert face_times is not None, "Must provide face_times with brain_times."
 

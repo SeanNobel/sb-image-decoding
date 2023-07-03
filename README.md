@@ -11,9 +11,10 @@
   - Known subjectでのactivationとの類似度とかを取ってそれで重みづけするとか
 - [ ] 毎回のsweepで一つchance modelが走るようにする
 - YLab
+  - [x] チャネル空間座標の導入
   - [ ] 実時間を3秒からハイパラにする
     - [x] Segmentingしないpreprocessingの追加
-    - [ ] Datasetsに内部でsegmentingするモードを追加
+    - [x] Datasetsに内部でsegmentingするモードを追加
   - [ ] priorを訓練して本物のimage imbとの相関を取る
   - [ ] AU_rだけを使う
 - UHD
@@ -121,10 +122,6 @@ CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=2
 <br>
 
 ## Yanagisawa Lab @ Osaka Univ.
-
-### TODOs
-
-- [ ] Import channel 2D map
 
 ### Usage
 

@@ -22,7 +22,7 @@ import torch
 torch.multiprocessing.set_start_method("spawn", force=True)
 
 from brain2face.utils.brain_preproc import brain_preproc
-from brain2face.utils.preproc_utils import crop_longer, h5_save
+from brain2face.utils.preproc_utils import crop_and_segment, crop_longer, h5_save
 
 
 def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
@@ -81,15 +81,11 @@ def face_preproc(
     face_data = face_data[sync_df.movie_frame.values.astype(int) - 1]
     # ( frames=80923, features=709 )
 
-    if not segment:
+    if segment:
+        # ( segments=899, segment_len=90, features=709 )
+        return crop_and_segment(face_data, segment_len)
+    else:
         return face_data.T
-
-    face_data = face_data[: -(face_data.shape[0] % segment_len)]
-    # ( frames=80910, features=709 )
-    face_data = face_data.reshape(-1, segment_len, face_data.shape[-1])
-    # ( segments=899, segment_len=90, features=709 )
-
-    return face_data.transpose(0, 2, 1)
 
 
 @hydra.main(version_base=None, config_path="../../configs/ylab", config_name="e0030")

@@ -19,8 +19,9 @@ from omegaconf import DictConfig
 import clip
 from clip.model import CLIP
 
+from brain2face.utils.brain_preproc import segment_then_blcorr
 from brain2face.utils.train_utils import sequential_apply
-from brain2face.utils.preproc_utils import sequential_load
+from brain2face.utils.preproc_utils import crop_and_segment, sequential_load
 
 mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
@@ -64,6 +65,12 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
             except FileNotFoundError:
                 Y = np.load(os.path.join(subject_path, "face.npy"))
                 Y = y_reformer(Y)
+
+            if not args.segment_in_preproc:
+                X = segment_then_blcorr(
+                    args, X, segment_len=int(args.brain_resample_sfreq * args.seq_len)
+                )
+                Y = crop_and_segment(Y.T, segment_len=int(args.fps * args.seq_len))
 
             if args.split == "deep":
                 assert X.shape[0] == Y.shape[0]

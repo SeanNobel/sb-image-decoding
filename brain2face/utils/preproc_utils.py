@@ -43,10 +43,10 @@ def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:
     Rest of the dimensions are arbitrary. Applies for both EEG and video data. Also works for
     1D array.
     Args:
-        x (np.ndarray): ( timesteps, ... )
+        x (np.ndarray): ( timesteps, * )
         segment_len (int): _description_
     Returns:
-        x (np.ndarray): ( segments, segment_len, ... )
+        x (np.ndarray): ( segments, segment_len, * )
     """
     # Crop
     x = x[: -(x.shape[0] % segment_len)]  # ( ~100000, * )
