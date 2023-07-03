@@ -56,12 +56,12 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         subject_idx_list = []
         for subject_idx, subject_path in enumerate(session_paths):
             X = np.load(os.path.join(subject_path, "brain.npy"))
-            
+
             if not args.segment_in_preproc:
                 X = segment_then_blcorr(
                     args, X, segment_len=int(args.brain_resample_sfreq * args.seq_len)
                 )
-                
+
             X = torch.from_numpy(X.astype(np.float32))
 
             try:
@@ -172,14 +172,22 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
 
 class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
-        self.segmented = args.segment_in_preproc
-        self.segment_len = int(args.fps * args.seq_len)
-        session_paths = glob.glob(f"data/preprocessed/ylab/{'segmented' if self.segmented else 'unsegmented'}/{args.preproc_name}/*/") # fmt: skip
+        is_segmented = "segmented" if args.segment_in_preproc else "unsegmented"
+        session_paths = glob.glob(f"data/preprocessed/ylab/{is_segmented}/{args.preproc_name}/*/")  # fmt: skip
 
         if args.face.type == "dynamic":
-            y_reformer = partial(self.ylab_reformer, segmented=args.segment_in_preproc, segment_len=int(args.fps, args.seq_len))
+            y_reformer = partial(
+                self.ylab_reformer,
+                segmented=args.segment_in_preproc,
+                segment_len=int(args.fps, args.seq_len),
+            )
         elif args.face.type == "static":
-            y_reformer = partial(self.ylab_reformer, reduction=args.face.reduction)
+            y_reformer = partial(
+                self.ylab_reformer,
+                segmented=args.segment_in_preproc,
+                segment_len=int(args.fps, args.seq_len),
+                reduction=args.face.reduction,
+            )
         else:
             raise ValueError("Face type is only static or dynamic.")
 
@@ -188,13 +196,19 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
         assert not self.Y.requires_grad
 
     @staticmethod
-    def ylab_reformer(Y: np.ndarray, reduction: Optional[bool] = None) -> torch.Tensor:
+    def ylab_reformer(
+        Y: np.ndarray,
+        segmented: bool,
+        segment_len: Optional[int] = None,
+        reduction: Optional[bool] = None,
+    ) -> torch.Tensor:
         """
         Args:
-            Y: ( samples, features=17, segment_len=90 )
+            Y: ( samples, features=17, segment_len=90 ) or ( features=17, timesteps )
         """
-        if not self.segmented:
-            crop_and_segment(Y.T, self.segment_len)
+        if not segmented:
+            crop_and_segment(Y.T, segment_len)
+
         Y = torch.from_numpy(Y).to(torch.float32)
 
         cprint(Y.shape, "yellow")
@@ -206,7 +220,7 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
             assert reduction is None, "Reduction is either extract or mean."
 
         return Y
-    
+
 
 class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
