@@ -77,13 +77,13 @@ def face_preproc(
     # face_data = face_df.drop(
     #     ["frame", " face_id", " timestamp", " confidence", " success"],
     #     axis=1,
-    # ).values  # ( frames=97540, features=709 )
+    # ).values  # ( frames=97540, features=17 )
 
     face_data = face_data[sync_df.movie_frame.values.astype(int) - 1]
-    # ( frames=80923, features=709 )
+    # ( frames=80923, features=17 )
 
     if segment:
-        # ( segments=899, segment_len=90, features=709 )
+        # ( segments=899, segment_len=90, features=17 )
         return crop_and_segment(face_data, segment_len)
     else:
         return face_data.T

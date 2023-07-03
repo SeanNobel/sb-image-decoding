@@ -22,7 +22,7 @@ brain_resample_sfreq: 500 # Hz
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
 clamp_lim: 20 # values after robust scaling
-baseline_len: 0.5 # sec
+baseline_ratio: 0.2 # ratio compared to segment length
 # shift_brain: False
 # shift_len: 150 # ms
 
@@ -36,11 +36,11 @@ dataset: YLabECoG # UHD / YLabECoG / StyleGAN
 montage_path: brain2face/utils/montages/E0030/loc.npy
 loc_random: False # whether to use montage
 
-F: 709
+F: 17 # 709
 
 face:
   type: dynamic # static (image) or dynamic (video)
-  reduction: extract # extract or mean. Only for face.type=static
+  reduction: mean # extract or mean. Only for face.type=static
   encoded: True # Face features are already encoded by OpenFace
 
 # Brain Encoder
@@ -52,7 +52,7 @@ d_drop: 0.3 # Channel distance for spatial dropout
 final_ksize_stride: 2
 head_activation: True
 
-split: shallow # shallow / deep / subject_random / subject_each
+split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
 # subject_each: each subject has one or two test sessions (currently not working)
 
@@ -71,19 +71,23 @@ seed: 1234
 
 cuda_id: 0
 
-sweep_count: 2
+sweep_count: 20
 sweep_config:
-  method: grid
+  method: bayes # grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    loc_random:
-      values: [True, False]
+    seq_len:
+      values: [0.05, 0.1, 0.5, 1, 2, 3] # 50ms, 100ms, 500ms, 1s, 2s, 3s
+    # loc_random:
+    #   values: [True, False]
     # split:
     #   values: [deep, shallow]
     # d_drop:
-    #   values: [0.1, 0.3, 0.5]
+    #   distribution: uniform
+    #   min: 0.2
+    #   max: 0.4
     # head_activation:
     #   values: [True, False]
     # final_ksize_stride:

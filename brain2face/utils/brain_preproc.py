@@ -165,7 +165,7 @@ def segment_then_blcorr(
 
     """ Baseline Correction """
     brain = baseline_correction(
-        brain, int(args.baseline_len * args.brain_resample_sfreq)  # args.fps
+        brain, int(args.seq_len * args.baseline_ratio * args.brain_resample_sfreq)
     )  # ( segments, channels, segment_len )
 
     try:
