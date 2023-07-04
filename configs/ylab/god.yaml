@@ -1,0 +1,10 @@
+# ==== Preprocessing ==== #
+preproc_name: test
+
+ecog_data_root: /storage/dataset/ECoG/internal/GODv2-4/continuous_10k/
+
+brain_filter_low: 0.1 # Hz
+brain_filter_high: 250 # Hz
+brain_resample_sfreq: 500 # Hz
+clamp_lim: 20
+baseline_ratio: 0.2 # ratio compared to 0.5 seconds
