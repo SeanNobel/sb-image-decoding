@@ -16,7 +16,7 @@ from brain2face.datasets import (
     Brain2FaceStyleGANDataset,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
-from brain2face.models.face_encoders import ViT, ViViT
+from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
 from brain2face.models.classifier import Classifier
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply
@@ -74,7 +74,10 @@ def train():
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
     test_loader = torch.utils.data.DataLoader(
-        dataset=test_set, batch_size=test_size, shuffle=True, **loader_args
+        dataset=test_set,
+        batch_size=test_size if args.test_with_whole else args.batch_size,
+        shuffle=True,
+        **loader_args
     )
 
     # ---------------
@@ -86,14 +89,19 @@ def train():
     #        Models
     # ---------------------
     if args.face.type == "dynamic":
-        brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
+        # FIXME: Temporarily other than YLab are not working.
+        # brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
+        brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects, time_multiplier=3).to(device)
 
         if args.face.encoded:
             face_encoder = None
         else:
-            face_encoder = ViViT(
-                num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
+            face_encoder = eval(args.face.model)(
+                out_channels=args.F, **args.face_encoder
             ).to(device)
+            # FIXME: Temporarily other than YLab are not working.
+            #     num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
+            # ).to(device)
 
     elif args.face.type == "static":
         brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects).to(device)
@@ -150,7 +158,6 @@ def train():
             Z = brain_encoder(X, subject_idxs)
 
             if face_encoder is not None:
-                # REVIEW: Is it OK to put into the same variable?
                 Y = face_encoder(Y)
 
             loss = loss_func(Y, Z)
@@ -175,20 +182,30 @@ def train():
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
-                # NOTE: Avoid CUDA out of memory
-                Z = sequential_apply(
-                    X, brain_encoder, args.batch_size, subject_idxs=subject_idxs
-                )
-
-                if face_encoder is not None:
-                    Y = sequential_apply(Y, face_encoder, args.batch_size)
-
                 stime = time()
+                
+                if args.test_with_whole:
+                    # NOTE: Avoid CUDA out of memory
+                    Z = sequential_apply(
+                        X, brain_encoder, args.batch_size, subject_idxs=subject_idxs
+                    )
+
+                    if face_encoder is not None:
+                        Y = sequential_apply(Y, face_encoder, args.batch_size)
+                        
+                else:
+                    Z = brain_encoder(X, subject_idxs)
+                    
+                    if face_encoder is not None:
+                        Y = face_encoder(Y)
+
                 inference_times.append(time() - stime)
 
                 loss = loss_func(Y, Z)
 
-                test_top1_acc, test_top10_acc, _ = classifier(Z, Y, sequential=True)
+                test_top1_acc, test_top10_acc, _ = classifier(
+                    Z, Y, sequential=args.test_with_whole
+                )
 
             test_losses.append(loss.item())
             test_top10_accs.append(test_top10_acc)

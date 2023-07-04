@@ -18,7 +18,11 @@ import multiprocessing
 from brain2face.utils.brain_preproc import brain_preproc
 from brain2face.utils.face_preproc import FacePreprocessor
 from brain2face.utils.stylegan_encoder import StyleGANEncoder
-from brain2face.utils.preproc_utils import get_face2brain_data_paths, crop_and_segment
+from brain2face.utils.preproc_utils import (
+    get_face2brain_data_paths,
+    crop_and_segment,
+    h5_save,
+)
 from brain2face.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
 
 from encoder4editing.utils.alignment import align_face
@@ -174,8 +178,8 @@ def main(args: DictConfig) -> None:
         cprint(f"Session {i} face (after drop): {Y.shape}", color="cyan")
 
         np.save(data_dir + "brain.npy", X)
-        np.save(data_dir + "face.npy", Y)
         np.save(data_dir + "eeg_times.npy", eeg_times)
+        h5_save(data_dir + "face.h5", Y)
 
 
 if __name__ == "__main__":

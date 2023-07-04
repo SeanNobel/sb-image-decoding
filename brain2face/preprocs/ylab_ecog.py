@@ -8,22 +8,21 @@ import h5py
 import re
 from termcolor import cprint
 from tqdm import tqdm
-import multiprocessing
-
-ctx = multiprocessing.get_context("spawn")
-
-from tqdm import tqdm
 import cv2
+from typing import Optional
 import hydra
 from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, open_dict
+import multiprocessing
+
+ctx = multiprocessing.get_context("spawn")
 
 import torch
 
 torch.multiprocessing.set_start_method("spawn", force=True)
 
 from brain2face.utils.brain_preproc import brain_preproc
-from brain2face.utils.preproc_utils import crop_longer
+from brain2face.utils.preproc_utils import crop_and_segment, crop_longer, h5_save
 
 
 def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
@@ -46,44 +45,51 @@ def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:
         # NOTE: For the final frame, takes number of frames that corresponds to downsampling
         # rate caused by linear interpolation between videos and ECoG
         if i == len(bw_frames) - 1:
-            ecog_data.append(dat[bw_frames[i] : bw_frames[i] + args.brain_orig_sfreq // args.fps])
+            ecog_data.append(
+                dat[bw_frames[i] : bw_frames[i] + args.brain_orig_sfreq // args.fps]
+            )
         else:
-            ecog_data.append(dat[bw_frames[i] : bw_frames[i+1]])
+            ecog_data.append(dat[bw_frames[i] : bw_frames[i + 1]])
 
     return np.concatenate(ecog_data).T.astype(np.float64)
 
 
-def face_preproc(face_path: str, sync_df: pd.DataFrame, segment_len: int) -> np.ndarray:
+def face_preproc(
+    face_path: str,
+    sync_df: pd.DataFrame,
+    segment: bool = True,
+    segment_len: Optional[int] = None,
+) -> np.ndarray:
     """Loads interpolated facial features, transforms them for the dataset
-
     Args:
-        face_path (str): e.g. /work/data/ECoG/E0030/E0030_3.csv
+        face_path (str): e.g. /work/data/ECoG/E0030/E0030_*.csv
         sync_df (pd.DataFrame): _description_
         segment_len (int): _description_
-
     Returns:
-        np.ndarray: ( segments, features, segment_len )
+        np.ndarray: ( segments, features, segment_len ) or ( features, timesteps )
     """
+    assert not (segment and segment_len is None), "Must provide segment_len when segmenting."  # fmt: skip
+
     face_df = pd.read_csv(face_path)
 
-    # face_data = face_df.filter(like="p_", axis=1).values
-    face_data = face_df.drop(
-        ["frame", " face_id", " timestamp", " confidence", " success"],
-        axis=1,
-    ).values  # ( frames=97540, features=709 )
+    # NOTE: Only taking AU*_r. 'Space' is somehow in the dataframe. .* seems to be AND in regex.
+    face_data = face_df.filter(regex="^ AU.*r$", axis=1).values
+    # face_data = face_df.drop(
+    #     ["frame", " face_id", " timestamp", " confidence", " success"],
+    #     axis=1,
+    # ).values  # ( frames=97540, features=17 )
 
     face_data = face_data[sync_df.movie_frame.values.astype(int) - 1]
-    # ( frames=80923, features=709 )
+    # ( frames=80923, features=17 )
 
-    face_data = face_data[: -(face_data.shape[0] % segment_len)]
-    # ( frames=80910, features=709 )
-    face_data = face_data.reshape(-1, segment_len, face_data.shape[-1])
-    # ( segments=899, segment_len=90, features=709 )
+    if segment:
+        # ( segments=899, segment_len=90, features=17 )
+        return crop_and_segment(face_data, segment_len)
+    else:
+        return face_data.T
 
-    return face_data.transpose(0, 2, 1)
 
-
-@hydra.main(version_base=None, config_path="../../configs", config_name="ylab_ecog")
+@hydra.main(version_base=None, config_path="../../configs/ylab", config_name="e0030")
 def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()
@@ -114,28 +120,37 @@ def main(args: DictConfig) -> None:
         if sync_df.shape[0] > 0:
             cprint(f">> Sync data: {sync_df.shape}", "cyan")
 
-            ecog_raw = load_ecog_data(args, sync_df) # ( channels, timesteps )
+            ecog_raw = load_ecog_data(args, sync_df)  # ( channels, timesteps )
 
             X = brain_preproc(
                 args,
                 brain=ecog_raw,
+                segment=args.segment_in_preproc,
                 segment_len=int(args.brain_resample_sfreq * args.seq_len)
+                if args.segment_in_preproc
+                else None,
             )
-            cprint(f"Subject {i} ECoG: {X.shape}", "cyan")
 
             Y = face_preproc(
                 face_path,
                 sync_df,
+                segment=args.segment_in_preproc,
                 segment_len=int(args.fps * args.seq_len)
+                if args.segment_in_preproc
+                else None,
             )
-            cprint(f"Subject {i} face: {Y.shape}", "cyan")
 
-            X, Y = crop_longer(X, Y)
+            is_segmented = "segmented" if args.segment_in_preproc else "unsegmented"
+            cprint(f"Subject {i} ECoG: {X.shape} ({is_segmented})", "cyan")
+            cprint(f"Subject {i} face: {Y.shape} ({is_segmented})", "cyan")
 
-            data_dir = f"{args.root_dir}/data/preprocessed/ylab/{args.preproc_name}/S{i}/"
+            if args.segment_in_preproc:
+                X, Y = crop_longer(X, Y)
+
+            data_dir = f"{args.root_dir}/data/preprocessed/ylab/{is_segmented}/{args.preproc_name}/S{i}/"
             os.makedirs(data_dir, exist_ok=True)
             np.save(data_dir + "brain.npy", X)
-            np.save(data_dir + "face.npy", Y)
+            h5_save(data_dir + "face.h5", Y)
 
         else:
             cprint(f">> Sync data: {sync_df.shape} -> skipping.", "yellow")

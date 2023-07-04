@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: rishido_2
+preproc_name: upto500Hz_onlyAUr
 debug: False
 
 ecog_data_root: /storage/data/ECoG/E0030/Raw/Mat2k/
@@ -10,18 +10,21 @@ processing_sheet_path: /work/data/ECoG/E0030/E0030ProcessingSheet.xlsx
 start_subj: 0
 end_subj: 18
 
-seq_len: 3 # segment length in seconds
+segment_in_preproc: False # for sweeping over segment length
+seq_len: 0.1 # 3 # segment length in seconds
+# minimum would be something like 0.1 as video is 30fps and 1/30 = 0.0333,
+# then 0.1 can have 3 samples in one segment
 
 # ---- Face ---- #
 fps: 30
 
 # ---- Brain---- #
 brain_orig_sfreq: 2000
-brain_resample_sfreq: 120 # Hz
+brain_resample_sfreq: 500 # Hz
 brain_filter_low: 0.1 # Hz
-brain_filter_high: 60 # Hz
+brain_filter_high: 250 # Hz
 clamp_lim: 20 # values after robust scaling
-baseline_len: 0.5 # sec
+baseline_ratio: 0.2 # ratio compared to segment length
 # shift_brain: False
 # shift_len: 150 # ms
 
@@ -35,12 +38,16 @@ dataset: YLabECoG # UHD / YLabECoG / StyleGAN
 montage_path: brain2face/utils/montages/E0030/loc.npy
 loc_random: False # whether to use montage
 
-F: 709
+F: 256 # 709
 
 face:
   type: dynamic # static (image) or dynamic (video)
-  reduction: extract # extract or mean. Only for face.type=static
-  encoded: True # Face features are already encoded by OpenFace
+  reduction: mean # extract or mean. Only for face.type=static
+  encoded: False
+  model: OpenFaceMapper
+face_encoder:
+  in_channels: 17
+  hid_dim: 64
 
 # Brain Encoder
 D1: 270
@@ -51,7 +58,7 @@ d_drop: 0.3 # Channel distance for spatial dropout
 final_ksize_stride: 2
 head_activation: True
 
-split: shallow # shallow / deep / subject_random / subject_each
+split: deep # shallow / deep / subject_random / subject_each
 # subject_random: picks 20% sessions for test, without considering subjects' identity
 # subject_each: each subject has one or two test sessions (currently not working)
 
@@ -66,23 +73,29 @@ epochs: 500
 reduction: mean
 init_temperature: 5.0
 
+test_with_whole: False
+
 seed: 1234
 
 cuda_id: 0
 
-sweep_count: 2
+sweep_count: 6
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    loc_random:
-      values: [True, False]
+    seq_len:
+      values: [0.1, 0.5, 1, 2, 3, 5] # 50ms, 100ms, 500ms, 1s, 2s, 3s
+    # loc_random:
+    #   values: [True, False]
     # split:
     #   values: [deep, shallow]
     # d_drop:
-    #   values: [0.1, 0.3, 0.5]
+    #   distribution: uniform
+    #   min: 0.2
+    #   max: 0.4
     # head_activation:
     #   values: [True, False]
     # final_ksize_stride:

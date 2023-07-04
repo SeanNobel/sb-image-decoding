@@ -2,19 +2,29 @@
 
 - [DALLE-2 paper](https://arxiv.org/pdf/2204.06125.pdf)
 
+### TODOs
+
+- [ ] 他のconfigファイルの内容をimage.yamlに合わせる
+- [x] Preprocessingのfaceの出力を.npyから.h5にする
+- [ ] args.face.encoded=Trueでも元の画像を保存できるようにする
+- [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
+  - Known subjectでのactivationとの類似度とかを取ってそれで重みづけするとか
+- [ ] 毎回のsweepで一つchance modelが走るようにする
+- YLab
+  - [x] チャネル空間座標の導入
+  - [x] 実時間を3秒からハイパラにする
+    - [x] Segmentingしないpreprocessingの追加
+    - [x] Datasetsに内部でsegmentingするモードを追加
+  - [ ] priorを訓練して本物のimage imbとの相関を取る
+  - [x] AU_rだけを使う
+- UHD
+  - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
+
 ## UHD
 
 ### Overview
 
 <div align="center"><img src="assets/overview.jpeg" width=700></div>
-
-### TODOs
-
-- [ ] 他のconfigファイルの内容をimage.yamlに合わせる
-- [ ] Accept negative shifts (sessions where video recording started before EEG recording)
-- [ ] Preprocessingの出力を.npyから.h5にする
-- [ ] args.face.encoded=Trueでも元の画像を保存できるようにする
-- [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
 
 ### Usage
 
@@ -113,10 +123,6 @@ CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=2
 
 ## Yanagisawa Lab @ Osaka Univ.
 
-### TODOs
-
-- [ ] Import channel 2D map
-
 ### Usage
 
 #### Run preprocess
@@ -129,5 +135,5 @@ python brain2face/preprocs/ylab_ecog.py
 
 ```bash
 # Specify sweep configuration from .yaml
-nohup python brain2face/train_clip.py config_path=ylab_ecog.yaml sweep=True > logs/ylab/sweep_clip.log &
+nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > logs/ylab/sweep_clip.log &
 ```

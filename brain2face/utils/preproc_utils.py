@@ -43,13 +43,15 @@ def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:
     Rest of the dimensions are arbitrary. Applies for both EEG and video data. Also works for
     1D array.
     Args:
-        x (np.ndarray): ( timesteps, ... )
+        x (np.ndarray): ( timesteps, * )
         segment_len (int): _description_
     Returns:
-        x (np.ndarray): ( segments, segment_len, ... )
+        x (np.ndarray): ( segments, segment_len, * )
     """
     # Crop
-    x = x[: -(x.shape[0] % segment_len)]  # ( ~100000, * )
+    crop_len = x.shape[0] % segment_len
+    if crop_len > 0:
+        x = x[: -crop_len]  # ( ~100000, * )
 
     # Segment
     x = x.reshape(-1, segment_len, *x.shape[1:])
@@ -66,16 +68,16 @@ def crop_longer(X: np.ndarray, Y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         X: ( samples, * ) | Y: ( samples, * )
     """
     diff = len(X) - len(Y)
-    
+
     if diff > 0:
         cprint(f"Discarding brain for {diff} samples, as it was longer.", "yellow")
-        X = X[:len(Y)]
+        X = X[: len(Y)]
     elif diff < 0:
         cprint(f"Discarding face for {-diff} samples, as it was longer.", "yellow")
-        Y = Y[:len(X)]
-        
+        Y = Y[: len(X)]
+
     assert len(X) == len(Y)
-        
+
     return X, Y
 
 
@@ -197,3 +199,10 @@ def get_face2brain_data_paths(
         cprint(path, color="cyan")
 
     return video_paths, video_times_paths, eeg_paths
+
+
+def h5_save(path: str, data: np.ndarray) -> None:
+    outfh = h5py.File(path, "w")
+    outfh.create_dataset("data", data=data)
+    outfh.flush()
+    outfh.close()

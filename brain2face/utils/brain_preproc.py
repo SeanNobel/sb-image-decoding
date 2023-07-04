@@ -4,7 +4,7 @@ import mne
 from sklearn.preprocessing import RobustScaler
 from tqdm import tqdm
 from termcolor import cprint
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from brain2face.utils.preproc_utils import crop_and_segment
 
@@ -32,6 +32,9 @@ def baseline_correction(X: np.ndarray, baseline_len_samp: int) -> np.ndarray:
         X ( segments, channels, segment_len )
     """
     X = X.transpose(1, 0, 2)  # ( C, segments, T )
+    
+    # NOTE: this could be zero with very short seq_len.
+    baseline_len_samp = max(baseline_len_samp, 1)
 
     for chunk_id in range(X.shape[1]):
         baseline = X[:, chunk_id, :baseline_len_samp].mean(axis=1)
@@ -87,11 +90,12 @@ def segment_with_times(
 def brain_preproc(
     args,
     brain: np.ndarray,
-    segment_len: int,
+    segment: bool = True,
+    segment_len: Optional[int] = None,
     brain_times: Optional[np.ndarray] = None,
     face_times: Optional[np.ndarray] = None,
     shift: Optional[float] = None,
-) -> Tuple[np.ndarray, Optional[int], Optional[int]]:
+) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
     """
     Args:
         brain: EEG or ECoG | ( channels, timesteps )
@@ -100,8 +104,9 @@ def brain_preproc(
         face_times: ( timesteps, )
         shift: How many seconds to shift brain data to the future (need to be positive)
     Returns:
-        brain: ( segments, channels, segment_len )
+        brain: ( segments, channels, segment_len ) or ( channels, timesteps )
     """
+    assert not (segment and segment_len is None), "Must provide segment_len when segmenting."  # fmt: skip
 
     """ Filtering """
     brain = mne.filter.filter_data(
@@ -117,10 +122,27 @@ def brain_preproc(
         down=args.brain_orig_sfreq / args.brain_resample_sfreq,
     )
 
-    """ Scaling """
+    """ Scaling & clamping """
     brain = scale_and_clamp(brain, clamp_lim=args.clamp_lim)
 
-    """ Segmenting """
+    if not segment:
+        return brain
+
+    """ Segmenting & Baseline Correction """
+    brain = segment_then_blcorr(args, brain, segment_len, brain_times, face_times, shift)
+
+    return brain  # NOTE: This could be tuple.
+
+
+def segment_then_blcorr(
+    args,
+    brain: np.ndarray,
+    segment_len: int,
+    brain_times: Optional[np.ndarray] = None,
+    face_times: Optional[np.ndarray] = None,
+    shift: Optional[float] = None,
+) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
+    """Segmenting"""
     if brain_times is not None:
         assert face_times is not None, "Must provide face_times with brain_times."
 
@@ -143,10 +165,10 @@ def brain_preproc(
         brain = crop_and_segment(brain, segment_len)
         # ( segments, segment_len, channels )
         brain = brain.transpose(0, 2, 1)  # ( segments, channels, segment_len )
-
+        
     """ Baseline Correction """
     brain = baseline_correction(
-        brain, int(args.baseline_len * args.brain_resample_sfreq)  # args.fps
+        brain, int(args.seq_len * args.baseline_ratio * args.brain_resample_sfreq)
     )  # ( segments, channels, segment_len )
 
     try:

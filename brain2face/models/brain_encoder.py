@@ -237,18 +237,20 @@ class BrainEncoderReduceTime(nn.Module):
         num_subjects: Optional[int] = None,
         layout_fn: Callable = ch_locations_2d,
         unknown_subject: bool = False,
+        time_multiplier: int = 1,
     ) -> None:
+        """
+        Args:
+            time_multiplier: 
+        """
         super(BrainEncoderReduceTime, self).__init__()
 
         self.brain_encoder = BrainEncoder(args, num_subjects, layout_fn, unknown_subject)
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
-            in_features=args.F
-            * args.seq_len
-            * args.brain_resample_sfreq
-            // (args.final_ksize_stride**2),
-            out_features=args.F,
+            in_features=args.F * (int(args.seq_len * args.brain_resample_sfreq) // args.final_ksize_stride**2),
+            out_features=args.F * time_multiplier,
         )
         self.activation = args.head_activation
 
