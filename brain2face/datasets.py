@@ -27,7 +27,7 @@ mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
 
 
-class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
+class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
     def __init__(
         self,
         args,
@@ -56,7 +56,7 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         subject_idx_list = []
         for subject_idx, subject_path in enumerate(session_paths):
             X = np.load(os.path.join(subject_path, "brain.npy"))
-            # cprint(X.shape, "yellow")
+            X = x_reformer(X)
 
             if not args.segment_in_preproc:
                 X = segment_then_blcorr(
@@ -77,7 +77,7 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
             if not args.segment_in_preproc:
                 X, Y = crop_longer(X, Y)
             assert X.shape[0] == Y.shape[0]
-            
+
             if args.split == "deep":
                 split_idx = int(X.shape[0] * args.train_ratio)
                 if train:
@@ -175,7 +175,21 @@ class Brain2FaceCLIPDatasetBase(torch.utils.data.Dataset):
         return session_paths, num_subjects, subject_names
 
 
-class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
+class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
+    def __init__(self, args, train: bool = True) -> None:
+        subject_paths = glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
+        y_reformer = self._ylab_god
+
+        super().__init__(args, subject_paths, train, y_reformer)
+
+    @staticmethod
+    def _ylab_god(subject_path: str, train: bool) -> torch.Tensor:
+        Y = np.load(os.path.join(subject_path, "face.npz"))["train" if train else "val"]
+
+        return Y
+
+
+class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         is_segmented = "segmented" if args.segment_in_preproc else "unsegmented"
         session_paths = glob.glob(f"data/preprocessed/ylab/{is_segmented}/{args.preproc_name}/*/")  # fmt: skip
@@ -216,14 +230,14 @@ class Brain2FaceYLabECoGDataset(Brain2FaceCLIPDatasetBase):
                 Y = Y.mean(dim=-1)
             else:
                 assert reduction is None, "Reduction is either extract or mean."
-                
+
         else:
             assert face_type == "dynamic", "Face type is only static or dynamic."
 
         return Y
 
 
-class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
+class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
 
@@ -332,7 +346,7 @@ class Brain2FaceUHDDataset(Brain2FaceCLIPDatasetBase):
         return Y
 
 
-class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
+class StyleGANCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob(
             "data/preprocessed/stylegan/" + args.preproc_name + "/*/"
@@ -365,7 +379,7 @@ class Brain2FaceStyleGANDataset(Brain2FaceCLIPDatasetBase):
         return Y
 
 
-class Brain2FaceCLIPEmbDataset(torch.utils.data.Dataset):
+class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
     def __init__(self, dataset: str) -> None:
         super().__init__()
 
@@ -381,7 +395,7 @@ class Brain2FaceCLIPEmbDataset(torch.utils.data.Dataset):
         return self.Z[i], self.Y[i]
 
 
-class Brain2FaceCLIPEmbImageDataset(torch.utils.data.Dataset):
+class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
     def __init__(self, dataset: str) -> None:
         super().__init__()
 
@@ -413,4 +427,4 @@ if __name__ == "__main__":
     with initialize(version_base=None, config_path="../configs/"):
         args = compose(config_name="ylab_ecog.yaml")
 
-    dataset = Brain2FaceYLabECoGDataset(args)
+    dataset = YLabE0030CLIPDataset(args)

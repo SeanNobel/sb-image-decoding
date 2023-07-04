@@ -11,9 +11,10 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from brain2face.datasets import (
-    Brain2FaceUHDDataset,
-    Brain2FaceYLabECoGDataset,
-    Brain2FaceStyleGANDataset,
+    YLabGODCLIPDataset,
+    YLabE0030CLIPDataset,
+    UHDCLIPDataset,
+    StyleGANCLIPDataset,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
@@ -47,7 +48,7 @@ def train():
     #       Dataloader
     # -----------------------
     if args.split == "shallow":
-        dataset = eval(f"Brain2Face{args.dataset}Dataset")(args)
+        dataset = eval(f"{args.dataset}CLIPDataset")(args)
 
         train_size = int(dataset.X.shape[0] * args.train_ratio)
         test_size = dataset.X.shape[0] - train_size
@@ -61,8 +62,8 @@ def train():
 
     # NOTE: If not shallow, split is done inside dataset class
     else:
-        train_set = eval(f"Brain2Face{args.dataset}Dataset")(args)
-        test_set = eval(f"Brain2Face{args.dataset}Dataset")(args, train=False)
+        train_set = eval(f"{args.dataset}CLIPDataset")(args)
+        test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
 
         num_subjects = train_set.num_subjects
         test_size = test_set.X.shape[0]
@@ -77,7 +78,7 @@ def train():
         dataset=test_set,
         batch_size=test_size if args.test_with_whole else args.batch_size,
         shuffle=True,
-        **loader_args
+        **loader_args,
     )
 
     # ---------------
@@ -91,7 +92,9 @@ def train():
     if args.face.type == "dynamic":
         # FIXME: Temporarily other than YLab are not working.
         # brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
-        brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects, time_multiplier=3).to(device)
+        brain_encoder = BrainEncoderReduceTime(
+            args, num_subjects=num_subjects, time_multiplier=3
+        ).to(device)
 
         if args.face.encoded:
             face_encoder = None
@@ -183,7 +186,7 @@ def train():
 
             with torch.no_grad():
                 stime = time()
-                
+
                 if args.test_with_whole:
                     # NOTE: Avoid CUDA out of memory
                     Z = sequential_apply(
@@ -192,10 +195,10 @@ def train():
 
                     if face_encoder is not None:
                         Y = sequential_apply(Y, face_encoder, args.batch_size)
-                        
+
                 else:
                     Z = brain_encoder(X, subject_idxs)
-                    
+
                     if face_encoder is not None:
                         Y = face_encoder(Y)
 

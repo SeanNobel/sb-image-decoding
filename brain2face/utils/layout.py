@@ -1,9 +1,28 @@
 import mne
 import numpy as np
 import torch
+from glob import glob
+from natsort import natsorted
 from typing import Union
 
 from brain2face.utils.gTecUtils.gTecUtils import loadMontage
+
+
+def dynamic_ch_locations_2d(args, subject_idx: int) -> torch.Tensor:
+    if args.dataset == "YLabECoG":
+        montage_path = natsorted(glob(args.montage_dir + "*.npy"))[subject_idx]
+
+        # FIXME: loading line
+        # TODO: Normalize across subjects to align locations
+        loc = np.load(montage_path)
+
+    # min-max normalization
+    loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
+
+    # NOTE: "In practice, as a_j is periodic, we scale down (x,y) to keep a margin of 0.1 on each side."
+    loc = loc * 0.8 + 0.1
+
+    return torch.from_numpy(loc.astype(np.float32))
 
 
 def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
