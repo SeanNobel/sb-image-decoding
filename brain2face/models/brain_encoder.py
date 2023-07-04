@@ -3,9 +3,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Callable
+from functools import partial
+from typing import Optional, Union, Callable
 
-from brain2face.utils.layout import ch_locations_2d
+from brain2face.utils.layout import ch_locations_2d, dynamic_ch_locations_2d
 
 
 class SpatialAttention(nn.Module):
@@ -83,6 +84,45 @@ class SpatialDropout(nn.Module):
             return torch.einsum("c,bct->bct", mask, X)
         else:
             return X
+
+
+class SubjectSpatialAttention(nn.Module):
+    def __init__(self, args, layout_fn):
+        super(SubjectSpatialAttention, self).__init__()
+
+        self.spatial_attention = SpatialAttention(args, layout_fn)
+
+        self.conv1 = nn.Conv1d(
+            in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1
+        )
+        self.conv2 = nn.Conv1d(
+            in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1, bias=False
+        )
+
+    def forward(self, X):
+        X = self.spatial_attention(X)
+        X = self.conv1(X)
+        X = self.conv2(X)
+
+        return X
+
+
+class SubjectBlockSA(nn.Module):
+    """Applies Spatial Attention to each subject separately"""
+
+    def __init__(self, args, layout_fn):
+        super(SubjectBlockSA, self).__init__()
+
+        self.num_subjects = args.num_subjects
+        self.D1 = args.D1
+        self.K = args.K
+
+        self.subject_layer = nn.ModuleList(
+            [
+                SubjectSpatialAttention(args, partial(layout_fn, subject_idx=i))
+                for i in range(self.num_subjects)
+            ]
+        )
 
 
 class SubjectBlock(nn.Module):
@@ -185,7 +225,7 @@ class BrainEncoder(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Callable = ch_locations_2d,
+        layout_fn: Callable = Union[ch_locations_2d, dynamic_ch_locations_2d],
         unknown_subject: bool = False,
     ) -> None:
         super(BrainEncoder, self).__init__()
@@ -197,7 +237,13 @@ class BrainEncoder(nn.Module):
         self.K = args.K
 
         self.unknown_subject = unknown_subject
-        self.subject_block = SubjectBlock(args, self.num_subjects, layout_fn)
+
+        if layout_fn == ch_locations_2d:
+            self.subject_block = SubjectBlock(args, self.num_subjects, layout_fn)
+        elif layout_fn == dynamic_ch_locations_2d:
+            self.subject_block = SubjectBlockSA(args)
+        else:
+            raise TypeError
 
         self.conv_blocks = nn.Sequential()
         for k in range(5):
@@ -235,13 +281,13 @@ class BrainEncoderReduceTime(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Callable = ch_locations_2d,
+        layout_fn: Callable = Union[ch_locations_2d, dynamic_ch_locations_2d],
         unknown_subject: bool = False,
         time_multiplier: int = 1,
     ) -> None:
         """
         Args:
-            time_multiplier: 
+            time_multiplier:
         """
         super(BrainEncoderReduceTime, self).__init__()
 
@@ -249,7 +295,11 @@ class BrainEncoderReduceTime(nn.Module):
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
-            in_features=args.F * (int(args.seq_len * args.brain_resample_sfreq) // args.final_ksize_stride**2),
+            in_features=args.F
+            * (
+                int(args.seq_len * args.brain_resample_sfreq)
+                // args.final_ksize_stride**2
+            ),
             out_features=args.F * time_multiplier,
         )
         self.activation = args.head_activation
