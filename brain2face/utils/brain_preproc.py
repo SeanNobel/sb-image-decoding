@@ -95,6 +95,8 @@ def brain_preproc(
     brain_times: Optional[np.ndarray] = None,
     face_times: Optional[np.ndarray] = None,
     shift: Optional[float] = None,
+    resample: bool = True,
+    orig_sfreq: Optional[int] = None,
 ) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
     """
     Args:
@@ -107,20 +109,23 @@ def brain_preproc(
         brain: ( segments, channels, segment_len ) or ( channels, timesteps )
     """
     assert not (segment and segment_len is None), "Must provide segment_len when segmenting."  # fmt: skip
+    if orig_sfreq is None:
+        orig_sfreq = args.brain_orig_sfreq
 
     """ Filtering """
     brain = mne.filter.filter_data(
         brain,
-        sfreq=args.brain_orig_sfreq,
+        sfreq=orig_sfreq,
         l_freq=args.brain_filter_low,
         h_freq=args.brain_filter_high,
     )
 
     """ Resampling """
-    brain = mne.filter.resample(
-        brain,
-        down=args.brain_orig_sfreq / args.brain_resample_sfreq,
-    )
+    if resample:
+        brain = mne.filter.resample(
+            brain,
+            down=orig_sfreq / args.brain_resample_sfreq,
+        )
 
     """ Scaling & clamping """
     brain = scale_and_clamp(brain, clamp_lim=args.clamp_lim)
