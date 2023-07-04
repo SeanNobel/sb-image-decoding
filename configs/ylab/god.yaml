@@ -8,3 +8,5 @@ brain_filter_high: 250 # Hz
 brain_resample_sfreq: 500 # Hz
 clamp_lim: 20
 baseline_ratio: 0.2 # ratio compared to 0.5 seconds
+
+split: none # split is predefined since experiment for this dataset

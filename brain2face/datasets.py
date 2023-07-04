@@ -33,7 +33,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         args,
         session_paths: List[str],
         train: bool,
-        y_reformer: Callable,
+        loader: Callable,
     ) -> List[torch.Tensor]:
         super().__init__()
 
@@ -55,22 +55,24 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         Y_list = []
         subject_idx_list = []
         for subject_idx, subject_path in enumerate(session_paths):
-            X = np.load(os.path.join(subject_path, "brain.npy"))
-            X = x_reformer(X)
+            # X = np.load(os.path.join(subject_path, "brain.npy"))
+            # X = x_reformer(X)
 
-            if not args.segment_in_preproc:
-                X = segment_then_blcorr(
-                    args, X, segment_len=int(args.brain_resample_sfreq * args.seq_len)
-                )
+            # if not args.segment_in_preproc:
+            #     X = segment_then_blcorr(
+            #         args, X, segment_len=int(args.brain_resample_sfreq * args.seq_len)
+            #     )
 
-            X = torch.from_numpy(X.astype(np.float32))
+            # X = torch.from_numpy(X.astype(np.float32))
 
-            try:
-                Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
-                Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
-            except FileNotFoundError:
-                Y = np.load(os.path.join(subject_path, "face.npy"))
-                Y = y_reformer(Y)
+            # try:
+            #     Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
+            #     Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
+            # except FileNotFoundError:
+            #     Y = np.load(os.path.join(subject_path, "face.npy"))
+            #     Y = y_reformer(Y)
+
+            X, Y = loader(subject_path)
 
             # cprint(X.shape, "yellow")
             # cprint(Y.shape, "yellow")
@@ -178,13 +180,17 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         subject_paths = glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
-        y_reformer = self._ylab_god
+        loader = self._ylab_god
 
-        super().__init__(args, subject_paths, train, y_reformer)
+        super().__init__(args, subject_paths, train, loader)
 
     @staticmethod
     def _ylab_god(subject_path: str, train: bool) -> torch.Tensor:
+        X = np.load(os.path.join(subject_path, "brain.npz"))["train" if train else "val"]
         Y = np.load(os.path.join(subject_path, "face.npz"))["train" if train else "val"]
+
+        print(X.shape, "cyan")
+        print(Y.shape, "cyan")
 
         return Y
 
@@ -424,7 +430,7 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
 if __name__ == "__main__":
     from hydra import initialize, compose
 
-    with initialize(version_base=None, config_path="../configs/"):
-        args = compose(config_name="ylab_ecog.yaml")
+    with initialize(version_base=None, config_path="../configs/ylab"):
+        args = compose(config_name="god.yaml")
 
-    dataset = YLabE0030CLIPDataset(args)
+    dataset = YLabGODCLIPDataset(args)
