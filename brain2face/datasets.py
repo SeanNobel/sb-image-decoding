@@ -180,19 +180,34 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         subject_paths = glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
-        loader = self._ylab_god
+        
+        loader = partial(self._ylab_god, data_root=args.data_root, train=train)
 
         super().__init__(args, subject_paths, train, loader)
 
     @staticmethod
-    def _ylab_god(subject_path: str, train: bool) -> torch.Tensor:
-        X = np.load(os.path.join(subject_path, "brain.npz"))["train" if train else "val"]
-        Y = np.load(os.path.join(subject_path, "face.npz"))["train" if train else "val"]
+    def _ylab_god(subject_path: str, data_root:str, train: bool) -> torch.Tensor:
+        X = np.load(os.path.join(subject_path, f"brain_{'train' if train else 'test'}.npz"))
+        image_fnames = np.loadtxt(os.path.join(subject_path, f"image_{'train' if train else 'test'}.txt"))
 
-        print(X.shape, "cyan")
-        print(Y.shape, "cyan")
+        images_dir = os.path.join(data_root, f"images_{'trn' if train else 'val'}")
+        Y = []
+        dropped_idxs = []
+        for i, fname in enumerate(image_fnames):
+            try:
+                Y.append(cv2.imread(os.path.join(images_dir, fname)))
+            except FileNotFoundError:
+                dropped_idxs.append(i)
+        
+        X = np.delete(X, dropped_idxs, axis=0)        
+        Y = np.stack(Y)
+        
+        cprint(X.shape, "cyan")
+        cprint(Y.shape, "cyan")
+        cprint(X.mean(), "cyan")
+        sys.exit()
 
-        return Y
+        return X, Y
 
 
 class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):

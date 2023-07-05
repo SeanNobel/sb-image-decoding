@@ -23,7 +23,9 @@ def get_stim_fnames(ecog: h5py._hl.files.File) -> list:
     
     for i in range(len(stim_fname)):
         ref = stim_fname[i][0] # h5py reference object
-        fname = ecog[ref][()].tobytes().decode("utf-8")
+        
+        # fname = ecog[ref][()].tobytes().decode("utf-8")
+        fname = "".join([chr(c) for c in ecog[ref][()].squeeze()])
         
         Y.append(fname)
     
@@ -96,7 +98,7 @@ def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = hydra.utils.get_original_cwd()
         
-    for i, ecog_dir in enumerate(glob.glob(f"{args.ecog_data_root}*/")):
+    for i, ecog_dir in enumerate(glob.glob(f"{args.data_root}continuous_10k/*/")):
         cprint(f"Processing subject {ecog_dir.split('/')[-2]}.", "cyan")
         
         fnames_train = natsorted(glob.glob(f"{ecog_dir}*Trn*.mat"))
@@ -109,8 +111,10 @@ def main(args: DictConfig) -> None:
         
         data_dir = os.path.join(args.root_dir, "data/preprocessed/ylab/god", args.preproc_name, f"S{i}")
         os.makedirs(data_dir, exist_ok=True)
-        np.savez(os.path.join(data_dir, "brain.npz"), train=X_train, val=X_val)
-        np.savez(os.path.join(data_dir, "image.npz"), train=Y_train, val=Y_val)
+        np.save(os.path.join(data_dir, "brain_train.npy"), X_train)
+        np.save(os.path.join(data_dir, "brain_test.npy"), X_val)
+        np.savetxt(os.path.join(data_dir, "image_train.txt"), Y_train, delimiter=",", fmt="%s")
+        np.savetxt(os.path.join(data_dir, "image_test.txt"), Y_val, delimiter=",", fmt="%s")
         
 if __name__ == "__main__":
     main()

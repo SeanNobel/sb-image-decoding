@@ -10,6 +10,7 @@
 - [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
   - Known subjectでのactivationとの類似度とかを取ってそれで重みづけするとか
 - [ ] 毎回のsweepで一つchance modelが走るようにする
+- [ ] YLabGOD以外も`y_reformer`を`loader`にする
 - YLab
   - [x] チャネル空間座標の導入
   - [x] 実時間を3秒からハイパラにする

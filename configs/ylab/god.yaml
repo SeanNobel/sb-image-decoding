@@ -1,7 +1,9 @@
 # ==== Preprocessing ==== #
 preproc_name: test
 
-ecog_data_root: /storage/dataset/ECoG/internal/GODv2-4/continuous_10k/
+data_root: /storage/dataset/ECoG/internal/GODv2-4/
+
+segment_in_preproc: True
 
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
