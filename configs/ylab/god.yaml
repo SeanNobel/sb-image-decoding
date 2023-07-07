@@ -5,6 +5,10 @@ data_root: /storage/dataset/ECoG/internal/GODv2-4/
 
 segment_in_preproc: True
 
+max_seq_len: 2.0 # how long to take during preprocessing
+seq_onset: 0.0
+seq_len: 0.2
+
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
 brain_resample_sfreq: 500 # Hz
@@ -20,8 +24,23 @@ dataset: YLabGOD
 image_size: 256
 
 montage_dir: brain2face/utils/montages/GOD/
+layout_fn: dynamic_ch_locations_2d
+loc_random: True
 
 F: 256 # CLIP embedding dimension
+
+face:
+  type: static
+  encoded: False
+
+vit:
+  image_size: 256 # set this same as image_size above
+  patch_size: 32
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dropout: 0.1
+  emb_dropout: 0.1
 
 D1: 270
 D2: 320
@@ -29,6 +48,7 @@ K: 32
 d_drop: 0.3
 final_ksize_stride: 2
 head_activation: True
+time_multiplier: 1
 
 split: none # split is predefined since experiment for this dataset
 train_ratio: 0.8
@@ -48,3 +68,13 @@ test_with_whole: False
 seed: 1234
 
 cuda_id: 0
+
+sweep_count: 4
+sweep_config:
+  method: grid
+  metric:
+    name: test_top10_acc
+    goal: maximize
+  parameters:
+    seq_onset:
+      values: [0.0, 0.1, 0.2, 0.3]

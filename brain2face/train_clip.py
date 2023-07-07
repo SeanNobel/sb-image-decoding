@@ -91,14 +91,7 @@ def train():
     #        Models
     # ---------------------
     if args.face.type == "dynamic":
-        # FIXME: Temporarily other than YLab are not working.
-        # brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
-        brain_encoder = BrainEncoderReduceTime(
-            args,
-            num_subjects=num_subjects,
-            layout_fn=dynamic_ch_locations_2d,
-            time_multiplier=3
-        ).to(device)
+        brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
 
         if args.face.encoded:
             face_encoder = None
@@ -111,7 +104,12 @@ def train():
             # ).to(device)
 
     elif args.face.type == "static":
-        brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects).to(device)
+        brain_encoder = BrainEncoderReduceTime(
+            args,
+            num_subjects=num_subjects,
+            layout_fn=eval(args.layout_fn),
+            time_multiplier=args.time_multiplier,
+        ).to(device)
 
         if args.face.encoded:
             face_encoder = None

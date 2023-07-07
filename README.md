@@ -36,7 +36,11 @@ python brain2face/preprocs/ylab_god.py
 #### Run CLIP training
 
 ```bash
-python brain2face/train_clip.py config_path=ylab/god.yaml
+# Normal
+python brain2face/train_clip.py config_path=ylab/god.yaml 
+
+# Sweep
+nohup python brain2face/train_clip.py config_path=ylab/god.yaml sweep=True > logs/ylab/god/sweep_clip.log &
 ```
 
 ## Yanagisawa Lab OpenFace

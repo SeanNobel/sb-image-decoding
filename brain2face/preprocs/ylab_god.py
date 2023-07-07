@@ -62,8 +62,7 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
         
         chunk = signals[:, onset:offset]
         
-        # NOTE: Stimulus presentation seems to be 0.5s
-        if chunk.shape[1] < orig_sfreq * 0.5:
+        if chunk.shape[1] < orig_sfreq * args.max_segment_len:
             cprint(f"Chunk was padded since it was shorter than 0.5s: {chunk.shape}", "yellow")
             
             chunk = np.pad(chunk, ((0, 0), (0, int(orig_sfreq * 0.5) - chunk.shape[1])), mode="edge")
