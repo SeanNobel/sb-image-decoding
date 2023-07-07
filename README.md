@@ -10,6 +10,7 @@
 - [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
   - Known subjectでのactivationとの類似度とかを取ってそれで重みづけするとか
 - [ ] 毎回のsweepで一つchance modelが走るようにする
+- [ ] YLabGOD以外も`y_reformer`を`loader`にする
 - YLab
   - [x] チャネル空間座標の導入
   - [x] 実時間を3秒からハイパラにする
@@ -19,6 +20,47 @@
   - [x] AU_rだけを使う
 - UHD
   - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
+
+<br>
+
+## Yanagisawa Lab GOD dataset
+
+### Usage
+
+#### Run preprocess
+
+```bash
+python brain2face/preprocs/ylab_god.py
+```
+
+#### Run CLIP training
+
+```bash
+# Normal
+python brain2face/train_clip.py config_path=ylab/god.yaml 
+
+# Sweep
+nohup python brain2face/train_clip.py config_path=ylab/god.yaml sweep=True > logs/ylab/god/sweep_clip.log &
+```
+
+## Yanagisawa Lab OpenFace
+
+### Usage
+
+#### Run preprocess
+
+```bash
+python brain2face/preprocs/ylab_e0030.py
+```
+
+#### Run CLIP training
+
+```bash
+# Specify sweep configuration from .yaml
+nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > logs/ylab/sweep_clip.log &
+```
+
+<br>
 
 ## UHD
 
@@ -117,23 +159,4 @@ CUDA_VISIBLE_DEVICES=0 nohup python brain2face/preprocs/stylegan.py start_subj=0
 CUDA_VISIBLE_DEVICES=1 nohup python brain2face/preprocs/stylegan.py start_subj=8 end_subj=16 > logs/ica/out2.log &
 CUDA_VISIBLE_DEVICES=2 nohup python brain2face/preprocs/stylegan.py start_subj=16 end_subj=24 > logs/ica/out3.log &
 CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=24 end_subj=32 > logs/ica/out4.log &
-```
-
-<br>
-
-## Yanagisawa Lab @ Osaka Univ.
-
-### Usage
-
-#### Run preprocess
-
-```bash
-python brain2face/preprocs/ylab_ecog.py
-```
-
-#### Run CLIP training
-
-```bash
-# Specify sweep configuration from .yaml
-nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > logs/ylab/sweep_clip.log &
 ```

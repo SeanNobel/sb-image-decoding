@@ -3,15 +3,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Callable
+from functools import partial
+from typing import Optional, Union, Callable
 
-from brain2face.utils.layout import ch_locations_2d
+from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 
 
 class SpatialAttention(nn.Module):
     """Same as SpatialAttentionVer2, but a little more concise"""
 
-    def __init__(self, args, layout_fn):
+    def __init__(self, args, loc: np.ndarray):
         super(SpatialAttention, self).__init__()
 
         # vectorize of k's and l's
@@ -23,7 +24,6 @@ class SpatialAttention(nn.Module):
         k, l = a[:, 0], a[:, 1]
 
         # vectorize x- and y-positions of the sensors
-        loc = layout_fn(args)
         x, y = loc[:, 0], loc[:, 1]
 
         # make a complex-valued parameter, reshape k,l into one dimension
@@ -45,9 +45,8 @@ class SpatialAttention(nn.Module):
         # NOTE: do hadamard product and and sum over l and m (i.e. m, which is l X m)
         re = torch.einsum("jm, me -> je", self.z.real, self.cos)  # torch.Size([270, 60])
         im = torch.einsum("jm, me -> je", self.z.imag, self.sin)
-        a = (
-            re + im
-        )  # essentially (unnormalized) weights with which to mix input channels into ouput channels
+        a = re + im
+        # essentially (unnormalized) weights with which to mix input channels into ouput channels
         # ( D1, num_channels )
 
         # NOTE: to get the softmax spatial attention weights over input electrodes,
@@ -85,14 +84,77 @@ class SpatialDropout(nn.Module):
             return X
 
 
+class SubjectSpatialAttention(nn.Module):
+    def __init__(self, args, loc: np.ndarray):
+        super(SubjectSpatialAttention, self).__init__()
+
+        self.num_channels = loc.shape[0]
+
+        self.spatial_attention = SpatialAttention(args, loc)
+
+        self.conv1 = nn.Conv1d(
+            in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1
+        )
+        self.conv2 = nn.Conv1d(
+            in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1, bias=False
+        )
+
+    def forward(self, X):
+        """
+        Args:
+            X: ( 1, channels (+pad), timesteps )
+        """
+        X, pad = torch.split(
+            X, [self.num_channels, X.shape[1] - self.num_channels], dim=1
+        )
+        assert pad.sum() == 0
+        
+        X = self.spatial_attention(X)
+        X = self.conv1(X)
+        X = self.conv2(X)
+
+        return X
+
+
+class SubjectBlockSA(nn.Module):
+    """Applies Spatial Attention to each subject separately"""
+
+    def __init__(self, args, num_subjects, layouts: DynamicChanLoc2d):
+        super(SubjectBlockSA, self).__init__()
+
+        self.layouts = layouts
+        self.num_subjects = num_subjects
+        
+        self.subject_layer = nn.ModuleList(
+            [
+                SubjectSpatialAttention(args, self.layouts.get_loc(i))
+                for i in range(self.num_subjects)
+            ]
+        )
+        
+    def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor) -> torch.Tensor:
+        """Currently SubjectBlockSA doesn't allow unknown subject.
+        TODO: think of how to incorporate unknown layout.
+        NOTE: X dim=1 is zero-padded depending on its original channel numbers.
+        """
+        X = torch.cat(
+            [
+                self.subject_layer[i](x.unsqueeze(dim=0))
+                for i, x in zip(subject_idxs, X)
+            ]
+        )  # ( B, 270, 256 )
+        
+        return X
+
+
 class SubjectBlock(nn.Module):
-    def __init__(self, args, num_subjects, layout_fn):
+    def __init__(self, args, num_subjects: int, loc: np.ndarray):
         super(SubjectBlock, self).__init__()
 
         self.num_subjects = num_subjects
         self.D1 = args.D1
         self.K = args.K
-        self.spatial_attention = SpatialAttention(args, layout_fn)
+        self.spatial_attention = SpatialAttention(args, loc)
         self.conv = nn.Conv1d(
             in_channels=self.D1, out_channels=self.D1, kernel_size=1, stride=1
         )
@@ -185,7 +247,7 @@ class BrainEncoder(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Callable = ch_locations_2d,
+        layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         unknown_subject: bool = False,
     ) -> None:
         super(BrainEncoder, self).__init__()
@@ -197,7 +259,13 @@ class BrainEncoder(nn.Module):
         self.K = args.K
 
         self.unknown_subject = unknown_subject
-        self.subject_block = SubjectBlock(args, self.num_subjects, layout_fn)
+
+        if layout == ch_locations_2d:
+            self.subject_block = SubjectBlock(args, self.num_subjects, layout(args))
+        elif layout == DynamicChanLoc2d:
+            self.subject_block = SubjectBlockSA(args, self.num_subjects, layout(args))
+        else:
+            raise TypeError
 
         self.conv_blocks = nn.Sequential()
         for k in range(5):
@@ -235,21 +303,25 @@ class BrainEncoderReduceTime(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Callable = ch_locations_2d,
+        layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         unknown_subject: bool = False,
         time_multiplier: int = 1,
     ) -> None:
         """
         Args:
-            time_multiplier: 
+            time_multiplier:
         """
         super(BrainEncoderReduceTime, self).__init__()
 
-        self.brain_encoder = BrainEncoder(args, num_subjects, layout_fn, unknown_subject)
+        self.brain_encoder = BrainEncoder(args, num_subjects, layout, unknown_subject)
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
-            in_features=args.F * (int(args.seq_len * args.brain_resample_sfreq) // args.final_ksize_stride**2),
+            in_features=args.F
+            * (
+                int(args.seq_len * args.brain_resample_sfreq)
+                // args.final_ksize_stride**2
+            ),
             out_features=args.F * time_multiplier,
         )
         self.activation = args.head_activation
