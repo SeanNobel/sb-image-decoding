@@ -21,6 +21,43 @@
 - UHD
   - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
 
+<br>
+
+## Yanagisawa Lab GOD dataset
+
+### Usage
+
+#### Run preprocess
+
+```bash
+python brain2face/preprocs/ylab_god.py
+```
+
+#### Run CLIP training
+
+```bash
+python brain2face/train_clip.py config_path=ylab/god.yaml
+```
+
+## Yanagisawa Lab OpenFace
+
+### Usage
+
+#### Run preprocess
+
+```bash
+python brain2face/preprocs/ylab_e0030.py
+```
+
+#### Run CLIP training
+
+```bash
+# Specify sweep configuration from .yaml
+nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > logs/ylab/sweep_clip.log &
+```
+
+<br>
+
 ## UHD
 
 ### Overview
@@ -118,23 +155,4 @@ CUDA_VISIBLE_DEVICES=0 nohup python brain2face/preprocs/stylegan.py start_subj=0
 CUDA_VISIBLE_DEVICES=1 nohup python brain2face/preprocs/stylegan.py start_subj=8 end_subj=16 > logs/ica/out2.log &
 CUDA_VISIBLE_DEVICES=2 nohup python brain2face/preprocs/stylegan.py start_subj=16 end_subj=24 > logs/ica/out3.log &
 CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=24 end_subj=32 > logs/ica/out4.log &
-```
-
-<br>
-
-## Yanagisawa Lab @ Osaka Univ.
-
-### Usage
-
-#### Run preprocess
-
-```bash
-python brain2face/preprocs/ylab_ecog.py
-```
-
-#### Run CLIP training
-
-```bash
-# Specify sweep configuration from .yaml
-nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > logs/ylab/sweep_clip.log &
 ```
