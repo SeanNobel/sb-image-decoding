@@ -1,3 +1,4 @@
+import os
 import mne
 import numpy as np
 import torch
@@ -9,12 +10,17 @@ from brain2face.utils.gTecUtils.gTecUtils import loadMontage
 
 
 def dynamic_ch_locations_2d(args, subject_idx: int) -> torch.Tensor:
-    if args.dataset == "YLabECoG":
-        montage_path = natsorted(glob(args.montage_dir + "*.npy"))[subject_idx]
+    if args.dataset == "YLabGOD":
+        montage_path = natsorted(glob(
+            os.path.join(args.montage_dir, "random" if args.loc_random else "", "*.npy")
+        ))[subject_idx]
 
         # FIXME: loading line
         # TODO: Normalize across subjects to align locations
         loc = np.load(montage_path)
+        
+    else:
+        raise NotImplementedError
 
     # min-max normalization
     loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
@@ -26,17 +32,12 @@ def dynamic_ch_locations_2d(args, subject_idx: int) -> torch.Tensor:
 
 
 def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
-    if args.dataset == "StyleGAN":
-        montage = loadMontage(args.montage_path)
-        info = mne.create_info(ch_names=montage.ch_names, sfreq=250.0, ch_types="eeg")
-        info.set_montage(montage)
-
-        if not training:
-            return info
-
-        layout = mne.channels.find_layout(info, ch_type="eeg")
-
-        loc = layout.pos[:, :2]  # ( 32, 2 )
+    if args.dataset == "YLabE0030":
+        if args.loc_random:
+            loc = np.meshgrid(np.arange(7), np.arange(10))
+            loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )
+        else:
+            loc = np.load(args.montage_path)
 
     elif args.dataset == "UHD":
         montage = get_montage(args.montage_path)
@@ -51,13 +52,18 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
         # TODO: Implement normalization for 3d
         # NOTE: Projects to xy plane (look at load_montage.ipynb)
         loc = layout.pos[: args.num_channels, :2]
+        
+    elif args.dataset == "StyleGAN":
+        montage = loadMontage(args.montage_path)
+        info = mne.create_info(ch_names=montage.ch_names, sfreq=250.0, ch_types="eeg")
+        info.set_montage(montage)
 
-    elif args.dataset == "YLabECoG":
-        if args.loc_random:
-            loc = np.meshgrid(np.arange(7), np.arange(10))
-            loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )
-        else:
-            loc = np.load(args.montage_path)
+        if not training:
+            return info
+
+        layout = mne.channels.find_layout(info, ch_type="eeg")
+
+        loc = layout.pos[:, :2]  # ( 32, 2 )
 
     else:
         raise ValueError()
