@@ -33,7 +33,7 @@ baseline_ratio: 0.2 # ratio compared to segment length
 project_name: brain2face_ylab
 train_name: test # Will be updated when it's a sweep
 
-dataset: YLabECoG # UHD / YLabECoG / StyleGAN
+dataset: YLabE0030 # YLabGOD / YLabE0030 / UHD / StyleGAN
 
 montage_path: brain2face/utils/montages/E0030/loc.npy
 loc_random: False # whether to use montage
