@@ -19,6 +19,7 @@ from brain2face.datasets import (
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
 from brain2face.models.classifier import Classifier
+from brain2face.utils.layout import dynamic_ch_locations_2d
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply
 
@@ -93,7 +94,10 @@ def train():
         # FIXME: Temporarily other than YLab are not working.
         # brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
         brain_encoder = BrainEncoderReduceTime(
-            args, num_subjects=num_subjects, time_multiplier=3
+            args,
+            num_subjects=num_subjects,
+            layout_fn=dynamic_ch_locations_2d,
+            time_multiplier=3
         ).to(device)
 
         if args.face.encoded:
