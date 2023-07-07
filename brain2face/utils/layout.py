@@ -9,26 +9,30 @@ from typing import Union
 from brain2face.utils.gTecUtils.gTecUtils import loadMontage
 
 
-def dynamic_ch_locations_2d(args, subject_idx: int) -> torch.Tensor:
-    if args.dataset == "YLabGOD":
-        montage_path = natsorted(glob(
-            os.path.join(args.montage_dir, "random" if args.loc_random else "", "*.npy")
-        ))[subject_idx]
+class DynamicChanLoc2d:
+    def __init__(self, args) -> None:
+        if args.dataset == "YLabGOD":
+            montage_paths = natsorted(glob(
+                os.path.join(args.montage_dir, "random" if args.loc_random else "", "*.npy")
+            ))
 
-        # FIXME: loading line
-        # TODO: Normalize across subjects to align locations
-        loc = np.load(montage_path)
+            # FIXME: loading line
+            # TODO: Normalize across subjects to align locations
+            self.locations = [np.load(path) for path in montage_paths]
+            
+        else:
+            raise NotImplementedError
         
-    else:
-        raise NotImplementedError
+    def get_loc(self, subject_idx: int) -> torch.Tensor:        
+        loc = self.locations[subject_idx]
+        
+        # min-max normalization
+        loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
 
-    # min-max normalization
-    loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
+        # NOTE: "In practice, as a_j is periodic, we scale down (x,y) to keep a margin of 0.1 on each side."
+        loc = loc * 0.8 + 0.1
 
-    # NOTE: "In practice, as a_j is periodic, we scale down (x,y) to keep a margin of 0.1 on each side."
-    loc = loc * 0.8 + 0.1
-
-    return torch.from_numpy(loc.astype(np.float32))
+        return torch.from_numpy(loc.astype(np.float32))
 
 
 def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:

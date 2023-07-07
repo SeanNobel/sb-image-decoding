@@ -19,7 +19,7 @@ from brain2face.datasets import (
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
 from brain2face.models.classifier import Classifier
-from brain2face.utils.layout import dynamic_ch_locations_2d
+from brain2face.utils.layout import DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply
 
@@ -51,8 +51,8 @@ def train():
     if args.split == "shallow":
         dataset = eval(f"{args.dataset}CLIPDataset")(args)
 
-        train_size = int(dataset.X.shape[0] * args.train_ratio)
-        test_size = dataset.X.shape[0] - train_size
+        train_size = int(len(dataset.X) * args.train_ratio)
+        test_size = len(dataset.X) - train_size
         train_set, test_set = torch.utils.data.random_split(
             dataset,
             lengths=[train_size, test_size],
@@ -67,7 +67,7 @@ def train():
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
 
         num_subjects = train_set.num_subjects
-        test_size = test_set.X.shape[0]
+        test_size = len(test_set.X)
 
     cprint(f"Test size: {test_size}", "cyan")
 
@@ -107,7 +107,7 @@ def train():
         brain_encoder = BrainEncoderReduceTime(
             args,
             num_subjects=num_subjects,
-            layout_fn=eval(args.layout_fn),
+            layout=eval(args.layout),
             time_multiplier=args.time_multiplier,
         ).to(device)
 

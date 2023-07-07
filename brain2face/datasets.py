@@ -1,7 +1,7 @@
 import os, sys
 import torch
+import torch.nn.functional as F
 from torchvision import transforms
-import torchvision.transforms.functional as F
 from torchvision.transforms import InterpolationMode
 import numpy as np
 import cv2
@@ -43,7 +43,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         # session_paths = self._drop_bads(session_paths)
 
         # DEBUG
-        # session_paths = session_paths[:1]
+        # session_paths = session_paths[:2]
 
         if args.split in ["subject_random", "subject_each"]:
             session_paths, self.num_subjects, subject_names = self._split_sessions(train)
@@ -79,7 +79,6 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
                 X, Y = crop_longer(X, Y)
                 
             assert X.shape[0] == Y.shape[0]
-            cprint(f"Brain: {X.shape} | Image: {Y.shape}", "cyan")
 
             if args.split == "deep":
                 split_idx = int(X.shape[0] * args.train_ratio)
@@ -96,7 +95,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
                 subject_idx = np.where(np.array(subject_names) == name)[0][0]
 
             subject_idx *= torch.ones(X.shape[0], dtype=torch.uint8)
-            print(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}")
+            cprint(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}", "cyan")
 
             X_list.append(X)
             Y_list.append(Y)
@@ -104,15 +103,16 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 
             del X, Y, subject_idx
 
-        self.session_lengths = [len(X) for X in X_list]
-
         self.subject_idx = torch.cat(subject_idx_list)
         del subject_idx_list
         cprint(f"self.subject_idx: {self.subject_idx.shape}", color="cyan")
 
+        # NOTE: for dataset where subjects have different channel numbers
+        X_list = self._pad_channels(X_list)
+        
         self.X = torch.cat(X_list)
         del X_list
-        cprint(f"self.X: {self.X.shape}", color="cyan")
+        cprint(f"self.X: {len(self.X)} samples (channel numbers might be variable)", color="cyan")
 
         self.Y = torch.cat(Y_list)
         del Y_list
@@ -126,6 +126,16 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         return self.X[i], self.Y[i], self.subject_idx[i]
+    
+    @staticmethod
+    def _pad_channels(X_list: List[torch.Tensor]) -> List[torch.Tensor]:
+        """Pads channels to the same length with zeros, if they are different"""
+        num_channels = np.array([X.shape[1] for X in X_list])
+        
+        if not np.all(num_channels == num_channels[0]):
+            X_list = [F.pad(X, (0, 0, 0, np.max(num_channels) - X.shape[1]), "constant", 0) for X in X_list]
+            
+        return X_list
 
     @staticmethod
     def _drop_bads(_subject_paths):

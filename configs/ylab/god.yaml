@@ -24,7 +24,7 @@ dataset: YLabGOD
 image_size: 256
 
 montage_dir: brain2face/utils/montages/GOD/
-layout_fn: dynamic_ch_locations_2d
+layout: DynamicChanLoc2d
 loc_random: True
 
 F: 256 # CLIP embedding dimension
@@ -63,7 +63,7 @@ init_temperature: 5.0
 
 chance: False
 
-test_with_whole: False
+test_with_whole: True
 
 seed: 1234
 
