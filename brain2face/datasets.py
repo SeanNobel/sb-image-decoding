@@ -74,13 +74,12 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
             #     Y = y_reformer(Y)
 
             X, Y = loader(subject_path)
-
-            # cprint(X.shape, "yellow")
-            # cprint(Y.shape, "yellow")
+            
             if not args.segment_in_preproc:
                 X, Y = crop_longer(X, Y)
                 
             assert X.shape[0] == Y.shape[0]
+            cprint(f"Brain: {X.shape} | Image: {Y.shape}", "cyan")
 
             if args.split == "deep":
                 split_idx = int(X.shape[0] * args.train_ratio)
@@ -185,26 +184,39 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         subject_paths = natsorted(glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/"))
         
         loader = partial(
-            self._ylab_god, data_root=args.data_root, train=train, image_size=args.image_size
+            self._ylab_god,
+            data_root=args.data_root,
+            train=train,
+            image_size=args.image_size,
+            brain_resample_sfreq=args.brain_resample_sfreq,
+            seq_onset=args.seq_onset,
+            seq_len=args.seq_len,
         )
 
         super().__init__(args, subject_paths, train, loader)
 
     @staticmethod
-    def _ylab_god(subject_path: str, data_root:str, train: bool, image_size: int) -> torch.Tensor:
+    def _ylab_god(
+        subject_path: str,
+        data_root:str,
+        train: bool,
+        image_size: int,
+        brain_resample_sfreq: int,
+        seq_onset: float,
+        seq_len: float,
+    ) -> torch.Tensor:
         """
         Returns:
             X: ( samples, channels, timesteps )
-            Y: ( samples, image_size, image_size, 3 )
+            Y: ( samples, 3, image_size, image_size )
         """   
-        cprint(subject_path, "yellow")
+        cprint(f"Preprocessing subject {subject_path.split('/')[-2]}", "cyan")
              
         image_fnames = np.loadtxt(
             os.path.join(subject_path, f"image_{'train' if train else 'test'}.txt"),
             delimiter=",",
             dtype=str,
         )
-        cprint(image_fnames.shape, "yellow")
         
         images_dir = os.path.join(data_root, f"images_{'trn' if train else 'val'}")
         Y = []
@@ -222,17 +234,14 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
                 dropped_idxs.append(i)
                 
         Y = np.stack(Y).astype(np.float32) / 255.0
+        Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
         
         X = np.load(
             os.path.join(subject_path, f"brain_{'train' if train else 'test'}.npy")
         )
-        cprint(X.shape, "yellow")
-        X = np.delete(X, dropped_idxs, axis=0)
-        
-        cprint(len(dropped_idxs), "yellow")
-        cprint(X.shape, "yellow")
-        cprint(Y.shape, "yellow")
-        
+        X = torch.from_numpy(np.delete(X, dropped_idxs, axis=0).astype(np.float32))
+        X = X[:, :, int(seq_onset * brain_resample_sfreq) : int((seq_onset + seq_len) * brain_resample_sfreq)]
+                
         return X, Y
 
 
@@ -329,7 +338,7 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             clip_model: Pretrained image encoder of Radford 2021.
             preprocess: Transforms for the pretrained image encoder.
         Returns:
-            Y: ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            Y: ( samples, 3, face_extractor.output_size=256, face_extractor.output_size=256 )
                 or ( samples, F )
         """
         if reduction == "extract":
