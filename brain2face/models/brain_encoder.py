@@ -110,10 +110,10 @@ class SubjectSpatialAttention(nn.Module):
 class SubjectBlockSA(nn.Module):
     """Applies Spatial Attention to each subject separately"""
 
-    def __init__(self, args, layout_fn):
+    def __init__(self, args, num_subjects, layout_fn):
         super(SubjectBlockSA, self).__init__()
 
-        self.num_subjects = args.num_subjects
+        self.num_subjects = num_subjects
         self.D1 = args.D1
         self.K = args.K
 
@@ -123,6 +123,19 @@ class SubjectBlockSA(nn.Module):
                 for i in range(self.num_subjects)
             ]
         )
+        
+    def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor) -> torch.Tensor:
+        """Currently SubjectBlockSA doesn't allow unknown subject.
+        TODO: think of how to incorporate unknown layout
+        """
+        X = torch.cat(
+            [
+                self.subject_layer[i](x.unsqueeze(dim=0))
+                for i, x in zip(subject_idxs, X)
+            ]
+        )  # ( B, 270, 256 )
+        
+        return X
 
 
 class SubjectBlock(nn.Module):
@@ -225,7 +238,7 @@ class BrainEncoder(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Callable = Union[ch_locations_2d, dynamic_ch_locations_2d],
+        layout_fn: Callable = ch_locations_2d,
         unknown_subject: bool = False,
     ) -> None:
         super(BrainEncoder, self).__init__()
@@ -241,7 +254,7 @@ class BrainEncoder(nn.Module):
         if layout_fn == ch_locations_2d:
             self.subject_block = SubjectBlock(args, self.num_subjects, layout_fn)
         elif layout_fn == dynamic_ch_locations_2d:
-            self.subject_block = SubjectBlockSA(args)
+            self.subject_block = SubjectBlockSA(args, self.num_subjects, layout_fn)
         else:
             raise TypeError
 
@@ -281,7 +294,7 @@ class BrainEncoderReduceTime(nn.Module):
         self,
         args,
         num_subjects: Optional[int] = None,
-        layout_fn: Callable = Union[ch_locations_2d, dynamic_ch_locations_2d],
+        layout_fn: Callable = ch_locations_2d,
         unknown_subject: bool = False,
         time_multiplier: int = 1,
     ) -> None:
