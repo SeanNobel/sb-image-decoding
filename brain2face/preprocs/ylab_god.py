@@ -27,6 +27,11 @@ def get_stim_fnames(ecog: h5py._hl.files.File) -> list:
         # fname = ecog[ref][()].tobytes().decode("utf-8")
         fname = "".join([chr(c) for c in ecog[ref][()].squeeze()])
         
+        # FIXME: empty string (not a double spaces but it looks like that!)
+        # is automatically deleted when np.savetxt.
+        if len(fname) <= 2:
+            fname = "blank"
+        
         Y.append(fname)
     
     return np.array(Y)
@@ -87,6 +92,8 @@ def preproc(args, fnames: List[str]):
         _Y = get_stim_fnames(ecog)
         _Y = np.delete(_Y, dropped_idxs, axis=0)
         
+        assert _X.shape[0] == _Y.shape[0]
+        
         X.append(_X)
         Y.append(_Y)
         
@@ -99,7 +106,8 @@ def main(args: DictConfig) -> None:
         args.root_dir = hydra.utils.get_original_cwd()
         
     for i, ecog_dir in enumerate(glob.glob(f"{args.data_root}continuous_10k/*/")):
-        cprint(f"Processing subject {ecog_dir.split('/')[-2]}.", "cyan")
+        subject_name = ecog_dir.split('/')[-2]
+        cprint(f"Processing subject {subject_name}.", "cyan")
         
         fnames_train = natsorted(glob.glob(f"{ecog_dir}*Trn*.mat"))
         X_train, Y_train = preproc(args, fnames_train)
@@ -107,9 +115,9 @@ def main(args: DictConfig) -> None:
         fnames_val = natsorted(glob.glob(f"{ecog_dir}*Val*.mat"))
         X_val, Y_val = preproc(args, fnames_val)
             
-        cprint(f"Subject {i} ({ecog_dir.split('/')[-2]}) has {len(fnames_train)} train sessions and {len(fnames_val)} validation sessions | ECoG: train {X_train.shape}, val {X_val.shape} | Image: train {Y_train.shape}, val {Y_val.shape}", "cyan")
+        cprint(f"Subject {subject_name} has {len(fnames_train)} train sessions and {len(fnames_val)} validation sessions \nECoG: train {X_train.shape}, val {X_val.shape} \nImage: train {Y_train.shape}, val {Y_val.shape}", "cyan")
         
-        data_dir = os.path.join(args.root_dir, "data/preprocessed/ylab/god", args.preproc_name, f"S{i}")
+        data_dir = os.path.join(args.root_dir, "data/preprocessed/ylab/god", args.preproc_name, subject_name)
         os.makedirs(data_dir, exist_ok=True)
         np.save(os.path.join(data_dir, "brain_train.npy"), X_train)
         np.save(os.path.join(data_dir, "brain_test.npy"), X_val)
