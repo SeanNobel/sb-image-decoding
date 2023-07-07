@@ -5,6 +5,7 @@ import torchvision.transforms.functional as F
 from torchvision.transforms import InterpolationMode
 import numpy as np
 import cv2
+from PIL import Image
 import glob
 from tqdm import tqdm
 from natsort import natsorted
@@ -78,6 +79,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
             # cprint(Y.shape, "yellow")
             if not args.segment_in_preproc:
                 X, Y = crop_longer(X, Y)
+                
             assert X.shape[0] == Y.shape[0]
 
             if args.split == "deep":
@@ -179,34 +181,58 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 
 class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
-        subject_paths = glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
+        # NOTE: it is important to sort here to match montage paths in layout.py
+        subject_paths = natsorted(glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/"))
         
-        loader = partial(self._ylab_god, data_root=args.data_root, train=train)
+        loader = partial(
+            self._ylab_god, data_root=args.data_root, train=train, image_size=args.image_size
+        )
 
         super().__init__(args, subject_paths, train, loader)
 
     @staticmethod
-    def _ylab_god(subject_path: str, data_root:str, train: bool) -> torch.Tensor:
-        X = np.load(os.path.join(subject_path, f"brain_{'train' if train else 'test'}.npz"))
-        image_fnames = np.loadtxt(os.path.join(subject_path, f"image_{'train' if train else 'test'}.txt"))
-
+    def _ylab_god(subject_path: str, data_root:str, train: bool, image_size: int) -> torch.Tensor:
+        """
+        Returns:
+            X: ( samples, channels, timesteps )
+            Y: ( samples, image_size, image_size, 3 )
+        """   
+        cprint(subject_path, "yellow")
+             
+        image_fnames = np.loadtxt(
+            os.path.join(subject_path, f"image_{'train' if train else 'test'}.txt"),
+            delimiter=",",
+            dtype=str,
+        )
+        cprint(image_fnames.shape, "yellow")
+        
         images_dir = os.path.join(data_root, f"images_{'trn' if train else 'val'}")
         Y = []
         dropped_idxs = []
-        for i, fname in enumerate(image_fnames):
+        for i, fname in tqdm(enumerate(image_fnames), desc="Loading images"):
             try:
-                Y.append(cv2.imread(os.path.join(images_dir, fname)))
-            except FileNotFoundError:
+                image = Image.open(os.path.join(images_dir, fname)).resize((image_size, image_size))
+                # NOTE: Some images seem to be grayscale. Convert them to RGB.
+                if image.getbands()[0] == "L":
+                    image = image.convert("RGB")
+                    
+                Y.append(image)
+                
+            except:
                 dropped_idxs.append(i)
+                
+        Y = np.stack(Y).astype(np.float32) / 255.0
         
-        X = np.delete(X, dropped_idxs, axis=0)        
-        Y = np.stack(Y)
+        X = np.load(
+            os.path.join(subject_path, f"brain_{'train' if train else 'test'}.npy")
+        )
+        cprint(X.shape, "yellow")
+        X = np.delete(X, dropped_idxs, axis=0)
         
-        cprint(X.shape, "cyan")
-        cprint(Y.shape, "cyan")
-        cprint(X.mean(), "cyan")
-        sys.exit()
-
+        cprint(len(dropped_idxs), "yellow")
+        cprint(X.shape, "yellow")
+        cprint(Y.shape, "yellow")
+        
         return X, Y
 
 
