@@ -1,6 +1,5 @@
 assets/*
-!assets/reports.md
-!assets/overview.jpeg
+!assets/neuro-diffusion.jpeg
 
 data/*
 !data/.gitkeep
