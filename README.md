@@ -45,6 +45,8 @@ python brain2face/train_clip.py config_path=ylab/god.yaml
 nohup python brain2face/train_clip.py config_path=ylab/god.yaml sweep=True > logs/ylab/god/sweep_clip.log &
 ```
 
+<br>
+
 ## Yanagisawa Lab OpenFace (E0030 dataset)
 
 ### Run preprocess
