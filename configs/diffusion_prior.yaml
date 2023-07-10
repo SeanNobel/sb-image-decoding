@@ -1,3 +1,5 @@
+run_name: test
+
 dataset: UHD
 
 dim: 512
@@ -9,8 +11,7 @@ image_embed_dim: 512
 timesteps: 100
 cond_drop_prob: 0.2
 
-epochs: 500
-train_ratio: 0.8
+epochs: 20
 batch_size: 128
 lr: 3.0e-4
 wd: 1.0e-2
@@ -25,9 +26,3 @@ use_wandb: True
 wandb:
   project: diffusion_prior_uhd
   entity: sensho
-  run_name: test
-
-
-lr_scheduler: none # cosine or multistep or none
-lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
-lr_step_gamma: 0.5
