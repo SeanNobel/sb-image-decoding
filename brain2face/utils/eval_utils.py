@@ -21,6 +21,7 @@ class ImageSaver:
 
         else:
             self.save_dir = os.path.join(save_dir, "face_images")
+            os.makedirs(self.save_dir, exist_ok=True)
 
             self.save = self._save
 
@@ -80,6 +81,7 @@ class EmbeddingSaver:
             self.save = self._save_for_webdataset
         else:
             self.save_dir = save_dir
+            os.makedirs(self.save_dir, exist_ok=True)
             self.save = self._save
 
     def _save(self, brain: torch.Tensor, face: torch.Tensor) -> None:
