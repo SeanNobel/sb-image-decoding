@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior, DiffusionPriorTrainer
 
-from brain2face.datasets import Brain2FaceCLIPEmbDataset
+from brain2face.datasets import NeuroDiffusionCLIPEmbDataset
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="diffusion_prior")
@@ -30,36 +30,26 @@ def train(args: DictConfig) -> None:
             config=wandb.config,
             save_code=True,
         )
-        wandb.run.name = args.wandb.run_name
+        wandb.run.name = args.run_name
         wandb.run.save()
 
-    # else:
-    #     run_name = args.train_name
-
-    # run_dir = os.path.join("runs", args.dataset.lower(), run_name)
-    # os.makedirs(run_dir, exist_ok=True)
+    run_dir = os.path.join("runs/prior", args.dataset.lower(), args.run_name)
+    os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
 
     # -----------------------
     #       Dataloader
     # -----------------------
-    dataset = Brain2FaceCLIPEmbDataset(args.dataset)
-
-    train_size = int(dataset.Y.shape[0] * args.train_ratio)
-    test_size = dataset.Y.shape[0] - train_size
-    train_set, test_set = torch.utils.data.random_split(
-        dataset,
-        lengths=[train_size, test_size],
-        generator=torch.Generator().manual_seed(args.seed),
-    )
+    train_set = NeuroDiffusionCLIPEmbDataset(args.dataset)
+    test_set = NeuroDiffusionCLIPEmbDataset(args.dataset, train=False)
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
     test_loader = torch.utils.data.DataLoader(
-        dataset=test_set, batch_size=args.batch_size, shuffle=True, **loader_args
+        dataset=test_set, batch_size=args.batch_size, shuffle=False, **loader_args
     )
 
     # ---------------------
@@ -81,7 +71,7 @@ def train(args: DictConfig) -> None:
     ).to(device)
 
     # ---------------------
-    #      Optimizers
+    #        Trainer
     # ---------------------
     diffusion_prior_trainer = DiffusionPriorTrainer(
         diffusion_prior,
@@ -113,7 +103,7 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #     Strat training
     # -----------------------
-    # min_test_loss = float("inf")
+    min_test_loss = float("inf")
 
     for epoch in range(args.epochs):
         train_losses = []
@@ -123,9 +113,8 @@ def train(args: DictConfig) -> None:
         for Z, Y in tqdm(train_loader):
             Z, Y = Z.to(device), Y.to(device)
 
-            loss = diffusion_prior_trainer(
-                text_embed=Z, image_embed=Y
-            )  # , max_batch_size=4)
+            loss = diffusion_prior_trainer(text_embed=Z, image_embed=Y)
+            # , max_batch_size=4)
 
             train_losses.append(loss)
             # train_top10_accs.append(train_top10_acc)
@@ -139,16 +128,13 @@ def train(args: DictConfig) -> None:
 
             # optimizer.step()
 
-        # assert models.params_updated()
-
         # diffusion_prior.eval()
         for Z, Y in test_loader:
             Z, Y = Z.to(device), Y.to(device)
 
             # with torch.no_grad():
-            loss = diffusion_prior_trainer(
-                text_embed=Z, image_embed=Y
-            )  # , max_batch_size=4)
+            loss = diffusion_prior_trainer(text_embed=Z, image_embed=Y)
+            # , max_batch_size=4)
 
             test_losses.append(loss)
             # test_top10_accs.append(test_top10_acc)
@@ -173,13 +159,15 @@ def train(args: DictConfig) -> None:
         # if scheduler is not None:
         #     scheduler.step()
 
-        # models.save(run_dir)
+        torch.save(diffusion_prior.state_dict(), os.path.join(run_dir, "prior_last.pt"))
 
-        # if np.mean(test_losses) < min_test_loss:
-        #     cprint(f"New best. Saving models to {run_dir}", color="cyan")
-        #     models.save(run_dir, best=True)
+        if np.mean(test_losses) < min_test_loss:
+            cprint(f"New best. Saving models to {run_dir}", color="cyan")
+            torch.save(
+                diffusion_prior.state_dict(), os.path.join(run_dir, "prior_best.pt")
+            )
 
-        #     min_test_loss = np.mean(test_losses)
+            min_test_loss = np.mean(test_losses)
 
 
 # @hydra.main(version_base=None, config_path="../configs", config_name="default")

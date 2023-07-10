@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 
-from brain2face.datasets import Brain2FaceCLIPEmbImageDataset
+from brain2face.datasets import NeuroDiffusionCLIPEmbImageDataset
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="decoder")
@@ -30,11 +30,8 @@ def train(args: DictConfig) -> None:
             config=wandb.config,
             save_code=True,
         )
-        wandb.run.name = args.wandb.run_name
+        wandb.run.name = args.run_name
         wandb.run.save()
-
-    # else:
-    #     run_name = args.train_name
 
     run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.run_name)
     os.makedirs(run_dir, exist_ok=True)
@@ -44,22 +41,15 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    dataset = Brain2FaceCLIPEmbImageDataset(args.dataset)
-
-    train_size = int(dataset.Y.shape[0] * args.train_ratio)
-    test_size = dataset.Y.shape[0] - train_size
-    train_set, test_set = torch.utils.data.random_split(
-        dataset,
-        lengths=[train_size, test_size],
-        generator=torch.Generator().manual_seed(args.seed),
-    )
+    train_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset)
+    test_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset, train=False)
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
     test_loader = torch.utils.data.DataLoader(
-        dataset=test_set, batch_size=args.batch_size, shuffle=True, **loader_args
+        dataset=test_set, batch_size=args.batch_size, shuffle=False, **loader_args
     )
 
     # ---------------------
@@ -90,7 +80,7 @@ def train(args: DictConfig) -> None:
     ).to(device)
 
     # ---------------------
-    #      Optimizers
+    #        Trainer
     # ---------------------
     decoder_trainer = DecoderTrainer(
         decoder,
@@ -122,7 +112,7 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #     Strat training
     # -----------------------
-    # min_test_loss = float("inf")
+    min_test_loss = float("inf")
 
     for epoch in range(args.epochs):
         train_losses_unet1 = []
@@ -134,14 +124,12 @@ def train(args: DictConfig) -> None:
         for Y, Y_img in tqdm(train_loader):
             Y, Y_img = Y.to(device), Y_img.to(device)
 
-            loss_unet1 = decoder_trainer(
-                image_embed=Y, image=Y_img, unet_number=1
-            )  # , max_batch_size=4)
+            loss_unet1 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=1)
+            # , max_batch_size=4)
             decoder_trainer.update(1)
 
-            loss_unet2 = decoder_trainer(
-                image_embed=Y, image=Y_img, unet_number=2
-            )  # , max_batch_size=4)
+            loss_unet2 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=2)
+            # , max_batch_size=4)
             decoder_trainer.update(2)
 
             train_losses_unet1.append(loss_unet1)
@@ -153,16 +141,13 @@ def train(args: DictConfig) -> None:
 
             # optimizer.step()
 
-        # assert models.params_updated()
-
         # diffusion_prior.eval()
         for Y, Y_img in test_loader:
             Y, Y_img = Y.to(device), Y_img.to(device)
 
             # with torch.no_grad():
-            loss_unet1 = decoder_trainer(
-                image_embed=Y, image=Y_img, unet_number=1
-            )  # , max_batch_size=4)
+            loss_unet1 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=1)
+            # , max_batch_size=4)
 
             loss_unet2 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=2)
 
@@ -192,18 +177,17 @@ def train(args: DictConfig) -> None:
             }
             wandb.log(performance_now)
 
-        torch.save(decoder.state_dict(), os.path.join(run_dir, f"decoder_last.pt"))
-
         # if scheduler is not None:
         #     scheduler.step()
 
-        # models.save(run_dir)
+        torch.save(decoder.state_dict(), os.path.join(run_dir, "decoder_last.pt"))
 
-        # if np.mean(test_losses) < min_test_loss:
-        #     cprint(f"New best. Saving models to {run_dir}", color="cyan")
-        #     models.save(run_dir, best=True)
+        test_loss = np.mean(test_losses_unet1) + np.mean(test_losses_unet2)
+        if test_loss < min_test_loss:
+            cprint(f"New best. Saving models to {run_dir}", color="cyan")
+            torch.save(decoder.state_dict(), os.path.join(run_dir, "decoder_best.pt"))
 
-        #     min_test_loss = np.mean(test_losses)
+            min_test_loss = test_loss
 
 
 # @hydra.main(version_base=None, config_path="../configs", config_name="default")
