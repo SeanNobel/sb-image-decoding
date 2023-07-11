@@ -6,11 +6,13 @@ import glob
 from natsort import natsorted
 from tqdm import tqdm
 from termcolor import cprint
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import hydra
 from omegaconf import DictConfig, open_dict
 
 from brain2face.utils.brain_preproc import brain_preproc, baseline_correction
+from brain2face.utils.layout import load_god_montage
+
 
 def get_stim_fnames(ecog: h5py._hl.files.File) -> list:
     """
@@ -55,19 +57,20 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
     dropped_idxs = []
     for i, (onset, offset) in enumerate(zip(onsets, offsets)):
         
-        if onset == -1 or offset == -1:
-            cprint("Dropped: onset or offset was NaN", "yellow")
+        if onset == -1: # or offset == -1:
+            cprint("Dropped: onset was NaN", "yellow") # or offset was NaN", "yellow")
             dropped_idxs.append(i)
             continue
         
-        chunk = signals[:, onset:offset]
+        chunk = signals[:, onset:onset + int(orig_sfreq * args.max_seq_len)]
+        # chunk = signals[:, onset:offset]
         
-        if chunk.shape[1] < orig_sfreq * args.max_segment_len:
-            cprint(f"Chunk was padded since it was shorter than 0.5s: {chunk.shape}", "yellow")
+        # if chunk.shape[1] < orig_sfreq * args.max_segment_len:
+        #     cprint(f"Chunk was padded since it was shorter than 0.5s: {chunk.shape}", "yellow")
             
-            chunk = np.pad(chunk, ((0, 0), (0, int(orig_sfreq * 0.5) - chunk.shape[1])), mode="edge")
-        else:
-            chunk = chunk[:, :int(orig_sfreq * 0.5)]
+        #     chunk = np.pad(chunk, ((0, 0), (0, int(orig_sfreq * 0.5) - chunk.shape[1])), mode="edge")
+        # else:
+        #     chunk = chunk[:, :int(orig_sfreq * 0.5)]
         
         chunk = mne.filter.resample(chunk, down=orig_sfreq/args.brain_resample_sfreq)
         
@@ -79,13 +82,24 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
     
     return X, dropped_idxs
 
-def preproc(args, fnames: List[str]):
+def preproc(args, subject_name: str, fnames: List[str]) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    try:
+        montage = load_god_montage(subject_name, args.freesurfer_dir)
+    except FileNotFoundError:
+        cprint(f"Subject {subject_name} was dropped, as its montage was not found.", "yellow")
+        return None, None
+    
     X = []
     Y = []
-    for fname in fnames:
+    for fname in fnames:        
         ecog = h5py.File(fname, "r")
         
         _X, dropped_idxs = get_segmented_ecog(args, ecog)
+        # ( segments, channels, max_segment_len )
+        
+        if _X.shape[1] != montage.shape[0]:
+            cprint(f"Subject {subject_name} was dropped, as the number of channels didn't match to its montage.", "yellow")
+            return None, None
         
         # NOTE: hold images as paths
         _Y = get_stim_fnames(ecog)
@@ -104,15 +118,18 @@ def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = hydra.utils.get_original_cwd()
         
-    for i, ecog_dir in enumerate(glob.glob(f"{args.data_root}continuous_10k/*/")):
+    for ecog_dir in glob.glob(f"{args.data_root}continuous_10k/*/"):
         subject_name = ecog_dir.split('/')[-2]
         cprint(f"Processing subject {subject_name}.", "cyan")
         
         fnames_train = natsorted(glob.glob(f"{ecog_dir}*Trn*.mat"))
-        X_train, Y_train = preproc(args, fnames_train)
+        X_train, Y_train = preproc(args, subject_name, fnames_train)
+        
+        if X_train is None:
+            continue
         
         fnames_val = natsorted(glob.glob(f"{ecog_dir}*Val*.mat"))
-        X_val, Y_val = preproc(args, fnames_val)
+        X_val, Y_val = preproc(args, subject_name, fnames_val)
             
         cprint(f"Subject {subject_name} has {len(fnames_train)} train sessions and {len(fnames_val)} validation sessions \nECoG: train {X_train.shape}, val {X_val.shape} \nImage: train {Y_train.shape}, val {Y_val.shape}", "cyan")
         
