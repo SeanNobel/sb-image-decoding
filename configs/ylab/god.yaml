@@ -1,13 +1,14 @@
 # ==== Preprocessing ==== #
-preproc_name: init
+preproc_name: drop_fsurfer_incons_subjs
 
 data_root: /storage/dataset/ECoG/internal/GODv2-4/
+freesurfer_dir: /storage/data/freesurfer/Subject_ECoG/
 
 segment_in_preproc: True
 
 max_seq_len: 2.0 # how long to take during preprocessing
 seq_onset: 0.0
-seq_len: 0.2
+seq_len: 0.5
 
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
@@ -51,7 +52,6 @@ head_activation: True
 time_multiplier: 1
 
 split: none # split is predefined since experiment for this dataset
-train_ratio: 0.8
 batch_size: 64
 lr: 0.005
 lr_scheduler: multistep # cosine or multistep
@@ -77,4 +77,4 @@ sweep_config:
     goal: maximize
   parameters:
     seq_onset:
-      values: [0.0, 0.1, 0.2, 0.3]
+      values: [0.0, 0.5, 1.0, 1.5]

@@ -59,14 +59,14 @@ def train():
             generator=torch.Generator().manual_seed(args.seed),
         )
 
-        num_subjects = dataset.num_subjects
+        subject_names = dataset.subject_names
 
     # NOTE: If not shallow, split is done inside dataset class
     else:
         train_set = eval(f"{args.dataset}CLIPDataset")(args)
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
 
-        num_subjects = train_set.num_subjects
+        subject_names = train_set.subject_names
         test_size = len(test_set.X)
 
     cprint(f"Test size: {test_size}", "cyan")
@@ -91,7 +91,7 @@ def train():
     #        Models
     # ---------------------
     if args.face.type == "dynamic":
-        brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
+        brain_encoder = BrainEncoder(args, subject_names=subject_names).to(device)
 
         if args.face.encoded:
             face_encoder = None
@@ -106,7 +106,7 @@ def train():
     elif args.face.type == "static":
         brain_encoder = BrainEncoderReduceTime(
             args,
-            num_subjects=num_subjects,
+            subject_names=subject_names,
             layout=eval(args.layout),
             time_multiplier=args.time_multiplier,
         ).to(device)

@@ -46,9 +46,11 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         # session_paths = session_paths[:2]
 
         if args.split in ["subject_random", "subject_each"]:
-            session_paths, self.num_subjects, subject_names = self._split_sessions(train)
+            # NOTE: subject_names must be 'S*_{name}' format in this case.
+            session_paths, self.num_subjects, self.subject_names = self._split_sessions(train)
         else:
             self.num_subjects = len(session_paths)
+            self.subject_names = [path.split("/")[-2] for path in session_paths]
 
         cprint(f"Num subjects: {self.num_subjects}", color="cyan")
 
@@ -92,7 +94,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
             # NOTE: identify subject for subject_each split
             if args.split == "subject_each":
                 name = subject_path.split("_")[-1]
-                subject_idx = np.where(np.array(subject_names) == name)[0][0]
+                subject_idx = np.where(np.array(self.subject_names) == name)[0][0]
 
             subject_idx *= torch.ones(X.shape[0], dtype=torch.uint8)
             cprint(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}", "cyan")
@@ -112,7 +114,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         
         self.X = torch.cat(X_list)
         del X_list
-        cprint(f"self.X: {len(self.X)} samples (channel numbers might be variable)", color="cyan")
+        cprint(f"self.X: {self.X.shape} (channels are zero-padded when channel numbers depend on subjects)", color="cyan")
 
         self.Y = torch.cat(Y_list)
         del Y_list

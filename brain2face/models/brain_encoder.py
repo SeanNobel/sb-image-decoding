@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
-from typing import Optional, Union, Callable
+from typing import Optional, Union, Callable, List
 
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 
@@ -119,7 +119,7 @@ class SubjectSpatialAttention(nn.Module):
 class SubjectBlockSA(nn.Module):
     """Applies Spatial Attention to each subject separately"""
 
-    def __init__(self, args, num_subjects, layouts: DynamicChanLoc2d):
+    def __init__(self, args, num_subjects: int, layouts: DynamicChanLoc2d):
         super(SubjectBlockSA, self).__init__()
 
         self.layouts = layouts
@@ -246,13 +246,12 @@ class BrainEncoder(nn.Module):
     def __init__(
         self,
         args,
-        num_subjects: Optional[int] = None,
+        subject_names: List[str],
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         unknown_subject: bool = False,
     ) -> None:
         super(BrainEncoder, self).__init__()
 
-        self.num_subjects = args.num_subjects if num_subjects is None else num_subjects
         self.D1 = args.D1
         self.D2 = args.D2
         self.F = args.F
@@ -261,9 +260,13 @@ class BrainEncoder(nn.Module):
         self.unknown_subject = unknown_subject
 
         if layout == ch_locations_2d:
-            self.subject_block = SubjectBlock(args, self.num_subjects, layout(args))
+            self.subject_block = SubjectBlock(
+                args, len(subject_names), layout(args)
+            )
         elif layout == DynamicChanLoc2d:
-            self.subject_block = SubjectBlockSA(args, self.num_subjects, layout(args))
+            self.subject_block = SubjectBlockSA(
+                args, len(subject_names), layout(args, subject_names)
+            )
         else:
             raise TypeError
 
@@ -302,7 +305,7 @@ class BrainEncoderReduceTime(nn.Module):
     def __init__(
         self,
         args,
-        num_subjects: Optional[int] = None,
+        subject_names: List[str] = None,
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         unknown_subject: bool = False,
         time_multiplier: int = 1,
@@ -313,7 +316,7 @@ class BrainEncoderReduceTime(nn.Module):
         """
         super(BrainEncoderReduceTime, self).__init__()
 
-        self.brain_encoder = BrainEncoder(args, num_subjects, layout, unknown_subject)
+        self.brain_encoder = BrainEncoder(args, subject_names, layout, unknown_subject)
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
