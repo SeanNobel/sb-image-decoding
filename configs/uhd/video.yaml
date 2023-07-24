@@ -46,10 +46,13 @@ F: 512 # CLIP embedding dimension
 face:
   type: dynamic # static (image) or dynamic (video)
   encoded: False
-  
-vivit:
+  model: ViViT
+face_encoder:
   image_size: 64
   patch_size: 16
+  fps: ${fps}
+  seq_len: ${seq_len}
+  dim: ${F}
   depth: 2
   in_channels: 1
 
