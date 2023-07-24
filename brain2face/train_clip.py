@@ -19,7 +19,7 @@ from brain2face.datasets import (
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
 from brain2face.models.classifier import Classifier
-from brain2face.utils.layout import DynamicChanLoc2d
+from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply
 
@@ -90,20 +90,14 @@ def train():
     # ---------------------
     #        Models
     # ---------------------
-    if args.face.type == "dynamic":
-        brain_encoder = BrainEncoder(args, subject_names=subject_names).to(device)
+    if not args.reduce_time:
+        brain_encoder = BrainEncoder(
+            args,
+            subject_names=subject_names,
+            layout=eval(args.layout),
+        ).to(device)
 
-        if args.face.encoded:
-            face_encoder = None
-        else:
-            face_encoder = eval(args.face.model)(
-                out_channels=args.F, **args.face_encoder
-            ).to(device)
-            # FIXME: Temporarily other than YLab are not working.
-            #     num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
-            # ).to(device)
-
-    elif args.face.type == "static":
+    else:
         brain_encoder = BrainEncoderReduceTime(
             args,
             subject_names=subject_names,
@@ -111,13 +105,10 @@ def train():
             time_multiplier=args.time_multiplier,
         ).to(device)
 
-        if args.face.encoded:
-            face_encoder = None
-        else:
-            face_encoder = ViT(dim=args.F, **args.vit).to(device)
-
+    if args.face.encoded:
+        face_encoder = None
     else:
-        raise ValueError("Face type is only static or dynamic.")
+        face_encoder = eval(args.face.model)(**args.face_encoder).to(device)
 
     classifier = Classifier(args)
 
@@ -157,6 +148,9 @@ def train():
         inference_times = []
 
         models.train()
+        if args.accum_grad:
+            optimizer.zero_grad()
+                        
         for X, Y, subject_idxs in tqdm(train_loader):
             X, Y = X.to(device), Y.to(device)
 
@@ -174,13 +168,18 @@ def train():
             train_top10_accs.append(train_top10_acc)
             train_top1_accs.append(train_top1_acc)
 
-            optimizer.zero_grad()
-
-            loss.backward()
-
+            if args.accum_grad:
+                loss.backward()
+                
+            else:
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+        if args.accum_grad:
             optimizer.step()
 
-        assert models.params_updated()
+        _ = models.params_updated()
 
         models.eval()
         for X, Y, subject_idxs in test_loader:

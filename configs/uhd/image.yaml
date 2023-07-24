@@ -45,13 +45,14 @@ F: 512 # CLIP embedding dimension
 
 face:
   type: static # static (image) or dynamic (video)
-  reduction: extract # extract or mean. Only for face.type=static
+  reduction: extract # extract or mean. Only for reduce_time: True
   encoded: False # Whether to use pretrained CLIP model
   clip_model: ViT-B/32 # Used if pretrained is False
 
 vit:
   image_size: 256
   patch_size: 32
+  dim: ${F}
   depth: 6
   heads: 16
   mlp_dim: 2048

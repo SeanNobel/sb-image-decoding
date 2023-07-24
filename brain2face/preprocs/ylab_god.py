@@ -46,7 +46,9 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
     signals = ecog["data_st"]["signals"][()].astype(np.float64)
     orig_sfreq = int(ecog["data_st"]["sampling_rate"][()][0][0])
     
-    signals = brain_preproc(args, signals, orig_sfreq=orig_sfreq, segment=False, resample=False)
+    signals = brain_preproc(
+        args, signals, orig_sfreq=orig_sfreq, segment=False, resample=False
+    )
     
     onsets = ecog["trigger_info"]["stim_onset"][()].squeeze()
     onsets = np.nan_to_num(onsets, nan=-1).astype(int)
@@ -63,14 +65,6 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
             continue
         
         chunk = signals[:, onset:onset + int(orig_sfreq * args.max_seq_len)]
-        # chunk = signals[:, onset:offset]
-        
-        # if chunk.shape[1] < orig_sfreq * args.max_segment_len:
-        #     cprint(f"Chunk was padded since it was shorter than 0.5s: {chunk.shape}", "yellow")
-            
-        #     chunk = np.pad(chunk, ((0, 0), (0, int(orig_sfreq * 0.5) - chunk.shape[1])), mode="edge")
-        # else:
-        #     chunk = chunk[:, :int(orig_sfreq * 0.5)]
         
         chunk = mne.filter.resample(chunk, down=orig_sfreq/args.brain_resample_sfreq)
         

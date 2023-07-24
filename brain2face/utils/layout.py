@@ -18,6 +18,9 @@ class DynamicChanLoc2d:
             # FIXME: need to align across subjects
             self.locations = [PCA(n_components=2).fit_transform(loc) for loc in locations]
             
+            if args.loc_random:
+                self.locations = [np.random.rand(*loc.shape) for loc in self.locations]
+            
         else:
             raise NotImplementedError
         
@@ -40,6 +43,10 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
             loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )
         else:
             loc = np.load(args.montage_path)
+            
+    elif args.dataset == "YLabGOD":
+        assert args.loc_random, "Only implementing static YLabGOD for debug."
+        loc = np.random.rand(48, 2)
 
     elif args.dataset == "UHD":
         montage = load_uhd_montage(args.montage_path)

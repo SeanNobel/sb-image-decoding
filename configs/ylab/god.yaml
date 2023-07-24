@@ -7,36 +7,42 @@ freesurfer_dir: /storage/data/freesurfer/Subject_ECoG/
 segment_in_preproc: True
 
 max_seq_len: 2.0 # how long to take during preprocessing
-seq_onset: 0.0
-seq_len: 0.5
 
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
 brain_resample_sfreq: 500 # Hz
 clamp_lim: 20
-baseline_ratio: 0.2 # ratio compared to 0.5 seconds
+baseline_ratio: 0.2 # ratio compared to max_seq_len
 
 
 # ==== Training ==== #
 project_name: neuro-diffusion_god
 train_name: test
 
+seq_onset: 0.0
+seq_len: 0.5
+
 dataset: YLabGOD
 image_size: 256
 
 montage_dir: brain2face/utils/montages/GOD/
 layout: DynamicChanLoc2d
-loc_random: True
+loc_random: False
 
-F: 256 # CLIP embedding dimension
+spatial_attention: True
+
+F: 512 # CLIP embedding dimension
+
+reduce_time: True # For GOD dataset, time is already reduced.
 
 face:
-  type: static
-  encoded: False
-
-vit:
+  encoded: True
+  model: ViT # Used if face.encoded=False
+  clip_model: ViT-B/32 # Used if face.encoded=True
+face_encoder:
   image_size: 256 # set this same as image_size above
   patch_size: 32
+  dim: ${F}
   depth: 6
   heads: 16
   mlp_dim: 2048
@@ -46,10 +52,15 @@ vit:
 D1: 270
 D2: 320
 K: 32
-d_drop: 0.3
-final_ksize_stride: 2
+d_drop: 0.2
+final_ksize: 2
+final_stride: 2
 head_activation: True
 time_multiplier: 1
+biases:
+  conv_block: True
+  conv_subj_sa: True
+  linear_reduc_time: True
 
 split: none # split is predefined since experiment for this dataset
 batch_size: 64
@@ -57,9 +68,11 @@ lr: 0.005
 lr_scheduler: multistep # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
-epochs: 500
+epochs: 1000
 reduction: mean
 init_temperature: 5.0
+
+accum_grad: False
 
 chance: False
 
@@ -67,14 +80,22 @@ test_with_whole: True
 
 seed: 1234
 
-cuda_id: 0
+cuda_id: 1
 
-sweep_count: 4
+sweep_count: 8
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    seq_onset:
-      values: [0.0, 0.5, 1.0, 1.5]
+    # seq_onset:
+    #   values: [0.0, 0.5, 1.0, 1.5]
+    # layout:
+    #   values: [DynamicChanLoc2d, ch_locations_2d]
+    biases.conv_block:
+      values: [True, False]
+    biases.conv_subj_sa:
+      values: [True, False]
+    biases.linear_reduc_time:
+      values: [True, False]
