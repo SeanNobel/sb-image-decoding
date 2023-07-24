@@ -6,7 +6,7 @@ import numpy as np
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
-from typing import Optional
+from typing import Optional, Union
 
 # helpers
 
@@ -183,8 +183,8 @@ class ViViT(nn.Module):
         self,
         image_size,
         patch_size,
-        num_frames,
-        num_classes=1,  # FIXME
+        fps,
+        seq_len,
         dim=192,
         depth=4,
         heads=3,
@@ -196,6 +196,8 @@ class ViViT(nn.Module):
         scale_dim=4,
     ):
         super().__init__()
+        
+        num_frames = seq_len * fps
 
         # assert pool in {'cls',
         #                 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
@@ -255,7 +257,17 @@ class ViViT(nn.Module):
 
 
 class OpenFaceMapper(nn.Module):
-    def __init__(self, in_channels: int, hid_dim: int, out_channels: int):
+    def __init__(
+        self,
+        in_channels: int,
+        hid_dim: int,
+        out_channels: int,
+        ksize_stride: int,
+        reduce_time: bool,
+        seq_len: Union[float, int],
+        fps: int,
+        time_multiplier: int = 1,
+    ):
         super().__init__()
 
         self.conv1 = nn.Conv1d(
@@ -266,12 +278,25 @@ class OpenFaceMapper(nn.Module):
         self.conv2 = nn.Conv1d(
             hid_dim, out_channels, kernel_size=3, stride=1, padding="same"
         )
+        
+        if reduce_time:
+            self.flatten = nn.Flatten()
+            self.linear = nn.Linear(
+                in_features=out_channels * int(seq_len * fps),
+                out_features=out_channels * time_multiplier,
+            )
+            
+        else:
+            self.linear = None
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         X = self.conv1(X)
         X = F.gelu(self.batchnorm(X))
 
         X = F.gelu(self.conv2(X))
+        
+        if self.linear is not None:
+            X = self.linear(self.flatten(X))
 
         return X
 

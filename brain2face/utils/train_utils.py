@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 from PIL import Image
-from typing import Union, Optional, Callable
+from typing import Union, Optional, Callable, Dict
 from termcolor import cprint
 
 
@@ -19,9 +19,9 @@ class Models:
         self.face_encoder = face_encoder
         self.loss_func = loss_func
 
-        self.brain_encoder_param = self._get_first_param(self.brain_encoder)
+        self.brain_encoder_params = self._clone_params_list(self.brain_encoder)
         if self.face_encoder is not None:
-            self.face_encoder_param = self._get_first_param(self.face_encoder)
+            self.face_encoder_params = self._clone_params_list(self.face_encoder)
 
     def get_params(self):
         params = list(self.brain_encoder.parameters()) + list(self.loss_func.parameters())
@@ -32,24 +32,46 @@ class Models:
         return params
 
     @staticmethod
-    def _get_first_param(model: nn.Module) -> torch.Tensor:
-        return model.parameters().__next__().detach().clone().cpu()
+    def _clone_params_list(model: nn.Module) -> Dict[str, torch.Tensor]:
+        return {name: params.clone().cpu() for name, params in model.named_parameters()}
 
+    @staticmethod
+    def _get_non_updated_layers(
+        new_params: Dict[str, torch.Tensor],
+        prev_params: Dict[str, torch.Tensor],
+    ) -> list:
+        return [
+            key for key in new_params.keys() if torch.equal(
+                prev_params[key],
+                new_params[key]
+            )
+        ]
+        
     def params_updated(self) -> bool:
         updated = True
 
-        new_param = self._get_first_param(self.brain_encoder)
-        if torch.equal(self.brain_encoder_param, new_param):
-            cprint("Brain encoder parameters are not updated.", "red")
+        new_params = self._clone_params_list(self.brain_encoder)
+        non_updated_layers = self._get_non_updated_layers(
+            new_params, self.brain_encoder_params
+        )
+        if len(non_updated_layers) > 0:
+            cprint(
+                f"Following layers in brain encoder are not updated: {non_updated_layers}", "red"
+            )
             updated = False
-        self.brain_encoder_param = new_param
+        self.brain_encoder_params = new_params
 
         if self.face_encoder is not None:
-            new_param = self._get_first_param(self.face_encoder)
-            if torch.equal(self.face_encoder_param, new_param):
-                cprint("Face encoder parameters are not updated.", "red")
+            new_params = self._clone_params_list(self.face_encoder)
+            non_updated_layers = self._get_non_updated_layers(
+                new_params, self.face_encoder_params
+            )
+            if len(non_updated_layers) > 0:
+                cprint(
+                    f"Following layers in face encoder are not updated: {non_updated_layers}", "red"
+                )
                 updated = False
-            self.face_encoder_param = new_param
+            self.face_encoder_params = new_params
 
         return updated
 

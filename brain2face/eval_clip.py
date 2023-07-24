@@ -52,7 +52,7 @@ def infer(args: DictConfig) -> None:
             # Must use the same seed as train
         )
 
-        num_subjects = dataset.num_subjects
+        subject_names = dataset.subject_names
     else:
         train_set = eval(f"{args.dataset}CLIPDataset")(args)
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
@@ -74,29 +74,28 @@ def infer(args: DictConfig) -> None:
         **loader_args,
     )
 
-    # DEBUG
-    # num_subjects = 1
-
     # ---------------------
     #        Models
     # ---------------------
-    if args.face.type == "dynamic":
-        brain_encoder = BrainEncoder(args, num_subjects=num_subjects).to(device)
+    if not args.reduce_time:
+        brain_encoder = BrainEncoder(
+            args,
+            subject_names=subject_names,
+            layout=eval(args.layout),
+        ).to(device)
+        
+    else:
+        brain_encoder = BrainEncoderReduceTime(
+            args,
+            subject_names=subject_names,
+            layout=eval(args.layout),
+            time_multiplier=args.time_multiplier,
+        ).to(device)
 
-        if args.face.encoded:
-            face_encoder = None
-        else:
-            face_encoder = ViViT(
-                num_frames=args.seq_len * args.fps, dim=args.F, **args.vivit
-            ).to(device)
-
-    elif args.face.type == "static":
-        brain_encoder = BrainEncoderReduceTime(args, num_subjects=num_subjects).to(device)
-
-        if args.face.encoded:
-            face_encoder = None
-        else:
-            face_encoder = ViT(dim=args.F, **args.vit).to(device)
+    if args.face.encoded:
+        face_encoder = None
+    else:
+        face_encoder = eval(args.face.model)(**args.face_encoder).to(device)
 
     brain_encoder.load_state_dict(
         torch.load(os.path.join(run_dir, "brain_encoder_best.pt"), map_location=device)
@@ -135,9 +134,9 @@ def infer(args: DictConfig) -> None:
             else:
                 Z = brain_encoder(X, subject_idxs)
 
-                if face_encoder is not None:
-                    if args.face.type == "static":
-                        image_saver.save(Y)
+        if face_encoder is not None:
+            if args.reduce_time:
+                image_saver.save(Y)
 
                     Y = face_encoder(Y)
 

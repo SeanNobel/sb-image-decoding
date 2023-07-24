@@ -2,23 +2,24 @@ import os
 import mne
 import numpy as np
 import torch
+from sklearn.decomposition import PCA
 from glob import glob
 from natsort import natsorted
-from typing import Union
+from typing import Union, List
 
 from brain2face.utils.gTecUtils.gTecUtils import loadMontage
 
 
 class DynamicChanLoc2d:
-    def __init__(self, args) -> None:
+    def __init__(self, args, subject_names: List[str]) -> None:
         if args.dataset == "YLabGOD":
-            montage_paths = natsorted(glob(
-                os.path.join(args.montage_dir, "random" if args.loc_random else "", "*.npy")
-            ))
-
-            # FIXME: loading line
-            # TODO: Normalize across subjects to align locations
-            self.locations = [np.load(path) for path in montage_paths]
+            locations = [load_god_montage(subject, args.freesurfer_dir) for subject in subject_names]
+            
+            # FIXME: need to align across subjects
+            self.locations = [PCA(n_components=2).fit_transform(loc) for loc in locations]
+            
+            if args.loc_random:
+                self.locations = [np.random.rand(*loc.shape) for loc in self.locations]
             
         else:
             raise NotImplementedError
@@ -42,9 +43,13 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
             loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )
         else:
             loc = np.load(args.montage_path)
+            
+    elif args.dataset == "YLabGOD":
+        assert args.loc_random, "Only implementing static YLabGOD for debug."
+        loc = np.random.rand(48, 2)
 
     elif args.dataset == "UHD":
-        montage = get_montage(args.montage_path)
+        montage = load_uhd_montage(args.montage_path)
         info = mne.create_info(
             ch_names=montage.ch_names, sfreq=args.brain_resample_sfreq, ch_types="eeg"
         )
@@ -81,7 +86,16 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
     return torch.from_numpy(loc.astype(np.float32))
 
 
-def get_montage(elec_filename):
+def load_god_montage(subject: str, freesurfer_dir: str) -> np.ndarray:
+    path = os.path.join(freesurfer_dir, subject, "elec_recon", f"{subject}.DURAL")
+        
+    montage = np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode").astype(float)
+    montage = np.stack(montage) # ( n_channels, 3 )
+
+    return montage
+
+
+def load_uhd_montage(elec_filename):
     # Parse xml file for electrode position
     import xml.etree.ElementTree as ET
 

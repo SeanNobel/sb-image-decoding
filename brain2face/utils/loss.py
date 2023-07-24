@@ -45,8 +45,8 @@ class CLIPLoss(nn.Module):
 
         else:
             # fast way
-            x = x.contiguous().view(batch_size, -1)
-            y = y.contiguous().view(batch_size, -1)
+            x = x.reshape(batch_size, -1)
+            y = y.reshape(batch_size, -1)
 
             # NOTE: scale the embeddings to unit norm
             x = x / x.norm(dim=-1, keepdim=True)
