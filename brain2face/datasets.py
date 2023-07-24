@@ -75,7 +75,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
             #     Y = np.load(os.path.join(subject_path, "face.npy"))
             #     Y = y_reformer(Y)
 
-            X, Y = loader(subject_path)
+            X, Y = loader(subject_path=subject_path)
             
             if not args.segment_in_preproc:
                 X, Y = crop_longer(X, Y)
@@ -109,8 +109,12 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         del subject_idx_list
         cprint(f"self.subject_idx: {self.subject_idx.shape}", color="cyan")
 
-        # NOTE: for dataset where subjects have different channel numbers
-        X_list = self._pad_channels(X_list)
+        # FIXME: _trim_channels() is only for debug
+        if args.dataset == "YLabGOD" and args.layout == "ch_locations_2d":
+            X_list = self._trim_channels(X_list)
+        else:
+            # NOTE: for dataset where subjects have different channel numbers
+            X_list = self._pad_channels(X_list)
         
         self.X = torch.cat(X_list)
         del X_list
@@ -136,6 +140,15 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         
         if not np.all(num_channels == num_channels[0]):
             X_list = [F.pad(X, (0, 0, 0, np.max(num_channels) - X.shape[1]), "constant", 0) for X in X_list]
+            
+        return X_list
+    
+    @staticmethod
+    def _trim_channels(X_list: List[torch.Tensor]) -> List[torch.Tensor]:
+        num_channels = np.array([X.shape[1] for X in X_list])
+        
+        if not np.all(num_channels == num_channels[0]):
+            X_list = [X[:, :np.min(num_channels)] for X in X_list]
             
         return X_list
 
@@ -195,20 +208,35 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         # NOTE: it is important to sort here to match montage paths in layout.py
         subject_paths = natsorted(glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/"))
         
-        loader = partial(
-            self._ylab_god,
-            data_root=args.data_root,
-            train=train,
-            image_size=args.image_size,
-            brain_resample_sfreq=args.brain_resample_sfreq,
-            seq_onset=args.seq_onset,
-            seq_len=args.seq_len,
-        )
+        loader_args = {
+            "data_root": args.data_root,
+            "train": train,
+            "image_size": args.image_size,
+            "brain_resample_sfreq": args.brain_resample_sfreq,
+            "seq_onset": args.seq_onset,
+            "seq_len": args.seq_len,
+        }
+        
+        if args.face.encoded:
+            device = f"cuda:{args.cuda_id}"
+            clip_model, preprocess = clip.load(args.face.clip_model, device=device)
+            
+            loader = partial(
+                self._loader,
+                clip_model=clip_model,
+                preprocess=preprocess,
+                device=device,
+                **loader_args,
+            )
+            
+        else:
+            loader = partial(self._loader, **loader_args)
+        
 
         super().__init__(args, subject_paths, train, loader)
 
     @staticmethod
-    def _ylab_god(
+    def _loader(
         subject_path: str,
         data_root:str,
         train: bool,
@@ -216,6 +244,9 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         brain_resample_sfreq: int,
         seq_onset: float,
         seq_len: float,
+        clip_model: Optional[CLIP] = None,
+        preprocess: Optional[transforms.Compose] = None,
+        device: str = "cuda",
     ) -> torch.Tensor:
         """
         Returns:
@@ -245,8 +276,19 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             except:
                 dropped_idxs.append(i)
                 
-        Y = np.stack(Y).astype(np.float32) / 255.0
-        Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
+        Y = np.stack(Y)
+                
+        if clip_model is not None:
+            assert preprocess is not None, "clip_model needs preprocess."
+            
+            Y = sequential_apply(Y, preprocess, batch_size=1).to(device)
+            
+            with torch.no_grad():
+                Y = clip_model.encode_image(Y).cpu().float()
+                
+        else:
+            Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
+            Y = Y.to(torch.float32) / 255.0
         
         X = np.load(
             os.path.join(subject_path, f"brain_{'train' if train else 'test'}.npy")
@@ -262,22 +304,44 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
         is_segmented = "segmented" if args.segment_in_preproc else "unsegmented"
         session_paths = glob.glob(f"data/preprocessed/ylab/{is_segmented}/{args.preproc_name}/*/")  # fmt: skip
 
-        y_reformer = partial(
-            self.ylab_reformer,
-            segmented=args.segment_in_preproc,
-            segment_len=int(args.fps * args.seq_len),
-            face_type=args.face.type,
-            reduction=args.face.reduction,
+        loader = partial(
+            self._loader,
+            args=args,
+            y_reformer=partial(
+                self._y_reformer,
+                segmented=args.segment_in_preproc,
+                segment_len=int(args.fps * args.seq_len),
+                reduce_time=args.reduce_time,
+                reduction=args.face.reduction,
+            ),
         )
 
-        super().__init__(args, session_paths, train, y_reformer)
+        super().__init__(args, session_paths, train, loader)
 
         assert not self.Y.requires_grad
+        
+    @staticmethod
+    def _loader(
+        args,
+        subject_path: str,
+        y_reformer: Callable,
+    ):
+        X = np.load(os.path.join(subject_path, "brain.npy"))
+        if not args.segment_in_preproc:
+            X = segment_then_blcorr(
+                args, X, segment_len=int(args.brain_resample_sfreq * args.seq_len)
+            )
+        X = torch.from_numpy(X).to(torch.float32)
+            
+        Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
+        Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
+                
+        return X, Y
 
     @staticmethod
-    def ylab_reformer(
+    def _y_reformer(
         Y: np.ndarray,
-        face_type: str,
+        reduce_time: bool,
         segmented: bool,
         segment_len: Optional[int] = None,
         reduction: Optional[bool] = None,
@@ -291,16 +355,13 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
         Y = torch.from_numpy(Y).to(torch.float32)
 
-        if face_type == "static":
-            if reduction == "extract":
-                Y = Y[:, :, Y.shape[-1] // 2]
-            elif reduction == "mean":
-                Y = Y.mean(dim=-1)
-            else:
-                assert reduction is None, "Reduction is either extract or mean."
-
-        else:
-            assert face_type == "dynamic", "Face type is only static or dynamic."
+        # if reduce_time:
+        #     if reduction == "extract":
+        #         Y = Y[:, :, Y.shape[-1] // 2]
+        #     elif reduction == "mean":
+        #         Y = Y.mean(dim=-1)
+        #     else:
+        #         assert reduction is None, "Reduction is either extract or mean."
 
         return Y
 
@@ -309,10 +370,10 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
 
-        if args.face.type == "dynamic":
+        if not args.reduce_time:
             y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
 
-        elif args.face.type == "static":
+        else:
             if args.face.encoded:
                 device = f"cuda:{args.cuda_id}"
                 clip_model, preprocess = clip.load(args.face.clip_model, device=device)
@@ -327,8 +388,6 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
             else:
                 y_reformer = partial(self.to_single_frame, reduction=args.face.reduction)
-        else:
-            raise ValueError("Face type is only static or dynamic.")
 
         super().__init__(args, session_paths, train, y_reformer)
 
