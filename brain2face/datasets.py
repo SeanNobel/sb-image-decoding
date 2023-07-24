@@ -43,7 +43,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         # session_paths = self._drop_bads(session_paths)
 
         # DEBUG
-        # session_paths = session_paths[:2]
+        session_paths = session_paths[:1]
 
         if args.split in ["subject_random", "subject_each"]:
             session_paths, self.num_subjects, subject_names = self._split_sessions(train)
@@ -317,7 +317,7 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
 class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
-        session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
+        session_paths = glob.glob(f"data/preprocessed/uhd/{args.preproc_name}/*/")
 
         if args.face.type == "dynamic":
             y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
@@ -519,6 +519,43 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
             images.append(image)
 
         return torch.stack(images)
+
+
+class UHDPipelineDataset(UHDCLIPDataset):
+    def __init__(self, args, session_id: int, train: bool = True) -> None:
+        super().__init__(args, train)
+
+        sample_idxs = torch.where(self.subject_idx == session_id)[0]
+        self.X = self.X[sample_idxs]
+        self.Y = self.Y[sample_idxs]
+        self.subject_idx = self.subject_idx[sample_idxs]
+
+        self.X = self.to_sequence(args, self.X)
+        self.subject_idx = torch.full((len(self.X),), session_id, dtype=torch.uint8)
+
+    def __getitem__(self, i):
+        return self.X[i], self.subject_idx[i]
+
+    @staticmethod
+    def to_sequence(args, X: torch.Tensor) -> torch.Tensor:
+        X = X.permute(0, 2, 1)
+        X = X.contiguous().view(-1, X.shape[-1])
+
+        X = X[:1200]  # 10 seconds
+
+        segment_len = args.brain_resample_sfreq * args.seq_len
+        X = torch.stack(
+            [
+                X[i : i + segment_len]
+                for i in range(
+                    0, X.shape[0] - segment_len, args.brain_resample_sfreq // args.fps
+                )
+            ]
+        ).permute(0, 2, 1)
+
+        cprint(X.shape, "cyan")
+
+        return X
 
 
 if __name__ == "__main__":
