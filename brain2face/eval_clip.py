@@ -83,7 +83,7 @@ def infer(args: DictConfig) -> None:
             subject_names=subject_names,
             layout=eval(args.layout),
         ).to(device)
-        
+
     else:
         brain_encoder = BrainEncoderReduceTime(
             args,
@@ -138,7 +138,7 @@ def infer(args: DictConfig) -> None:
             if args.reduce_time:
                 image_saver.save(Y)
 
-                    Y = face_encoder(Y)
+            Y = face_encoder(Y)
 
             Z /= Z.norm(dim=-1, keepdim=True)
             Y /= Y.norm(dim=-1, keepdim=True)
