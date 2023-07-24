@@ -93,9 +93,13 @@ class SubjectSpatialAttention(nn.Module):
 
         self.spatial_attention = SpatialAttention(args, loc)
 
-        # self.conv1 = nn.Conv1d(
-        #     in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1
-        # )
+        self.conv = nn.Conv1d(
+            in_channels=args.D1,
+            out_channels=args.D1,
+            kernel_size=1,
+            stride=1,
+            bias=args.biases.conv_subj_sa,
+        )
         # self.conv2 = nn.Conv1d(
         #     in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1, bias=False
         # )
@@ -111,7 +115,8 @@ class SubjectSpatialAttention(nn.Module):
         assert pad.sum() == 0
         
         X = self.spatial_attention(X)
-        # X = self.conv1(X)
+        
+        X = self.conv(X)
         # X = self.conv2(X)
 
         return X
@@ -220,11 +225,12 @@ class SubjectBlockSA(nn.Module):
             ]
         )
         
-        self.conv1 = nn.Conv1d(
-            in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1
-        )
-        self.conv2 = nn.Conv1d(
-            in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1, bias=False
+        self.conv = nn.Conv1d(
+            in_channels=args.D1,
+            out_channels=args.D1,
+            kernel_size=1,
+            stride=1,
+            bias=args.biases.conv_block
         )
         
     def forward(
@@ -266,8 +272,7 @@ class SubjectBlockSA(nn.Module):
                 ]
             )  # ( B, 270, 256 )
             
-        X = self.conv1(X)
-        X = self.conv2(X)
+        X = self.conv(X)
         
         return X
 
@@ -432,6 +437,7 @@ class BrainEncoderReduceTime(nn.Module):
                 )
             ),
             out_features=args.F * time_multiplier,
+            bias=args.biases.linear_reduc_time,
         )
         self.activation = args.head_activation
         
