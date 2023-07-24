@@ -5,6 +5,8 @@ debug: False
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
 
+segment_in_preproc: True
+
 start_subj: 0
 end_subj: 22
 
@@ -69,11 +71,7 @@ final_ksize_stride: 2
 head_activation: False
 
 split: shallow # shallow / deep / subject_random / subject_each
-# subject_random: picks 20% sessions for test, without considering subjects' identity
-# subject_each: each subject has one or two test sessions (currently not working)
-
 train_ratio: 0.8
-chance: False
 batch_size: 64
 lr: 0.005
 lr_scheduler: multistep # cosine or multistep
@@ -82,6 +80,10 @@ lr_step_gamma: 0.5
 epochs: 500
 reduction: mean
 init_temperature: 5.0
+
+chance: False
+
+test_with_whole: True
 
 seed: 1234
 
@@ -116,4 +118,4 @@ eval:
   head_activation: False
   final_ksize_stride: 2
 
-for_webdataset: True
+for_webdataset: False

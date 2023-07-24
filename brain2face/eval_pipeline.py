@@ -9,10 +9,13 @@ from omegaconf import DictConfig, OmegaConf
 
 from dalle2_pytorch import DALLE2, DiffusionPriorNetwork, DiffusionPrior, Unet, Decoder
 
+from brain2face.datasets import UHDPipelineDataset
 from brain2face.models.brain_encoder import BrainEncoderReduceTime
+from brain2face.utils.train_utils import sequential_apply
 from brain2face.utils.eval_utils import update_with_eval, get_run_dir
 
 
+@torch.no_grad()
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
 def pipeline(_args: DictConfig) -> None:
     args_clip = OmegaConf.load(os.path.join("configs", _args.config_path))
@@ -29,6 +32,20 @@ def pipeline(_args: DictConfig) -> None:
     device_dalle2 = "cuda:0"
 
     # ----------------
+    #    Dataloader
+    # ----------------
+    train_set = UHDPipelineDataset(args_clip, session_id=0)
+    # test_set = UHDPipelineDataset(args_clip, session_id=0, train=False)
+
+    loader_args = {"shuffle": False, "drop_last": False, "num_workers": 4, "pin_memory": True}  # fmt: skip
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_set, batch_size=len(train_set), **loader_args
+    )
+    # test_loader = torch.utils.data.DataLoader(
+    #     dataset=test_set, batch_size=len(test_set), **loader_args
+    # )
+
+    # ----------------
     #      Models
     # ----------------
     weights_brain_enc = torch.load(
@@ -39,9 +56,7 @@ def pipeline(_args: DictConfig) -> None:
         [key for key in weights_brain_enc.keys() if "subject_layer" in key]
     )
 
-    brain_encoder = BrainEncoderReduceTime(
-        args_clip, num_subjects=num_subjects, unknown_subject=True
-    ).to(device_clip)
+    brain_encoder = BrainEncoderReduceTime(args_clip, num_subjects=num_subjects).to(device_clip)  # fmt: skip
 
     brain_encoder.load_state_dict(weights_brain_enc)
     brain_encoder.eval()
@@ -60,6 +75,18 @@ def pipeline(_args: DictConfig) -> None:
         cond_drop_prob=args_prior.cond_drop_prob,
         condition_on_text_encodings=False,
     ).to(device_dalle2)
+
+    diffusion_prior.load_state_dict(
+        torch.load(
+            os.path.join(
+                "runs/prior",
+                args_clip.dataset.lower(),
+                args_prior.run_name,
+                "prior_best.pt",
+            ),
+            map_location=device_dalle2,
+        )
+    )
 
     unet1 = Unet(
         dim=args_decoder.unet1.dim,
@@ -105,17 +132,33 @@ def pipeline(_args: DictConfig) -> None:
     # ----------------
     #     Pipeline
     # ----------------
-    mock_batch = torch.randn(
-        4, args_clip.num_channels, args_clip.seq_len * args_clip.brain_resample_sfreq
-    ).to(device_clip)
+    X, subject_idxs = next(iter(train_loader))
+    cprint(X.shape, "cyan")
 
-    brain_emb = brain_encoder(mock_batch, None).to(device_dalle2)
+    X = X.to(device_clip)
+
+    brain_emb = sequential_apply(
+        X, brain_encoder, args_clip.batch_size, subject_idxs=subject_idxs
+    ).to(device_dalle2)
+
     cprint(brain_emb.shape, "cyan")
 
-    images = dalle2(brain_emb, return_pil_images=True)
+    images = sequential_apply(brain_emb, dalle2, batch_size=256)
+    # , return_pil_images=True)
 
-    for i, image in enumerate(images):
-        cv2.imwrite(f"assets/generated_images/{i}.jpg", np.array(image, dtype=np.uint8))
+    images = (images.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
+    # ( timesteps, 256, 256, 3 )
+
+    fmt = cv2.VideoWriter_fourcc("m", "p", "4", "v")
+    writer = cv2.VideoWriter(
+        "assets/generated_videos/first_render.mp4", fmt, 30, tuple(images.shape[1:3])
+    )
+
+    for frame in images:
+        writer.write(frame)
+        # cv2.imwrite(f"assets/generated_images/{i}.jpg", np.array(image, dtype=np.uint8))
+
+    writer.release()
 
 
 if __name__ == "__main__":

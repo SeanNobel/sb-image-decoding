@@ -13,7 +13,7 @@ import mne
 import mediapipe as mp
 import h5py
 from functools import partial
-from typing import Union, List, Optional, Callable
+from typing import Optional, Union, List, Tuple, Callable
 from termcolor import cprint
 from omegaconf import DictConfig
 
@@ -43,11 +43,13 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         # session_paths = self._drop_bads(session_paths)
 
         # DEBUG
-        # session_paths = session_paths[:2]
+        session_paths = session_paths[:1]
 
         if args.split in ["subject_random", "subject_each"]:
             # NOTE: subject_names must be 'S*_{name}' format in this case.
-            session_paths, self.num_subjects, self.subject_names = self._split_sessions(train)
+            session_paths, self.num_subjects, self.subject_names = self._split_sessions(
+                train
+            )
         else:
             self.num_subjects = len(session_paths)
             self.subject_names = [path.split("/")[-2] for path in session_paths]
@@ -76,10 +78,10 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
             #     Y = y_reformer(Y)
 
             X, Y = loader(subject_path=subject_path)
-            
+
             if not args.segment_in_preproc:
                 X, Y = crop_longer(X, Y)
-                
+
             assert X.shape[0] == Y.shape[0]
 
             if args.split == "deep":
@@ -97,7 +99,9 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
                 subject_idx = np.where(np.array(self.subject_names) == name)[0][0]
 
             subject_idx *= torch.ones(X.shape[0], dtype=torch.uint8)
-            cprint(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}", "cyan")
+            cprint(
+                f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}", "cyan"
+            )
 
             X_list.append(X)
             Y_list.append(Y)
@@ -115,10 +119,13 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         else:
             # NOTE: for dataset where subjects have different channel numbers
             X_list = self._pad_channels(X_list)
-        
+
         self.X = torch.cat(X_list)
         del X_list
-        cprint(f"self.X: {self.X.shape} (channels are zero-padded when channel numbers depend on subjects)", color="cyan")
+        cprint(
+            f"self.X: {self.X.shape} (channels are zero-padded when channel numbers depend on subjects)",
+            color="cyan",
+        )
 
         self.Y = torch.cat(Y_list)
         del Y_list
@@ -132,24 +139,36 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         return self.X[i], self.Y[i], self.subject_idx[i]
-    
+
     @staticmethod
     def _pad_channels(X_list: List[torch.Tensor]) -> List[torch.Tensor]:
         """Pads channels to the same length with zeros, if they are different"""
         num_channels = np.array([X.shape[1] for X in X_list])
-        
+
         if not np.all(num_channels == num_channels[0]):
-            X_list = [F.pad(X, (0, 0, 0, np.max(num_channels) - X.shape[1]), "constant", 0) for X in X_list]
-            
+            X_list = [
+                F.pad(X, (0, 0, 0, np.max(num_channels) - X.shape[1]), "constant", 0)
+                for X in X_list
+            ]
+
         return X_list
-    
+
     @staticmethod
     def _trim_channels(X_list: List[torch.Tensor]) -> List[torch.Tensor]:
         num_channels = np.array([X.shape[1] for X in X_list])
-        
+
         if not np.all(num_channels == num_channels[0]):
-            X_list = [X[:, :np.min(num_channels)] for X in X_list]
-            
+            X_list = [X[:, : np.min(num_channels)] for X in X_list]
+
+        return X_list
+
+    @staticmethod
+    def _trim_channels(X_list: List[torch.Tensor]) -> List[torch.Tensor]:
+        num_channels = np.array([X.shape[1] for X in X_list])
+
+        if not np.all(num_channels == num_channels[0]):
+            X_list = [X[:, : np.min(num_channels)] for X in X_list]
+
         return X_list
 
     @staticmethod
@@ -206,8 +225,10 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
         # NOTE: it is important to sort here to match montage paths in layout.py
-        subject_paths = natsorted(glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/"))
-        
+        subject_paths = natsorted(
+            glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
+        )
+
         loader_args = {
             "data_root": args.data_root,
             "train": train,
@@ -216,11 +237,11 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             "seq_onset": args.seq_onset,
             "seq_len": args.seq_len,
         }
-        
+
         if args.face.encoded:
             device = f"cuda:{args.cuda_id}"
             clip_model, preprocess = clip.load(args.face.clip_model, device=device)
-            
+
             loader = partial(
                 self._loader,
                 clip_model=clip_model,
@@ -228,17 +249,16 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
                 device=device,
                 **loader_args,
             )
-            
+
         else:
             loader = partial(self._loader, **loader_args)
-        
 
         super().__init__(args, subject_paths, train, loader)
 
     @staticmethod
     def _loader(
         subject_path: str,
-        data_root:str,
+        data_root: str,
         train: bool,
         image_size: int,
         brain_resample_sfreq: int,
@@ -252,50 +272,52 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         Returns:
             X: ( samples, channels, timesteps )
             Y: ( samples, 3, image_size, image_size )
-        """   
+        """
         cprint(f"Preprocessing subject {subject_path.split('/')[-2]}", "cyan")
-             
+
         image_fnames = np.loadtxt(
             os.path.join(subject_path, f"image_{'train' if train else 'test'}.txt"),
             delimiter=",",
             dtype=str,
         )
-        
+
         images_dir = os.path.join(data_root, f"images_{'trn' if train else 'val'}")
         Y = []
         dropped_idxs = []
         for i, fname in tqdm(enumerate(image_fnames), desc="Loading images"):
             try:
-                image = Image.open(os.path.join(images_dir, fname)).resize((image_size, image_size))
+                image = Image.open(os.path.join(images_dir, fname)).resize(
+                    (image_size, image_size)
+                )
                 # NOTE: Some images seem to be grayscale. Convert them to RGB.
                 if image.getbands()[0] == "L":
                     image = image.convert("RGB")
-                    
+
                 Y.append(image)
-                
+
             except:
                 dropped_idxs.append(i)
-                
+
         Y = np.stack(Y)
-                
+
         if clip_model is not None:
             assert preprocess is not None, "clip_model needs preprocess."
-            
+
             Y = sequential_apply(Y, preprocess, batch_size=1).to(device)
-            
+
             with torch.no_grad():
                 Y = clip_model.encode_image(Y).cpu().float()
-                
+
         else:
             Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
             Y = Y.to(torch.float32) / 255.0
-        
+
         X = np.load(
             os.path.join(subject_path, f"brain_{'train' if train else 'test'}.npy")
         )
         X = torch.from_numpy(np.delete(X, dropped_idxs, axis=0).astype(np.float32))
-        X = X[:, :, int(seq_onset * brain_resample_sfreq) : int((seq_onset + seq_len) * brain_resample_sfreq)]
-                
+        X = X[:, :, int(seq_onset * brain_resample_sfreq) : int((seq_onset + seq_len) * brain_resample_sfreq)]  # fmt: skip
+
         return X, Y
 
 
@@ -319,7 +341,7 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
         super().__init__(args, session_paths, train, loader)
 
         assert not self.Y.requires_grad
-        
+
     @staticmethod
     def _loader(
         args,
@@ -332,10 +354,10 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
                 args, X, segment_len=int(args.brain_resample_sfreq * args.seq_len)
             )
         X = torch.from_numpy(X).to(torch.float32)
-            
+
         Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
         Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
-                
+
         return X, Y
 
     @staticmethod
@@ -368,7 +390,7 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
 class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def __init__(self, args, train: bool = True) -> None:
-        session_paths = glob.glob("data/preprocessed/uhd/" + args.preproc_name + "/*/")
+        session_paths = glob.glob(f"data/preprocessed/uhd/{args.preproc_name}/*/")
 
         if not args.reduce_time:
             y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
@@ -389,10 +411,24 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             else:
                 y_reformer = partial(self.to_single_frame, reduction=args.face.reduction)
 
-        super().__init__(args, session_paths, train, y_reformer)
+        loader = partial(self.uhd_loader, y_reformer=y_reformer)
+
+        super().__init__(args, session_paths, train, loader)
 
         # FIXME: I've forgot to take first 128 channels from 139 while preprocessing
         self.X = self.X[:, : args.num_channels]
+
+    @staticmethod
+    def uhd_loader(
+        subject_path: str, y_reformer: Callable
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        X = np.load(os.path.join(subject_path, "brain.npy"))
+        X = torch.from_numpy(X.astype(np.float32))
+
+        Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
+        Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
+
+        return X, Y
 
     @staticmethod
     def to_single_frame(
@@ -416,7 +452,7 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             # NOTE: Take the frame in the middle
             Y = Y[:, Y.shape[1] // 2]
         elif reduction == "mean":
-            Y = Y.mean(dim=1)
+            Y = Y.mean(axis=1)
         else:
             raise ValueError("Reduction is either extract or mean.")
         # ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3)
@@ -507,11 +543,15 @@ class StyleGANCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
 
 class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset: str) -> None:
+    def __init__(self, dataset: str, train: bool = True) -> None:
         super().__init__()
 
-        self.Z = torch.load(f"data/clip_embds/{dataset.lower()}/brain_embds.pt")
-        self.Y = torch.load(f"data/clip_embds/{dataset.lower()}/face_embds.pt")
+        self.Z = torch.load(
+            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/brain_embds.pt"
+        )
+        self.Y = torch.load(
+            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/face_embds.pt"
+        )
 
         assert self.Z.shape == self.Y.shape
 
@@ -523,11 +563,15 @@ class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
 
 
 class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset: str) -> None:
+    def __init__(self, dataset: str, train: bool = True) -> None:
         super().__init__()
 
-        self.Y = torch.load(f"data/clip_embds/{dataset.lower()}/face_embds.pt")
-        self.Y_img = self._load_images(f"data/clip_embds/{dataset.lower()}/face_images")
+        self.Y = torch.load(
+            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/face_embds.pt"
+        )
+        self.Y_img = self._load_images(
+            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/face_images"
+        )
 
         assert len(self.Y) == len(self.Y_img)
 
@@ -546,6 +590,43 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
             images.append(image)
 
         return torch.stack(images)
+
+
+class UHDPipelineDataset(UHDCLIPDataset):
+    def __init__(self, args, session_id: int, train: bool = True) -> None:
+        super().__init__(args, train)
+
+        sample_idxs = torch.where(self.subject_idx == session_id)[0]
+        self.X = self.X[sample_idxs]
+        self.Y = self.Y[sample_idxs]
+        self.subject_idx = self.subject_idx[sample_idxs]
+
+        self.X = self.to_sequence(args, self.X)
+        self.subject_idx = torch.full((len(self.X),), session_id, dtype=torch.uint8)
+
+    def __getitem__(self, i):
+        return self.X[i], self.subject_idx[i]
+
+    @staticmethod
+    def to_sequence(args, X: torch.Tensor) -> torch.Tensor:
+        X = X.permute(0, 2, 1)
+        X = X.contiguous().view(-1, X.shape[-1])
+
+        X = X[:1200]  # 10 seconds
+
+        segment_len = args.brain_resample_sfreq * args.seq_len
+        X = torch.stack(
+            [
+                X[i : i + segment_len]
+                for i in range(
+                    0, X.shape[0] - segment_len, args.brain_resample_sfreq // args.fps
+                )
+            ]
+        ).permute(0, 2, 1)
+
+        cprint(X.shape, "cyan")
+
+        return X
 
 
 if __name__ == "__main__":
