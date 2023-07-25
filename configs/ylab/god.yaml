@@ -80,22 +80,22 @@ test_with_whole: True
 
 seed: 1234
 
-cuda_id: 1
+cuda_id: 2
 
-sweep_count: 8
+sweep_count: 4
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    # seq_onset:
-    #   values: [0.0, 0.5, 1.0, 1.5]
+    seq_onset:
+      values: [0.0, 0.5, 1.0, 1.5]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
-    biases.conv_block:
-      values: [True, False]
-    biases.conv_subj_sa:
-      values: [True, False]
-    biases.linear_reduc_time:
-      values: [True, False]
+    # biases.conv_block:
+    #   values: [True, False]
+    # biases.conv_subj_sa:
+    #   values: [True, False]
+    # biases.linear_reduc_time:
+    #   values: [True, False]
