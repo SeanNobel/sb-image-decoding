@@ -1,3 +1,5 @@
+src/
+
 assets/*
 !assets/reports.md
 !assets/overview.jpeg

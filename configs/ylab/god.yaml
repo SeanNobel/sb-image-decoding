@@ -36,9 +36,10 @@ F: 512 # CLIP embedding dimension
 reduce_time: True # For GOD dataset, time is already reduced.
 
 face:
-  encoded: True
-  model: ViT # Used if face.encoded=False
-  clip_model: ViT-B/32 # Used if face.encoded=True
+  pretrained: True
+  model: ViT # For face.pretrained=False
+  pretrained_model: ViT-B/32 # For face.pretrained=True
+  encoded: False # False is basically only for StyleGAN
 face_encoder:
   image_size: 256 # set this same as image_size above
   patch_size: 32

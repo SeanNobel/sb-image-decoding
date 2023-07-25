@@ -4,9 +4,11 @@
 
 ### TODOs
 
-- [ ] 他のconfigファイルの内容をimage.yamlに合わせる
+- [x] 他のconfigファイルの内容をimage.yamlに合わせる
 - [x] Preprocessingのfaceの出力を.npyから.h5にする
-- [ ] args.face.encoded=Trueでも元の画像を保存できるようにする
+- [x] args.face.encoded=Trueでも元の画像を保存できるようにする
+  - [ ] この過程でargs.face.pretrainedに変わったので，YLabGOD以外も対応させる
+  - [ ] train_clip.pyも今動かない状態
 - [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
   - Known subjectでのactivationとの類似度とかを取ってそれで重みづけするとか
 - [ ] 毎回のsweepで一つchance modelが走るようにする
@@ -42,6 +44,23 @@ python brain2face/train_clip.py config_path=ylab/god.yaml
 # Sweep
 nohup python brain2face/train_clip.py config_path=ylab/god.yaml sweep=True > logs/ylab/god/sweep_clip.log &
 ```
+
+#### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
+
+```bash
+python brain2face/eval_clip.py config_path=ylab/god.yaml
+# For distributed DALLE-2 training, set for_webdataset=True in the yaml
+```
+
+#### Run DALLE-2 prior training
+
+- Normal training
+
+```bash
+nohup python brain2face/train_diffusion_prior.py > logs/ylab/god/diffusion_prior.log &
+```
+
+<br>
 
 ## Yanagisawa Lab OpenFace
 

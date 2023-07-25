@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior, DiffusionPriorTrainer
 
-from brain2face.datasets import Brain2FaceCLIPEmbDataset
+from brain2face.datasets import NeuroDiffusionCLIPEmbDataset
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="diffusion_prior")
@@ -44,15 +44,16 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    dataset = Brain2FaceCLIPEmbDataset(args.dataset)
+    train_set = NeuroDiffusionCLIPEmbDataset(args.dataset)
+    test_set = NeuroDiffusionCLIPEmbDataset(args.dataset, train=False)
 
-    train_size = int(dataset.Y.shape[0] * args.train_ratio)
-    test_size = dataset.Y.shape[0] - train_size
-    train_set, test_set = torch.utils.data.random_split(
-        dataset,
-        lengths=[train_size, test_size],
-        generator=torch.Generator().manual_seed(args.seed),
-    )
+    # train_size = int(dataset.Y.shape[0] * args.train_ratio)
+    # test_size = dataset.Y.shape[0] - train_size
+    # train_set, test_set = torch.utils.data.random_split(
+    #     dataset,
+    #     lengths=[train_size, test_size],
+    #     generator=torch.Generator().manual_seed(args.seed),
+    # )
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
