@@ -99,3 +99,8 @@ sweep_config:
     #   values: [True, False]
     # biases.linear_reduc_time:
     #   values: [True, False]
+
+eval:
+  seq_onset: 0
+
+for_webdataset: False

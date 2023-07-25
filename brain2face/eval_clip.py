@@ -9,12 +9,14 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from brain2face.datasets import (
-    Brain2FaceUHDDataset,
-    Brain2FaceStyleGANDataset,
-    Brain2FaceYLabECoGDataset,
+    YLabGODCLIPDataset,
+    YLabE0030CLIPDataset,
+    UHDCLIPDataset,
+    StyleGANCLIPDataset,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT
+from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.eval_utils import (
     ImageSaver,
     EmbeddingSaver,
