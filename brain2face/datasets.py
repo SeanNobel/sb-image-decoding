@@ -42,8 +42,8 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         # NOTE: Selecting directories with preprocessed data.
         # session_paths = self._drop_bads(session_paths)
 
-        # DEBUG
-        session_paths = session_paths[:1]
+        if args.debug:
+            session_paths = session_paths[:1]
 
         if args.split in ["subject_random", "subject_each"]:
             # NOTE: subject_names must be 'S*_{name}' format in this case.
@@ -175,7 +175,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
     def _drop_bads(_subject_paths):
         subject_paths = []
         for path in _subject_paths:
-            if os.path.exists(path + "brain.npy") and os.path.exists(path + "face.npy"):
+            if os.path.exists(path + "brain.npy") and os.path.exists(path + "vision.npy"):
                 subject_paths.append(path)
         return subject_paths
 
@@ -270,7 +270,7 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
         Y = torch.from_numpy(np.stack(Y))
 
-        if not args.face.pretrained:
+        if not args.vision.pretrained:
             Y = Y.permute(0, 3, 1, 2).to(torch.float32) / 255.0
 
         X = np.load(
@@ -295,7 +295,7 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
                 segmented=args.segment_in_preproc,
                 segment_len=int(args.fps * args.seq_len),
                 reduce_time=args.reduce_time,
-                reduction=args.face.reduction,
+                reduction=args.vision.reduction,
             ),
         )
 
@@ -354,25 +354,18 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         session_paths = glob.glob(f"data/preprocessed/uhd/{args.preproc_name}/*/")
 
         if not args.reduce_time:
-            y_reformer = partial(self.transform_video, image_size=args.vivit.image_size)
+            y_reformer = partial(
+                self.transform_video, image_size=args.vision_encoder.image_size
+            )
 
         else:
-            if args.face.encoded:
-                device = f"cuda:{args.cuda_id}"
-                clip_model, preprocess = clip.load(args.face.clip_model, device=device)
+            y_reformer = partial(
+                self.to_single_frame,
+                reduction=args.vision.reduction,
+                vision_pretrained=args.vision.pretrained,
+            )
 
-                y_reformer = partial(
-                    self.to_single_frame,
-                    reduction=args.face.reduction,
-                    clip_model=clip_model,
-                    preprocess=preprocess,
-                    device=device,
-                )
-
-            else:
-                y_reformer = partial(self.to_single_frame, reduction=args.face.reduction)
-
-        loader = partial(self.uhd_loader, y_reformer=y_reformer)
+        loader = partial(self._loader, y_reformer=y_reformer)
 
         super().__init__(args, session_paths, train, loader)
 
@@ -380,7 +373,7 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         self.X = self.X[:, : args.num_channels]
 
     @staticmethod
-    def uhd_loader(
+    def _loader(
         subject_path: str, y_reformer: Callable
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         X = np.load(os.path.join(subject_path, "brain.npy"))
@@ -395,9 +388,7 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
     def to_single_frame(
         Y: np.ndarray,
         reduction: str = "extract",
-        clip_model: Optional[CLIP] = None,
-        preprocess: Optional[transforms.Compose] = None,
-        device: str = "cuda",
+        vision_pretrained: bool = False,
     ) -> torch.Tensor:
         """Extracts single frame from video sequence, then encodes to pre-trained CLIP space.
         NOTE: This function is called from sequential_load(), so there's no need to split Y into batch.
@@ -418,24 +409,26 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             raise ValueError("Reduction is either extract or mean.")
         # ( samples, face_extractor.output_size=256, face_extractor.output_size=256, 3)
 
-        if clip_model is not None:
-            assert preprocess is not None, "clip_model needs preprocess."
+        Y = torch.from_numpy(Y)
 
-            Y = sequential_apply(Y, preprocess, batch_size=1).to(device)
+        # if clip_model is not None:
+        #     assert preprocess is not None, "clip_model needs preprocess."
 
-            with torch.no_grad():
-                # NOTE: CLIP model somehow returns fp16 (https://colab.research.google.com/github/openai/clip/blob/master/notebooks/Interacting_with_CLIP.ipynb#scrollTo=cuxm2Gt4Wvzt)
-                Y = clip_model.encode_image(Y).cpu().float()
+        #     Y = sequential_apply(Y, preprocess, batch_size=1).to(device)
 
-        else:
-            Y = torch.from_numpy(Y).permute(0, 3, 1, 2)
-            Y = Y.to(torch.float32) / 255.0
+        #     with torch.no_grad():
+        #         # NOTE: CLIP model somehow returns fp16 (https://colab.research.google.com/github/openai/clip/blob/master/notebooks/Interacting_with_CLIP.ipynb#scrollTo=cuxm2Gt4Wvzt)
+        #         Y = clip_model.encode_image(Y).cpu().float()
+
+        # else:
+        if not vision_pretrained:
+            Y = Y.permute(0, 3, 1, 2).to(torch.float32) / 255.0
 
         return Y
 
     @staticmethod
     def transform_video(
-        Y: np.ndarray, image_size: int, to_grayscale: bool = True
+        Y: np.ndarray, image_size: int, to_grayscale: bool = False
     ) -> torch.Tensor:
         """
         - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
@@ -544,6 +537,37 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
 
     @staticmethod
     def _load_images(dir: str) -> torch.Tensor:
+        images = []
+        for path in tqdm(natsorted(glob.glob(dir + "/*.jpg")), desc="Loading images"):
+            image = cv2.imread(path).astype(np.float32) / 255.0
+            image = torch.from_numpy(image).permute(2, 0, 1)
+            images.append(image)
+
+        return torch.stack(images)
+
+
+class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset: str, train: bool = True) -> None:
+        super().__init__()
+
+        self.Y = torch.load(
+            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/video_embds.pt"
+        )
+        self.Y_video = self._load_images(
+            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/video"
+        )
+
+        assert len(self.Y) == len(self.Y_video)
+
+    def __len__(self):
+        return len(self.Y)
+
+    def __getitem__(self, i):
+        return self.Y[i], self.Y_img[i]
+
+    @staticmethod
+    def _load_videos(dir: str) -> torch.Tensor:
+        # TODO: implement
         images = []
         for path in tqdm(natsorted(glob.glob(dir + "/*.jpg")), desc="Loading images"):
             image = cv2.imread(path).astype(np.float32) / 255.0

@@ -41,12 +41,11 @@ class Models:
         prev_params: Dict[str, torch.Tensor],
     ) -> list:
         return [
-            key for key in new_params.keys() if torch.equal(
-                prev_params[key],
-                new_params[key]
-            )
+            key
+            for key in new_params.keys()
+            if torch.equal(prev_params[key], new_params[key])
         ]
-        
+
     def params_updated(self) -> bool:
         updated = True
 
@@ -56,7 +55,8 @@ class Models:
         )
         if len(non_updated_layers) > 0:
             cprint(
-                f"Following layers in brain encoder are not updated: {non_updated_layers}", "red"
+                f"Following layers in brain encoder are not updated: {non_updated_layers}",
+                "red",
             )
             updated = False
         self.brain_encoder_params = new_params
@@ -68,7 +68,8 @@ class Models:
             )
             if len(non_updated_layers) > 0:
                 cprint(
-                    f"Following layers in face encoder are not updated: {non_updated_layers}", "red"
+                    f"Following layers in face encoder are not updated: {non_updated_layers}",
+                    "red",
                 )
                 updated = False
             self.face_encoder_params = new_params
@@ -102,7 +103,7 @@ class Models:
 
 def sequential_apply(
     X: Union[torch.Tensor, np.ndarray],
-    # nn.Module is a hint for general DNNs. Callable is a hint for CLIP encoder
+    # NOTE: nn.Module is a hint for general DNNs. Callable is a hint for CLIP encoder
     model: Union[transforms.Compose, nn.Module, Callable],
     batch_size: int,
     device: Optional[str] = None,
@@ -119,9 +120,7 @@ def sequential_apply(
     """
     # NOTE: This is for torchvision transforms, which doesn't accept a batch of samples.
     # A bit of messy implementation.
-    if batch_size == 1:
-        assert isinstance(model, transforms.Compose) and isinstance(X, np.ndarray)
-
+    if isinstance(model, transforms.Compose) and isinstance(X, np.ndarray):
         # NOTE: np.split needs number of subarrays, while torch.split needs the size of chunks.
         return torch.cat(
             [
@@ -134,6 +133,15 @@ def sequential_apply(
 
     if device is None:
         device = orig_device
+
+    # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
+    if batch_size == X.shape[0]:
+        assert isinstance(X, torch.Tensor) and isinstance(model, nn.Module)
+
+        if subject_idxs is None:
+            return model(X.to(device)).to(X.orig_device)
+        else:
+            return model(X.to(device), subject_idxs.to(device)).to(X.orig_device)
 
     if subject_idxs is None:
         return torch.cat(
