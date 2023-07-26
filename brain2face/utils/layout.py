@@ -3,6 +3,7 @@ import mne
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from glob import glob
 from natsort import natsorted
 from typing import Union, List
@@ -13,25 +14,28 @@ from brain2face.utils.gTecUtils.gTecUtils import loadMontage
 class DynamicChanLoc2d:
     def __init__(self, args, subject_names: List[str]) -> None:
         if args.dataset == "YLabGOD":
-            locations = [load_god_montage(subject, args.freesurfer_dir) for subject in subject_names]
-            
-            # FIXME: need to align across subjects
-            self.locations = [PCA(n_components=2).fit_transform(loc) for loc in locations]
+            locations = [
+                load_god_montage(subject, args.freesurfer_dir) for subject in subject_names
+            ]
             
             if args.loc_random:
-                self.locations = [np.random.rand(*loc.shape) for loc in self.locations]
+                self.locations = [np.random.rand(*loc.shape) for loc in locations]
+            
+            else:
+                num_channels = [loc.shape[0] for loc in locations]
+                
+                locations = np.concatenate(locations)
+                locations = TSNE(n_components=2).fit_transform(locations)
+                
+                locations = min_max_norm(locations)
+                
+                self.locations = np.split(locations, np.cumsum(num_channels)[:-1])
             
         else:
             raise NotImplementedError
         
     def get_loc(self, subject_idx: int) -> torch.Tensor:        
         loc = self.locations[subject_idx]
-        
-        # min-max normalization
-        loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
-
-        # NOTE: "In practice, as a_j is periodic, we scale down (x,y) to keep a margin of 0.1 on each side."
-        loc = loc * 0.8 + 0.1
 
         return torch.from_numpy(loc.astype(np.float32))
 
@@ -77,13 +81,21 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
     else:
         raise ValueError()
 
-    # min-max normalization
-    loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
-
-    # NOTE: "In practice, as a_j is periodic, we scale down (x,y) to keep a margin of 0.1 on each side."
-    loc = loc * 0.8 + 0.1
+    loc = min_max_norm(loc)
 
     return torch.from_numpy(loc.astype(np.float32))
+
+
+def min_max_norm(loc: np.ndarray) -> np.ndarray:
+    """Min-max normalization with margin of 0.1 on each side.
+    Args:
+        loc: ( num_channels, 2 )
+    """
+    loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
+    # NOTE: "In practice, as a_j is periodic, we scale down (x,y) to keep a margin of 0.1 on each side."
+    loc = loc * 0.8 + 0.1
+    
+    return loc
 
 
 def load_god_montage(subject: str, freesurfer_dir: str) -> np.ndarray:

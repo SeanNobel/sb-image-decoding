@@ -4,26 +4,29 @@ import torch
 import cv2
 from PIL import Image
 from omegaconf import DictConfig, OmegaConf
+from termcolor import cprint
 
 from brain2face.utils.constants import EMB_CHUNK_SIZE
 
 
 class ImageSaver:
-    def __init__(self, save_dir: str, for_webdataset: bool) -> None:
+    def __init__(self, save_dir: str, for_webdataset: bool, to_tensored: bool) -> None:
         self.sample_idx = 0
         self.chunk_idx = 0
 
         if for_webdataset:
-            self.save_dir_prefix = os.path.join(save_dir, "for_webdataset", "face_images")
+            self.save_dir_prefix = os.path.join(save_dir, "for_webdataset", "images")
             self.save_dir = self._update_save_dir(self.chunk_idx)
 
             self.save = self._save_for_webdataset
 
         else:
-            self.save_dir = os.path.join(save_dir, "face_images")
+            self.save_dir = os.path.join(save_dir, "images")
             os.makedirs(self.save_dir, exist_ok=True)
 
             self.save = self._save
+
+        self.to_tensored = to_tensored
 
     def _save(self, Y: torch.Tensor) -> None:
         for y in Y:
@@ -59,10 +62,13 @@ class ImageSaver:
 
                 self.save_dir = self._update_save_dir(self.chunk_idx)
 
-    @staticmethod
-    def _save_image(y: torch.Tensor, save_path: str) -> None:
-        image = y.permute(1, 2, 0).cpu().numpy()
-        image = (image * 255).astype(np.uint8)
+    def _save_image(self, y: torch.Tensor, save_path: str) -> None:
+        image = y.numpy()
+
+        if self.to_tensored:
+            image = (image * 255).astype(np.uint8).transpose(1, 2, 0)
+        else:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         cv2.imwrite(save_path, image)
 
@@ -84,16 +90,16 @@ class EmbeddingSaver:
             os.makedirs(self.save_dir, exist_ok=True)
             self.save = self._save
 
-    def _save(self, brain: torch.Tensor, face: torch.Tensor) -> None:
+    def _save(self, brain: torch.Tensor, image: torch.Tensor) -> None:
         """
         Args:
             brain: ( samples, emb_dim=512 )
-            face: ( samples, emb_dim=512 )
+            image: ( samples, emb_dim=512 )
         """
-        assert brain.shape == face.shape
+        assert brain.shape == image.shape
 
         torch.save(brain, os.path.join(self.save_dir, "brain_embds.pt"))
-        torch.save(face, os.path.join(self.save_dir, "face_embds.pt"))
+        torch.save(image, os.path.join(self.save_dir, "image_embds.pt"))
 
     def _save_for_webdataset(self, brain: torch.Tensor, face: torch.Tensor) -> None:
         """
@@ -105,7 +111,7 @@ class EmbeddingSaver:
         brain_save_dir = os.path.join(self.save_dir, "brain")
         os.makedirs(brain_save_dir, exist_ok=True)
 
-        face_save_dir = os.path.join(self.save_dir, "face")
+        face_save_dir = os.path.join(self.save_dir, "image")
         os.makedirs(face_save_dir, exist_ok=True)
 
         brain = torch.split(brain, EMB_CHUNK_SIZE)
@@ -117,7 +123,7 @@ class EmbeddingSaver:
                 b.numpy(),
             )
             np.save(
-                os.path.join(face_save_dir, f"face_embds_{str(i).zfill(4)}.npy"),
+                os.path.join(face_save_dir, f"image_embds_{str(i).zfill(4)}.npy"),
                 f.numpy(),
             )
 
