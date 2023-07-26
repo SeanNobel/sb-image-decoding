@@ -1,6 +1,5 @@
 # ==== Preprocessing ==== #
 preproc_name: init
-debug: False
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
@@ -23,10 +22,10 @@ face_extractor:
 
 # ---- Brain ---- #
 num_channels: 128
-brain_orig_sfreq: 250 # Hz
-brain_resample_sfreq: 120 # Hz
 brain_filter_low: 1.0 # Hz
 brain_filter_high: 60 # Hz
+brain_orig_sfreq: 250 # Hz
+brain_resample_sfreq: 120 # Hz
 clamp_lim: 20 # values after robust scaling
 baseline_ratio: 0.2 # ratio compared to segment length
 # shift_brain: False
@@ -36,22 +35,28 @@ eeg_load_bufsize: 1000 # samples
 
 
 # ==== Training ==== #
-project_name: brain2face_uhd
-train_name: test # Will be updated when it's a sweep
+project_name: neuro-diffusion_uhd_clip
+train_name: image # Will be updated when it's a sweep
+debug: False
 
 dataset: UHD # UHD / YLabECoG / StyleGAN
 
 montage_path: brain2face/utils/montages/electrodes_uhd.xml
+layout: ch_locations_2d
 
 F: 512 # CLIP embedding dimension
 
-face:
+reduce_time: True # Reduce video to image
+
+vision:
   type: static # static (image) or dynamic (video)
   reduction: extract # extract or mean. Only for reduce_time: True
-  encoded: False # Whether to use pretrained CLIP model
-  clip_model: ViT-B/32 # Used if pretrained is False
-
-vit:
+  pretrained: False # Whether to embed images using pretrained CLIP model
+  model: ViT
+  pretrained_model: ViT-B/32 # Used if pretrained is False
+  encoded: False # False is basically only for StyleGAN
+  
+vision_encoder:
   image_size: 256
   patch_size: 32
   dim: ${F}
@@ -67,7 +72,8 @@ D2: 320
 K: 32
 d_drop: 0.1 # Channel distance for spatial dropout
 # NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
-final_ksize_stride: 2
+final_ksize: 2
+final_stride: 2
 head_activation: False
 
 split: shallow # shallow / deep / subject_random / subject_each
@@ -80,6 +86,8 @@ lr_step_gamma: 0.5
 epochs: 500
 reduction: mean
 init_temperature: 5.0
+
+accum_grad: False
 
 chance: False
 
@@ -100,19 +108,19 @@ sweep_config:
       values: [deep, shallow]
     d_drop:
       values: [0.1, 0.3, 0.5]
-    face.encoded:
+    vision.encoded:
       values: [True, False]
     head_activation:
       values: [True, False]
     final_ksize_stride:
       values: [1, 2]
-    face.reduction:
+    vision.reduction:
       values: [extract, mean]
 
 eval:
   split: shallow
   d_drop: 0.1
-  face:
+  vision:
     reduction: extract
     encoded: False
   head_activation: False
