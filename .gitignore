@@ -1,3 +1,5 @@
+src/
+
 assets/*
 !assets/neuro-diffusion.jpeg
 

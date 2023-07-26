@@ -36,9 +36,10 @@ F: 512 # CLIP embedding dimension
 reduce_time: True # For GOD dataset, time is already reduced.
 
 face:
-  encoded: True
-  model: ViT # Used if face.encoded=False
-  clip_model: ViT-B/32 # Used if face.encoded=True
+  pretrained: True
+  model: ViT # For face.pretrained=False
+  pretrained_model: ViT-B/32 # For face.pretrained=True
+  encoded: False # False is basically only for StyleGAN
 face_encoder:
   image_size: 256 # set this same as image_size above
   patch_size: 32
@@ -80,22 +81,27 @@ test_with_whole: True
 
 seed: 1234
 
-cuda_id: 1
+cuda_id: 2
 
-sweep_count: 8
+sweep_count: 4
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    # seq_onset:
-    #   values: [0.0, 0.5, 1.0, 1.5]
+    seq_onset:
+      values: [0.0, 0.5, 1.0, 1.5]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
-    biases.conv_block:
-      values: [True, False]
-    biases.conv_subj_sa:
-      values: [True, False]
-    biases.linear_reduc_time:
-      values: [True, False]
+    # biases.conv_block:
+    #   values: [True, False]
+    # biases.conv_subj_sa:
+    #   values: [True, False]
+    # biases.linear_reduc_time:
+    #   values: [True, False]
+
+eval:
+  seq_onset: 0
+
+for_webdataset: False
