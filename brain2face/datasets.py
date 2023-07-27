@@ -1,5 +1,6 @@
 import os, sys
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
@@ -59,27 +60,16 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         X_list = []
         Y_list = []
         subject_idx_list = []
+        self.Y_ref = []  # NOTE: for video data that occupies a large amount of memory
         for subject_idx, subject_path in enumerate(session_paths):
-            # X = np.load(os.path.join(subject_path, "brain.npy"))
-            # X = x_reformer(X)
-
-            # if not args.segment_in_preproc:
-            #     X = segment_then_blcorr(
-            #         args, X, segment_len=int(args.brain_resample_sfreq * args.seq_len)
-            #     )
-
-            # X = torch.from_numpy(X.astype(np.float32))
-
-            # try:
-            #     Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
-            #     Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
-            # except FileNotFoundError:
-            #     Y = np.load(os.path.join(subject_path, "face.npy"))
-            #     Y = y_reformer(Y)
-
             X, Y = loader(subject_path=subject_path)
 
+            if isinstance(Y, h5py._hl.dataset.Dataset):
+                self.Y_ref.append(Y)
+                Y = torch.arange(len(Y), dtype=torch.int64)
+
             if not args.segment_in_preproc:
+                assert not isinstance(Y, h5py._hl.dataset.Dataset), "Y must be segmented in preproc when it's video."  # fmt: skip
                 X, Y = crop_longer(X, Y)
 
             assert X.shape[0] == Y.shape[0]
@@ -354,18 +344,20 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         session_paths = glob.glob(f"data/preprocessed/uhd/{args.preproc_name}/*/")
 
         if not args.reduce_time:
-            y_reformer = partial(
-                self.transform_video, image_size=args.vision_encoder.image_size
-            )
+            # y_reformer = partial(
+            #     self.transform_video, image_size=args.vision_encoder.image_size
+            # )
+            loader = partial(self._loader, y_reformer=None)
 
         else:
-            y_reformer = partial(
-                self.to_single_frame,
-                reduction=args.vision.reduction,
-                vision_pretrained=args.vision.pretrained,
+            loader = partial(
+                self._loader,
+                y_reformer=partial(
+                    self.to_single_frame,
+                    reduction=args.vision.reduction,
+                    vision_pretrained=args.vision.pretrained,
+                ),
             )
-
-        loader = partial(self._loader, y_reformer=y_reformer)
 
         super().__init__(args, session_paths, train, loader)
 
@@ -374,13 +366,15 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
     @staticmethod
     def _loader(
-        subject_path: str, y_reformer: Callable
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        subject_path: str, y_reformer: Optional[Callable]
+    ) -> Tuple[torch.Tensor, Union[torch.Tensor, h5py._hl.dataset.Dataset]]:
         X = np.load(os.path.join(subject_path, "brain.npy"))
         X = torch.from_numpy(X.astype(np.float32))
 
         Y = h5py.File(os.path.join(subject_path, "face.h5"), "r")["data"]
-        Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
+
+        if y_reformer is not None:
+            Y = sequential_load(data=Y, bufsize=256, preproc_func=y_reformer)
 
         return X, Y
 
@@ -426,19 +420,42 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
         return Y
 
+
+class CollateFunctionForVideoHDF5(nn.Module):
+    def __init__(self, Y_ref: List[h5py._hl.dataset.Dataset], frame_size: int) -> None:
+        super().__init__()
+        self.Y_ref = Y_ref
+        self.frame_size = frame_size
+
+    def forward(self, batch: List[torch.Tensor]) -> torch.Tensor:
+        """
+        Args:
+            batch: ( samples, segment_len=90, features=17 ) or ( samples, features=17, segment_len=90 )
+        Returns:
+            batch: ( samples, features=17, segment_len=90 )
+        """
+        X = torch.stack([item[0] for item in batch])
+        # NOTE: item[2] is subject_idx and item[1] is sample_idx
+        Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
+        subject_idxs = torch.stack([item[2] for item in batch])
+
+        Y = self._video_transforms(Y, self.frame_size)
+
+        return X, Y, subject_idxs
+
     @staticmethod
-    def transform_video(
-        Y: np.ndarray, image_size: int, to_grayscale: bool = False
+    def _video_transforms(
+        Y: np.ndarray, frame_size: int, to_grayscale: bool = False
     ) -> torch.Tensor:
         """
         - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
-        - Reduces the video frames to single channel it specified
+        - Reduces the video to grayscale if specified
         - Scale [0 - 255] -> [0. - 1.]
         Args:
-            Y: ( samples, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
+            Y: ( batch_size, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
             image_size: args.vivit.image_size
         Returns:
-            Y: ( samples, segment_len=90, 1, vivit.image_size, vivit.image_size )
+            Y: ( batch_size, segment_len=90, 3, vision_encoder.image_size, vision_encoder.image_size )
         """
         segment_len = Y.shape[1]
 
@@ -446,7 +463,9 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         # ( samples*segment_len, 3, size, size )
 
         video_transforms = [
-            transforms.Resize(image_size, interpolation=InterpolationMode.BICUBIC),
+            transforms.Resize(
+                frame_size, interpolation=InterpolationMode.BICUBIC, antialias=True
+            ),
         ]
         if to_grayscale:
             video_transforms += [transforms.Grayscale()]
@@ -454,7 +473,8 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         video_transforms = transforms.Compose(video_transforms)
 
         # NOTE: Avoid CPU out of memory
-        Y = sequential_apply(Y, video_transforms, batch_size=256)
+        # Y = sequential_apply(Y, video_transforms, batch_size=256)
+        Y = video_transforms(Y)
 
         Y = Y.contiguous().view(-1, segment_len, *Y.shape[-3:])
 

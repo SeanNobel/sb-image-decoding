@@ -17,6 +17,7 @@ from brain2face.datasets import (
     YLabE0030CLIPDataset,
     UHDCLIPDataset,
     StyleGANCLIPDataset,
+    CollateFunctionForVideoHDF5,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
@@ -42,7 +43,7 @@ def train():
     else:
         run_name = args.train_name
 
-    run_dir = os.path.join("runs", args.dataset.lower(), run_name)
+    run_dir = os.path.join("runs", args.dataset.lower(), args.train_name, run_name)
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -73,7 +74,20 @@ def train():
 
     cprint(f"Test size: {test_size}", "cyan")
 
-    loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
+    if len(train_set.Y_ref) > 0:
+        assert len(train_set.Y_ref) == len(test_set.Y_ref)
+        collate_fn = CollateFunctionForVideoHDF5(
+            train_set.Y_ref, args.vision_encoder.image_size
+        )
+    else:
+        collate_fn = None
+
+    loader_args = {
+        "collate_fn": collate_fn,
+        "drop_last": True,
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+    }
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
@@ -153,7 +167,7 @@ def train():
         if args.accum_grad:
             optimizer.zero_grad()
 
-        for X, Y, subject_idxs in tqdm(train_loader):
+        for X, Y, subject_idxs in tqdm(train_loader, desc="Train"):
             if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
@@ -188,7 +202,7 @@ def train():
         _ = models.params_updated()
 
         models.eval()
-        for X, Y, subject_idxs in test_loader:
+        for X, Y, subject_idxs in tqdm(test_loader, desc="Test"):
             if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
@@ -200,15 +214,24 @@ def train():
                 # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
 
                 Z = sequential_apply(
-                    X, brain_encoder, args.batch_size, subject_idxs=subject_idxs
+                    X,
+                    brain_encoder,
+                    args.batch_size,
+                    subject_idxs=subject_idxs,
+                    desc="BrainEncoder",
                 )
 
                 if args.vision.pretrained:
                     Y = sequential_apply(
-                        Y, vision_encoder.encode_image, args.batch_size
+                        Y,
+                        vision_encoder.encode_image,
+                        args.batch_size,
+                        desc="VisionEncoder (pretrained)",
                     ).float()
                 else:
-                    Y = sequential_apply(Y, vision_encoder, args.batch_size)
+                    Y = sequential_apply(
+                        Y, vision_encoder, args.batch_size, desc="VisionEncoder"
+                    )
 
                 inference_times.append(time() - stime)
 
