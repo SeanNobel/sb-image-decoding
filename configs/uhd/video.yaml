@@ -35,7 +35,7 @@ eeg_load_bufsize: 1000 # samples
 
 
 # ==== Training ==== #
-project_name: neuro-diffusion_uhd_clip
+project_name: nd_uhd_clip
 train_name: video
 debug: False
 
@@ -86,8 +86,23 @@ accum_grad: False
 
 chance: False
 
-test_with_whole: True
+test_with_whole: False # It is not possible to test with whole for video (CPU memory)
+
+num_workers: 8
 
 seed: 1234
 
 cuda_id: 0
+
+sweep_count: 3
+sweep_config:
+  method: grid
+  metric:
+    name: test_top10_acc
+    goal: maximize
+  parameters:
+    d_drop:
+      values: [0.3, 0.2, 0.4]
+
+eval:
+  d_drop: 0.3

@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 from PIL import Image
+from tqdm import tqdm
 from typing import Union, Optional, Callable, Dict
 from termcolor import cprint
 
@@ -108,6 +109,7 @@ def sequential_apply(
     batch_size: int,
     device: Optional[str] = None,
     subject_idxs: Optional[torch.Tensor] = None,
+    desc: str = "",
 ) -> torch.Tensor:
     """Avoid CPU / CUDA out of memory.
     Args:
@@ -125,7 +127,7 @@ def sequential_apply(
         return torch.cat(
             [
                 model(Image.fromarray(_X.squeeze())).unsqueeze(0)
-                for _X in np.split(X, X.shape[0])
+                for _X in tqdm(np.split(X, X.shape[0]), desc="Transforms")
             ]
         )
 
@@ -139,21 +141,27 @@ def sequential_apply(
         assert isinstance(X, torch.Tensor) and isinstance(model, nn.Module)
 
         if subject_idxs is None:
-            return model(X.to(device)).to(X.orig_device)
+            return model(X.to(device)).to(orig_device)
         else:
-            return model(X.to(device), subject_idxs.to(device)).to(X.orig_device)
+            return model(X.to(device), subject_idxs.to(device)).to(orig_device)
 
     if subject_idxs is None:
         return torch.cat(
-            [model(_X.to(device)).to(orig_device) for _X in torch.split(X, batch_size)]
+            [
+                model(_X.to(device)).to(orig_device)
+                for _X in tqdm(torch.split(X, batch_size), desc=desc)
+            ]
         )
     else:
         return torch.cat(
             [
                 model(_X.to(device), _subject_idxs.to(device)).to(orig_device)
-                for _X, _subject_idxs in zip(
-                    torch.split(X, batch_size),
-                    torch.split(subject_idxs, batch_size),
+                for _X, _subject_idxs in tqdm(
+                    zip(
+                        torch.split(X, batch_size),
+                        torch.split(subject_idxs, batch_size),
+                    ),
+                    desc=desc,
                 )
             ]
         )
