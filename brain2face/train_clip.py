@@ -94,7 +94,7 @@ def train():
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
         batch_size=test_size if args.test_with_whole else args.batch_size,
-        shuffle=True,
+        shuffle=False,
         **loader_args,
     )
 
