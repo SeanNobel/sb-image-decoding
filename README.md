@@ -26,6 +26,8 @@
   - [x] AU_rだけを使う
 - UHD
   - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
+- Decoder training
+  - [ ] `NeuroDiffusionCLIPEmbVideoDataset`のメモリー問題を解決
 
 <br>
 
