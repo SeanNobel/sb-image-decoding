@@ -2,6 +2,7 @@ import os, sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 import numpy as np
@@ -541,7 +542,7 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
         super().__init__()
 
         self.Y = torch.load(
-            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/image_embds.pt"
+            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/vision_embds.pt"
         )
         self.Y_img = self._load_images(
             f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/images"
@@ -571,10 +572,13 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         super().__init__()
 
         self.Y = torch.load(
-            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/video_embds.pt"
+            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/vision_embds.pt"
         )
-        self.Y_video = self._load_images(
-            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/video"
+        # FIXME
+        self.Y = self.Y[:32]
+
+        self.Y_video = self._load_videos(
+            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"
         )
 
         assert len(self.Y) == len(self.Y_video)
@@ -583,18 +587,25 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         return len(self.Y)
 
     def __getitem__(self, i):
-        return self.Y[i], self.Y_img[i]
+        return self.Y[i], self.Y_video[i]
 
     @staticmethod
     def _load_videos(dir: str) -> torch.Tensor:
-        # TODO: implement
-        images = []
-        for path in tqdm(natsorted(glob.glob(dir + "/*.jpg")), desc="Loading images"):
-            image = cv2.imread(path).astype(np.float32) / 255.0
-            image = torch.from_numpy(image).permute(2, 0, 1)
-            images.append(image)
-
-        return torch.stack(images)
+        """_summary_
+        Args:
+            dir (str): _description_
+        Returns:
+            torch.Tensor: ( samples, segment_len=90, 3, image_size, image_size )
+        """
+        # FIXME
+        return torch.stack(
+            [
+                torchvision.io.read_video(path)[0].to(torch.float32) / 255.0
+                for path in tqdm(
+                    natsorted(glob.glob(dir + "/*.mp4"))[:32], desc="Loading videos"
+                )
+            ]
+        ).permute(0, 1, 4, 2, 3)
 
 
 class UHDPipelineDataset(UHDCLIPDataset):
