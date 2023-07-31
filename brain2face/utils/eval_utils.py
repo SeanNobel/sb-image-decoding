@@ -119,40 +119,41 @@ class EmbeddingSaver:
             os.makedirs(self.save_dir, exist_ok=True)
             self.save = self._save
 
-    def _save(self, brain: torch.Tensor, image: torch.Tensor) -> None:
+    def _save(self, brain: torch.Tensor, vision: torch.Tensor) -> None:
         """
         Args:
             brain: ( samples, emb_dim=512 )
             image: ( samples, emb_dim=512 )
         """
-        assert brain.shape == image.shape
+        assert brain.shape == vision.shape
 
         torch.save(brain, os.path.join(self.save_dir, "brain_embds.pt"))
-        torch.save(image, os.path.join(self.save_dir, "image_embds.pt"))
+        torch.save(vision, os.path.join(self.save_dir, "vision_embds.pt"))
 
-    def _save_for_webdataset(self, brain: torch.Tensor, face: torch.Tensor) -> None:
+    def _save_for_webdataset(self, brain: torch.Tensor, vision: torch.Tensor) -> None:
         """
         Args:
             brain: ( samples~=13000, emb_dim=512 )
-            face: ( samples~=13000, emb_dim=512 )
+            image: ( samples~=13000, emb_dim=512 )
         """
-        assert brain.shape == face.shape
+        assert brain.shape == vision.shape
+
         brain_save_dir = os.path.join(self.save_dir, "brain")
         os.makedirs(brain_save_dir, exist_ok=True)
 
-        face_save_dir = os.path.join(self.save_dir, "image")
-        os.makedirs(face_save_dir, exist_ok=True)
+        vision_save_dir = os.path.join(self.save_dir, "vision")
+        os.makedirs(vision_save_dir, exist_ok=True)
 
         brain = torch.split(brain, EMB_CHUNK_SIZE)
-        face = torch.split(face, EMB_CHUNK_SIZE)
+        vision = torch.split(vision, EMB_CHUNK_SIZE)
 
-        for i, (b, f) in enumerate(zip(brain, face)):
+        for i, (b, f) in enumerate(zip(brain, vision)):
             np.save(
                 os.path.join(brain_save_dir, f"brain_embds_{str(i).zfill(4)}.npy"),
                 b.numpy(),
             )
             np.save(
-                os.path.join(face_save_dir, f"image_embds_{str(i).zfill(4)}.npy"),
+                os.path.join(vision_save_dir, f"vision_embds_{str(i).zfill(4)}.npy"),
                 f.numpy(),
             )
 
