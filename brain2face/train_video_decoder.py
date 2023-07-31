@@ -10,9 +10,10 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from dalle2_pytorch import Unet, Decoder, DecoderTrainer
+from dalle2_video.dalle2_video import UnetTemporalConv, VideoDecoder
+from dalle2_video.trainer import VideoDecoderTrainer
 
-from brain2face.datasets import NeuroDiffusionCLIPEmbImageDataset
+from brain2face.datasets import NeuroDiffusionCLIPEmbVideoDataset
 
 
 def train() -> None:
@@ -40,8 +41,8 @@ def train() -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    train_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset)
-    test_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset, train=False)
+    train_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset)
+    test_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset, train=False)
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
@@ -54,34 +55,33 @@ def train() -> None:
     # ---------------------
     #        Models
     # ---------------------
-    unet1 = Unet(
+    unet1 = UnetTemporalConv(
         dim=args.unet1.dim,
         image_embed_dim=args.image_embed_dim,
-        # text_embed_dim=args.text_embed_dim,
         channels=args.channels,
         dim_mults=tuple(args.unet1.dim_mults),
         cond_on_text_encodings=False,
     ).to(device)
 
-    unet2 = Unet(
+    unet2 = UnetTemporalConv(
         dim=args.unet2.dim,
         image_embed_dim=args.image_embed_dim,
-        # text_embed_dim=args.text_embed_dim,
         channels=args.channels,
         dim_mults=tuple(args.unet2.dim_mults),
         cond_on_text_encodings=False,
     ).to(device)
 
-    decoder = Decoder(
+    decoder = VideoDecoder(
         unet=(unet1, unet2),
-        image_sizes=tuple(args.image_sizes),
+        frame_sizes=tuple(args.frame_sizes),
+        frame_numbers=tuple(args.frame_numbers),
         timesteps=args.timesteps,
     ).to(device)
 
     # ---------------------
     #        Trainer
     # ---------------------
-    decoder_trainer = DecoderTrainer(
+    decoder_trainer = VideoDecoderTrainer(
         decoder,
         lr=args.lr,
         wd=args.wd,
@@ -123,11 +123,11 @@ def train() -> None:
         for Y_embed, Y in tqdm(train_loader):
             Y_embed, Y = Y_embed.to(device), Y.to(device)
 
-            loss_unet1 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=1)
+            loss_unet1 = decoder_trainer(video_embed=Y_embed, video=Y, unet_number=1)
             # , max_batch_size=4)
             decoder_trainer.update(1)
 
-            loss_unet2 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=2)
+            loss_unet2 = decoder_trainer(video_embed=Y_embed, video=Y, unet_number=2)
             # , max_batch_size=4)
             decoder_trainer.update(2)
 
@@ -145,10 +145,10 @@ def train() -> None:
             Y_embed, Y = Y_embed.to(device), Y.to(device)
 
             # with torch.no_grad():
-            loss_unet1 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=1)
+            loss_unet1 = decoder_trainer(video_embed=Y_embed, video=Y, unet_number=1)
             # , max_batch_size=4)
 
-            loss_unet2 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=2)
+            loss_unet2 = decoder_trainer(video_embed=Y_embed, image=Y, unet_number=2)
 
             test_losses_unet1.append(loss_unet1)
             test_losses_unet2.append(loss_unet2)
