@@ -9,6 +9,7 @@ pandas
 lxml
 cmake
 # dlib
+av
 mediapipe
 opencv-python
 wandb
