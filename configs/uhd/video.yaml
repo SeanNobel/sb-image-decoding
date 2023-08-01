@@ -1,9 +1,10 @@
 # ==== Preprocessing ==== #
 preproc_name: init
-debug: False
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
+
+segment_in_preproc: True
 
 start_subj: 0
 end_subj: 22
@@ -21,10 +22,10 @@ face_extractor:
 
 # ---- Brain ---- #
 num_channels: 128
-brain_orig_sfreq: 250 # Hz
-brain_resample_sfreq: 120 # Hz
 brain_filter_low: 1.0 # Hz
 brain_filter_high: 60 # Hz
+brain_orig_sfreq: 250 # Hz
+brain_resample_sfreq: 120 # Hz
 clamp_lim: 20 # values after robust scaling
 baseline_ratio: 0.2 # ratio compared to segment length
 # shift_brain: False
@@ -34,27 +35,32 @@ eeg_load_bufsize: 1000 # samples
 
 
 # ==== Training ==== #
-project_name: brain2face_uhd
-train_name: deep-split
+project_name: nd_uhd_clip
+train_name: video
+debug: False
 
-dataset: Brain2FaceUHDDataset
+dataset: UHD
 
 montage_path: brain2face/utils/montages/electrodes_uhd.xml
+layout: ch_locations_2d
 
 F: 512 # CLIP embedding dimension
 
-face:
+reduce_time: False # Keep as video
+
+vision:
   type: dynamic # static (image) or dynamic (video)
-  encoded: False
+  pretrained: False # There is no pretrained CLIP model for video
   model: ViViT
-face_encoder:
-  image_size: 64
-  patch_size: 16
+
+vision_encoder:
+  image_size: 128
+  patch_size: 32
   fps: ${fps}
   seq_len: ${seq_len}
   dim: ${F}
   depth: 2
-  in_channels: 1
+  in_channels: 3
 
 # Brain encoder
 D1: 270
@@ -62,24 +68,41 @@ D2: 320
 K: 32
 d_drop: 0.3 # Channel distance for spatial dropout
 # NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
-final_kernel_size: 2
+final_ksize: 2
 final_stride: 2
 
 split: deep # shallow / deep / subject_random / subject_each
-# subject_random: picks 20% sessions for test, without considering subjects' identity
-# subject_each: each subject has one or two test sessions (currently not working)
-
 train_ratio: 0.8
-chance: False
 batch_size: 64
-lr: 0.005
-lr_scheduler: cosine # cosine or multistep
+lr: 0.001
+lr_scheduler: multistep # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
 epochs: 500
 reduction: mean
 init_temperature: 5.0
 
+accum_grad: False
+
+chance: False
+
+test_with_whole: False # It is not possible to test with whole for video (CPU memory)
+
+num_workers: 8
+
 seed: 1234
 
 cuda_id: 0
+
+sweep_count: 3
+sweep_config:
+  method: grid
+  metric:
+    name: test_top10_acc
+    goal: maximize
+  parameters:
+    d_drop:
+      values: [0.3, 0.2, 0.4]
+
+eval:
+  d_drop: 0.3

@@ -10,11 +10,14 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
+import clip
+
 from brain2face.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
     UHDCLIPDataset,
     StyleGANCLIPDataset,
+    CollateFunctionForVideoHDF5,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
@@ -40,7 +43,7 @@ def train():
     else:
         run_name = args.train_name
 
-    run_dir = os.path.join("runs", args.dataset.lower(), run_name)
+    run_dir = os.path.join("runs", args.dataset.lower(), args.train_name, run_name)
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -71,14 +74,27 @@ def train():
 
     cprint(f"Test size: {test_size}", "cyan")
 
-    loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
+    if len(train_set.Y_ref) > 0:
+        assert len(train_set.Y_ref) == len(test_set.Y_ref)
+        collate_fn = CollateFunctionForVideoHDF5(
+            train_set.Y_ref, args.vision_encoder.image_size
+        )
+    else:
+        collate_fn = None
+
+    loader_args = {
+        "collate_fn": collate_fn,
+        "drop_last": True,
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+    }
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
         batch_size=test_size if args.test_with_whole else args.batch_size,
-        shuffle=True,
+        shuffle=False,
         **loader_args,
     )
 
@@ -105,21 +121,21 @@ def train():
             time_multiplier=args.time_multiplier,
         ).to(device)
 
-    if args.face.encoded:
-        face_encoder = None
+    if args.vision.pretrained:
+        vision_encoder, preprocess = clip.load(
+            args.vision.pretrained_model, device=device
+        )
     else:
-        face_encoder = eval(args.face.model)(**args.face_encoder).to(device)
+        vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
 
     classifier = Classifier(args)
 
-    models = Models(brain_encoder, face_encoder, loss_func)
+    models = Models(brain_encoder, vision_encoder, loss_func)
 
     # ---------------------
     #      Optimizers
     # ---------------------
-    params = models.get_params()
-
-    optimizer = torch.optim.Adam(params, lr=args.lr)
+    optimizer = torch.optim.Adam(models.get_params(), lr=args.lr)
 
     if args.lr_scheduler == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -150,14 +166,19 @@ def train():
         models.train()
         if args.accum_grad:
             optimizer.zero_grad()
-                        
-        for X, Y, subject_idxs in tqdm(train_loader):
+
+        for X, Y, subject_idxs in tqdm(train_loader, desc="Train"):
+            if args.vision.pretrained:
+                Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
+
             X, Y = X.to(device), Y.to(device)
 
             Z = brain_encoder(X, subject_idxs)
 
-            if face_encoder is not None:
-                Y = face_encoder(Y)
+            if args.vision.pretrained:
+                Y = vision_encoder.encode_image(Y).float()
+            else:
+                Y = vision_encoder(Y)
 
             loss = loss_func(Y, Z)
 
@@ -170,38 +191,47 @@ def train():
 
             if args.accum_grad:
                 loss.backward()
-                
             else:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                
+
         if args.accum_grad:
             optimizer.step()
 
         _ = models.params_updated()
 
         models.eval()
-        for X, Y, subject_idxs in test_loader:
+        for X, Y, subject_idxs in tqdm(test_loader, desc="Test"):
+            if args.vision.pretrained:
+                Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
+
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
                 stime = time()
 
-                if args.test_with_whole:
-                    # NOTE: Avoid CUDA out of memory
-                    Z = sequential_apply(
-                        X, brain_encoder, args.batch_size, subject_idxs=subject_idxs
-                    )
+                # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
 
-                    if face_encoder is not None:
-                        Y = sequential_apply(Y, face_encoder, args.batch_size)
+                Z = sequential_apply(
+                    X,
+                    brain_encoder,
+                    args.batch_size,
+                    subject_idxs=subject_idxs,
+                    desc="BrainEncoder",
+                )
 
+                if args.vision.pretrained:
+                    Y = sequential_apply(
+                        Y,
+                        vision_encoder.encode_image,
+                        args.batch_size,
+                        desc="VisionEncoder (pretrained)",
+                    ).float()
                 else:
-                    Z = brain_encoder(X, subject_idxs)
-
-                    if face_encoder is not None:
-                        Y = face_encoder(Y)
+                    Y = sequential_apply(
+                        Y, vision_encoder, args.batch_size, desc="VisionEncoder"
+                    )
 
                 inference_times.append(time() - stime)
 
@@ -233,7 +263,7 @@ def train():
                 "test_top1_acc": np.mean(test_top1_accs),
                 "lrate": optimizer.param_groups[0]["lr"],
                 "temp": loss_func.temp.item(),
-                "FaceEncoder avg inference time": np.mean(inference_times),
+                "VisionEncoder avg inference time": np.mean(inference_times),
             }
             wandb.log(performance_now)
 

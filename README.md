@@ -26,6 +26,8 @@
   - [x] AU_rだけを使う
 - UHD
   - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
+- Decoder training
+  - [ ] `NeuroDiffusionCLIPEmbVideoDataset`のメモリー問題を解決
 
 <br>
 
@@ -112,7 +114,7 @@ nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out
 
 ```bash
 # Normal
-python brain2face/train_clip.py config_path=uhd/image.yaml
+python brain2face/train_clip.py config_path=uhd/image.yaml # video.yaml for video
 
 # Sweep
 nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > logs/uhd/sweep_clip.log &
@@ -121,7 +123,7 @@ nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > lo
 ### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
 
 ```bash
-python brain2face/eval_clip.py config_path=uhd/image.yaml
+python brain2face/eval_clip.py config_path=uhd/image.yaml # video.yaml for video
 # For distributed DALLE-2 training, set for_webdataset=True in the yaml
 ```
 

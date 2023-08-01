@@ -15,8 +15,7 @@ from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 from brain2face.datasets import NeuroDiffusionCLIPEmbImageDataset
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="decoder")
-def train(args: DictConfig) -> None:
+def train() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
@@ -33,7 +32,7 @@ def train(args: DictConfig) -> None:
         wandb.run.name = args.run_name
         wandb.run.save()
 
-    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.run_name)
+    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.type, args.run_name)
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -121,14 +120,14 @@ def train(args: DictConfig) -> None:
         test_losses_unet2 = []
 
         # diffusion_prior.train()
-        for Y, Y_img in tqdm(train_loader):
-            Y, Y_img = Y.to(device), Y_img.to(device)
+        for Y_embed, Y in tqdm(train_loader):
+            Y_embed, Y = Y_embed.to(device), Y.to(device)
 
-            loss_unet1 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=1)
+            loss_unet1 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=1)
             # , max_batch_size=4)
             decoder_trainer.update(1)
 
-            loss_unet2 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=2)
+            loss_unet2 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=2)
             # , max_batch_size=4)
             decoder_trainer.update(2)
 
@@ -142,14 +141,14 @@ def train(args: DictConfig) -> None:
             # optimizer.step()
 
         # diffusion_prior.eval()
-        for Y, Y_img in test_loader:
-            Y, Y_img = Y.to(device), Y_img.to(device)
+        for Y_embed, Y in test_loader:
+            Y_embed, Y = Y_embed.to(device), Y.to(device)
 
             # with torch.no_grad():
-            loss_unet1 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=1)
+            loss_unet1 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=1)
             # , max_batch_size=4)
 
-            loss_unet2 = decoder_trainer(image_embed=Y, image=Y_img, unet_number=2)
+            loss_unet2 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=2)
 
             test_losses_unet1.append(loss_unet1)
             test_losses_unet2.append(loss_unet2)
@@ -190,28 +189,27 @@ def train(args: DictConfig) -> None:
             min_test_loss = test_loss
 
 
-# @hydra.main(version_base=None, config_path="../configs", config_name="default")
-# def run(_args: DictConfig) -> None:
-#     global args, sweep
+@hydra.main(version_base=None, config_path="../configs", config_name="default")
+def run(_args: DictConfig) -> None:
+    global args, sweep
 
-#     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
-#     args = OmegaConf.load(os.path.join("configs", _args.config_path))
+    # NOTE: Using default.yaml only for specifying the experiment settings yaml.
+    args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-#     sweep = _args.sweep
+    sweep = _args.sweep
 
-#     if sweep:
-#         sweep_config = OmegaConf.to_container(
-#             args.sweep_config, resolve=True, throw_on_missing=True
-#         )
+    if sweep:
+        sweep_config = OmegaConf.to_container(
+            args.sweep_config, resolve=True, throw_on_missing=True
+        )
 
-#         sweep_id = wandb.sweep(sweep_config, project=args.project_name)
+        sweep_id = wandb.sweep(sweep_config, project=args.project_name)
 
-#         wandb.agent(sweep_id, train, count=args.sweep_count)
+        wandb.agent(sweep_id, train, count=args.sweep_count)
 
-#     else:
-#         train()
+    else:
+        train()
 
 
 if __name__ == "__main__":
-    # run()
-    train()
+    run()

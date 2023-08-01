@@ -15,13 +15,14 @@ from brain2face.datasets import (
     YLabE0030CLIPDataset,
     UHDCLIPDataset,
     StyleGANCLIPDataset,
+    CollateFunctionForVideoHDF5,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.models.face_encoders import ViT, ViViT
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.train_utils import sequential_apply
 from brain2face.utils.eval_utils import (
-    ImageSaver,
+    VisionSaver,
     EmbeddingSaver,
     update_with_eval,
     get_run_dir,
@@ -35,7 +36,7 @@ def infer(args: DictConfig) -> None:
 
     run_dir = get_run_dir(args)
 
-    save_dir = os.path.join("data/clip_embds", args.dataset.lower())
+    save_dir = os.path.join("data/clip_embds", args.dataset.lower(), args.train_name)
     os.makedirs(save_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -60,10 +61,19 @@ def infer(args: DictConfig) -> None:
         train_set = eval(f"{args.dataset}CLIPDataset")(args)
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
 
-        num_subjects = train_set.num_subjects
+        subject_names = train_set.subject_names
         test_size = len(test_set.X)
 
+    if len(train_set.Y_ref) > 0:
+        assert len(train_set.Y_ref) == len(test_set.Y_ref)
+        collate_fn = CollateFunctionForVideoHDF5(
+            train_set.Y_ref, args.vision_encoder.image_size
+        )
+    else:
+        collate_fn = None
+
     loader_args = {
+        "collate_fn": collate_fn,
         "batch_size": args.batch_size,
         "shuffle": False,  # This must be False to keep consistency between image embds and image idxs.
         "drop_last": False,
@@ -96,15 +106,19 @@ def infer(args: DictConfig) -> None:
     )
     brain_encoder.eval()
 
-    if args.face.pretrained:
-        face_encoder, preprocess = clip.load(args.face.pretrained_model, device=device)
-    else:
-        face_encoder = eval(args.face.model)(**args.face_encoder).to(device)
-
-        face_encoder.load_state_dict(
-            torch.load(os.path.join(run_dir, "face_encoder_best.pt"), map_location=device)
+    if args.vision.pretrained:
+        vision_encoder, preprocess = clip.load(
+            args.vision.pretrained_model, device=device
         )
-        face_encoder.eval()
+    else:
+        vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
+
+        vision_encoder.load_state_dict(
+            torch.load(
+                os.path.join(run_dir, "vision_encoder_best.pt"), map_location=device
+            )
+        )
+        vision_encoder.eval()
 
     # -----------------------
     #       Evaluation
@@ -112,28 +126,27 @@ def infer(args: DictConfig) -> None:
     for mode in ["train", "test"]:
         Z_list = []
         Y_list = []
-        image_saver = ImageSaver(
+        vision_saver = VisionSaver(
             os.path.join(save_dir, mode),
-            args.for_webdataset,
-            to_tensored=not args.face.pretrained,  # Whether the image is divided by 255
+            to_tensored=not args.vision.pretrained,  # Whether the image is divided by 255
+            is_video=not args.reduce_time,
         )
-        emb_saver = EmbeddingSaver(os.path.join(save_dir, mode), args.for_webdataset)
+        emb_saver = EmbeddingSaver(os.path.join(save_dir, mode))
 
         for X, Y, subject_idxs in tqdm(eval(f"{mode}_loader"), f"Embedding {mode} set"):
-            if args.reduce_time:
-                image_saver.save(Y)
+            vision_saver.save(Y)
 
-            if args.face.pretrained:
+            if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
             Z = brain_encoder(X, subject_idxs)
 
-            if args.face.pretrained:
-                Y = face_encoder.encode_image(Y).float()
+            if args.vision.pretrained:
+                Y = vision_encoder.encode_image(Y).float()
             else:
-                Y = face_encoder(Y)
+                Y = vision_encoder(Y)
 
             Z /= Z.norm(dim=-1, keepdim=True)
             Y /= Y.norm(dim=-1, keepdim=True)
