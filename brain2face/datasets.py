@@ -6,6 +6,7 @@ import torchvision
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 import numpy as np
+import scipy.signal as signal
 import cv2
 from PIL import Image
 import glob
@@ -571,23 +572,29 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
     def __init__(self, dataset: str, train: bool = True) -> None:
         super().__init__()
 
-        self.Y = torch.load(
+        self.Y_embed = torch.load(
             f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/vision_embds.pt"
         )
         # FIXME
-        self.Y = self.Y[:32]
+        self.Y_embed = self.Y_embed[:32]
 
-        self.Y_video = self._load_videos(
+        self.Y = self._load_videos(
             f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"
         )
 
-        assert len(self.Y) == len(self.Y_video)
+        assert len(self.Y_embed) == len(self.Y)
+
+        # NOTE: Setting time dimension next to batch for UnetTemporalConv
+        self.Y_embed = self.Y_embed.permute(0, 2, 1)
+        self.Y = self.Y.permute(0, 1, 4, 2, 3)
+
+        self.Y_embed, self.Y = self._downsample(self.Y_embed, self.Y)
 
     def __len__(self):
         return len(self.Y)
 
     def __getitem__(self, i):
-        return self.Y[i], self.Y_video[i]
+        return self.Y_embed[i], self.Y[i]
 
     @staticmethod
     def _load_videos(dir: str) -> torch.Tensor:
@@ -600,12 +607,31 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         # FIXME
         return torch.stack(
             [
-                torchvision.io.read_video(path)[0].to(torch.float32) / 255.0
+                torchvision.io.read_video(path, pts_unit="sec")[0].to(torch.float32)
+                / 255.0
                 for path in tqdm(
                     natsorted(glob.glob(dir + "/*.mp4"))[:32], desc="Loading videos"
                 )
             ]
-        ).permute(0, 1, 4, 2, 3)
+        )
+
+    @staticmethod
+    def _downsample(
+        Y_embed: torch.Tensor, Y: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """_summary_
+        Args:
+            Y_embed: ( samples, segment_len=90, features=512 )
+            Y: ( samples, segment_len=90, channels=3, image_size, image_size )
+        Returns:
+            Y_embed: ( samples, segment_len=16, features=512 )
+            Y: ( samples, segment_len=16, channels=3, image_size, image_size )
+        """
+        Y_embed = torch.from_numpy(signal.resample(Y_embed.numpy(), num=16, axis=1))
+
+        Y = torch.from_numpy(signal.resample(Y.numpy(), num=16, axis=1))
+
+        return Y_embed, Y
 
 
 class UHDPipelineDataset(UHDCLIPDataset):
