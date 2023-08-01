@@ -148,7 +148,7 @@ def train() -> None:
             loss_unet1 = decoder_trainer(video_embed=Y_embed, video=Y, unet_number=1)
             # , max_batch_size=4)
 
-            loss_unet2 = decoder_trainer(video_embed=Y_embed, image=Y, unet_number=2)
+            loss_unet2 = decoder_trainer(video_embed=Y_embed, video=Y, unet_number=2)
 
             test_losses_unet1.append(loss_unet1)
             test_losses_unet2.append(loss_unet2)

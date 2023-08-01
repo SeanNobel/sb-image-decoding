@@ -13,7 +13,7 @@ unet2:
 image_embed_dim: 512
 channels: 3
 
-frame_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
+frame_sizes: [64, 128] # First Unet up to 128px, then Unet up to 256px
 frame_numbers: [90, 90] # Not doing temporal super-resolution for now
 
 timesteps: 1000
