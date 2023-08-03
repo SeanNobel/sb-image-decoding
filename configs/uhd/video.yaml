@@ -104,5 +104,9 @@ sweep_config:
     d_drop:
       values: [0.3, 0.2, 0.4]
 
+# ==== Evaluation ==== #
 eval:
   d_drop: 0.3
+
+as_h5: True
+for_webdataset: False

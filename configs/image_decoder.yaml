@@ -19,6 +19,7 @@ timesteps: 1000
 
 epochs: 20
 batch_size: 16
+accum_grad: False
 lr: 3.0e-4
 wd: 1.0e-2
 ema_beta: 0.99
@@ -27,6 +28,7 @@ ema_update_every: 10
 
 cuda_id: 0
 seed: 1234
+log_level: INFO
 
 use_wandb: True
 wandb:
