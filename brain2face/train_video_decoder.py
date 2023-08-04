@@ -51,22 +51,24 @@ def train() -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    train_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset)
-    test_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset, train=False)
+    resample_nsamples = args.frame_numbers[0]
+
+    train_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset, resample_nsamples)
+    test_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset, resample_nsamples, train=False)  # fmt: skip
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
         batch_size=args.batch_size,
         shuffle=True,
-        collate_fn=CollateFunctionForVideoHDF5(train_set.Y_ref),
+        collate_fn=CollateFunctionForVideoHDF5(train_set.Y_ref, resample_nsamples),
         **loader_args,
     )
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
         batch_size=args.batch_size,
         shuffle=False,
-        collate_fn=CollateFunctionForVideoHDF5(test_set.Y_ref),
+        collate_fn=CollateFunctionForVideoHDF5(test_set.Y_ref, resample_nsamples),
         **loader_args,
     )
 

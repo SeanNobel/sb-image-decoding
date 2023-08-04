@@ -427,6 +427,7 @@ class CollateFunctionForVideoHDF5(nn.Module):
     def __init__(
         self,
         Y_ref: Union[List[h5py._hl.dataset.Dataset], h5py._hl.dataset.Dataset],
+        resample_nsamples: Optional[int] = None,
         frame_size: Optional[int] = None,
     ) -> None:
         """_summary_
@@ -436,6 +437,7 @@ class CollateFunctionForVideoHDF5(nn.Module):
         """
         super().__init__()
         self.Y_ref = Y_ref
+        self.resample_nsamples = resample_nsamples
         self.frame_size = frame_size
 
         self.clip_training = isinstance(Y_ref, list)
@@ -460,13 +462,16 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = np.stack([self.Y_ref[item[1]] for item in batch])
 
-            Y = self._video_transforms(Y, self.frame_size)
+            Y = self._video_transforms(Y, self.resample_nsamples, self.frame_size)
 
             return Y_embed, Y
 
     @staticmethod
     def _video_transforms(
-        Y: np.ndarray, frame_size: Optional[int] = None, to_grayscale: bool = False
+        Y: np.ndarray,
+        resample_nsamples: Optional[int] = None,
+        frame_size: Optional[int] = None,
+        to_grayscale: bool = False,
     ) -> torch.Tensor:
         """
         - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
@@ -478,6 +483,9 @@ class CollateFunctionForVideoHDF5(nn.Module):
         Returns:
             Y: ( batch_size, segment_len=90, 3, vision_encoder.image_size, vision_encoder.image_size )
         """
+        if resample_nsamples is not None:
+            Y = signal.resample(Y, resample_nsamples, axis=1)
+
         segment_len = Y.shape[1]
 
         Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
@@ -590,7 +598,12 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
 
 
 class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset: str, train: bool = True) -> None:
+    def __init__(
+        self,
+        dataset: str,
+        resample_nsamples: Optional[int] = None,
+        train: bool = True,
+    ) -> None:
         super().__init__()
 
         self.Y_embed = torch.load(
@@ -607,8 +620,6 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         # self.Y = self._load_videos(
         #     f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"
         # )
-        cprint(self.Y_embed.shape, "yellow")
-        cprint(self.Y_ref.shape, "yellow")
         self.Y = torch.arange(len(self.Y_ref), dtype=torch.int64)
 
         assert len(self.Y_embed) == len(self.Y)
@@ -616,7 +627,11 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         # FIXME: Setting time dimension next to batch for UnetTemporalConv
         self.Y_embed = self.Y_embed.permute(0, 2, 1)
 
-        # self.Y_embed, self.Y = self._downsample(self.Y_embed, self.Y)
+        # NOTE: Y will be resampled in the collate function.
+        if resample_nsamples is not None:
+            self.Y_embed = torch.from_numpy(
+                signal.resample(self.Y_embed.numpy(), resample_nsamples, axis=1)
+            )
 
     def __len__(self):
         return len(self.Y)
@@ -642,24 +657,6 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
                 )
             ]
         )
-
-    @staticmethod
-    def _downsample(
-        Y_embed: torch.Tensor, Y: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """_summary_
-        Args:
-            Y_embed: ( samples, segment_len=90, features=512 )
-            Y: ( samples, segment_len=90, channels=3, image_size, image_size )
-        Returns:
-            Y_embed: ( samples, segment_len=16, features=512 )
-            Y: ( samples, segment_len=16, channels=3, image_size, image_size )
-        """
-        Y_embed = torch.from_numpy(signal.resample(Y_embed.numpy(), num=16, axis=1))
-
-        Y = torch.from_numpy(signal.resample(Y.numpy(), num=16, axis=1))
-
-        return Y_embed, Y
 
 
 class UHDPipelineDataset(UHDCLIPDataset):
