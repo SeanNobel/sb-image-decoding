@@ -438,31 +438,31 @@ class CollateFunctionForVideoHDF5(nn.Module):
         self.Y_ref = Y_ref
         self.frame_size = frame_size
 
-        self.is_clip = isinstance(Y_ref, list)
+        self.clip_training = isinstance(Y_ref, list)
 
-    def forward(self, batch: List[torch.Tensor]) -> torch.Tensor:
-        """
-        Args:
-            batch: ( samples, segment_len=90, features=17 ) or ( samples, features=17, segment_len=90 )
-        Returns:
-            batch: ( samples, features=17, segment_len=90 )
-        """
-        X = torch.stack([item[0] for item in batch])
+    def forward(self, batch: List[torch.Tensor]) -> Tuple[torch.Tensor]:
+        if self.clip_training:
+            X = torch.stack([item[0] for item in batch])
 
-        # NOTE: item[2] is subject_idx and item[1] is sample_idx
-        if self.is_clip:
+            # NOTE: item[2] is subject_idx and item[1] is sample_idx
             Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
+
+            Y = self._video_transforms(Y, self.frame_size)
+
+            # Y = Y.permute(0, 1, 4, 2, 3)
+
+            subject_idxs = torch.stack([item[2] for item in batch])
+
+            return X, Y, subject_idxs
+
         else:
+            Y_embed = torch.stack([item[0] for item in batch])
+
             Y = np.stack([self.Y_ref[item[1]] for item in batch])
 
-        subject_idxs = torch.stack([item[2] for item in batch])
+            Y = self._video_transforms(Y, self.frame_size)
 
-        Y = self._video_transforms(Y, self.frame_size)
-
-        # if self.is_clip:
-        #     Y = Y.permute(0, 1, 4, 2, 3)
-
-        return X, Y, subject_idxs
+            return Y_embed, Y
 
     @staticmethod
     def _video_transforms(
@@ -600,12 +600,15 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         # self.Y_embed = self.Y_embed[:128]
 
         self.Y_ref = h5py.File(
-            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos.h5"
-        )
+            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos.h5",
+            "r",
+        )["videos"]
 
         # self.Y = self._load_videos(
         #     f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"
         # )
+        cprint(self.Y_embed.shape, "yellow")
+        cprint(self.Y_ref.shape, "yellow")
         self.Y = torch.arange(len(self.Y_ref), dtype=torch.int64)
 
         assert len(self.Y_embed) == len(self.Y)

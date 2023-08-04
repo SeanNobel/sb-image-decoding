@@ -50,7 +50,7 @@ class VisionSaver:
             if self.as_h5:
                 # NOTE: h5 file contains many videos as a single file.
                 # with h5py.File(os.path.join(save_dir, "videos.h5"), "a") as hdf:
-                self.hdf = h5py.File(os.path.join(save_dir, "videos.h5"), "a")
+                self.hdf = h5py.File(os.path.join(save_dir, "videos.h5"), "w")
                 self.dataset = self.hdf.require_dataset(
                     name="videos",
                     shape=(0, frames, size, size, channels),
