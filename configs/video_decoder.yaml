@@ -1,4 +1,4 @@
-run_name: test
+run_name: not-learned-variance
 type: video
 dataset: UHD
 
@@ -18,8 +18,10 @@ frame_numbers: [90, 90] # Not doing temporal super-resolution for now
 
 timesteps: 1000
 
-epochs: 20
+epochs: 50
 batch_size: 1
+# sub_batch_size: 1
+# accum_grad: True
 lr: 3.0e-4
 wd: 1.0e-2
 ema_beta: 0.99
@@ -28,8 +30,9 @@ ema_update_every: 10
 
 cuda_id: 0
 seed: 1234
+log_level: INFO
 
 use_wandb: False
 wandb:
-  project: decoder_uhd
+  project: nd_uhd_video-decoder
   entity: sensho

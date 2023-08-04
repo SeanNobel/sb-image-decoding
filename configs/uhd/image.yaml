@@ -117,6 +117,7 @@ sweep_config:
     vision.reduction:
       values: [extract, mean]
 
+# ==== Evaluation ==== #
 eval:
   split: shallow
   d_drop: 0.1
@@ -126,4 +127,5 @@ eval:
   head_activation: False
   final_ksize_stride: 2
 
+as_h5: False
 for_webdataset: False
