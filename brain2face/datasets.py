@@ -221,15 +221,40 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
         )
 
-        loader = partial(self._loader, args=args, train=train)
+        if args.split == "mixed_deep":
+            loader = partial(
+                self._mixed_deep_loader, args=args, train=train, _loader=self._loader
+            )
+        else:
+            loader = partial(self._loader, args=args, train=train)
 
         super().__init__(args, subject_paths, train, loader)
+        
+    @staticmethod
+    def _mixed_deep_loader(
+        args, subject_path: str, train: bool, _loader: Callable
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        X, Y = [], []
+        
+        for train_orig in [True, False]:
+            _X, _Y = _loader(args, subject_path, train_orig)
+            
+            split_idx = int(_X.shape[0] * args.train_ratio)
+            if train:
+                _X = _X[:split_idx]
+                _Y = _Y[:split_idx]
+            else:
+                _X = _X[split_idx:]
+                _Y = _Y[split_idx:]
+                
+            X.append(_X)
+            Y.append(_Y)
+        
+        return torch.cat(X), torch.cat(Y)
 
     @staticmethod
     def _loader(
-        args,
-        subject_path: str,
-        train: bool,
+        args, subject_path: str, train: bool
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:

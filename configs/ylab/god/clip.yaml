@@ -18,6 +18,7 @@ baseline_ratio: 0.2 # ratio compared to max_seq_len
 # ==== Training ==== #
 project_name: neuro-diffusion_god
 train_name: test
+debug: False
 
 seq_onset: 0.0
 seq_len: 0.5
@@ -35,14 +36,14 @@ F: 512 # CLIP embedding dimension
 
 reduce_time: True # For GOD dataset, time is already reduced.
 
-face:
+vision:
   pretrained: True
   model: ViT # For face.pretrained=False
   pretrained_model: ViT-B/32 # For face.pretrained=True
   encoded: False # False is basically only for StyleGAN
   
-face_encoder:
-  image_size: 256 # set this same as image_size above
+vision_encoder:
+  image_size: ${image_size}
   patch_size: 32
   dim: ${F}
   depth: 6
@@ -64,7 +65,10 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-split: none # split is predefined since experiment for this dataset
+split: mixed_deep # none or mixed_deep
+# Split is predefined as different sessions for ECoG GOD dataset, but
+# mixed_deep first mixes train and val, then splits them deeply.
+train_ratio: 0.8
 batch_size: 64
 lr: 0.005
 lr_scheduler: multistep # cosine or multistep
@@ -80,19 +84,23 @@ chance: False
 
 test_with_whole: True
 
+num_workers: 4
+
 seed: 1234
 
 cuda_id: 2
 
-sweep_count: 4
+sweep_count: 3
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    seq_onset:
-      values: [0.0, 0.5, 1.0, 1.5]
+    d_drop:
+      values: [0.1, 0.2, 0.3]
+    # seq_onset:
+    #   values: [0.0, 0.5, 1.0, 1.5]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
     # biases.conv_block:
