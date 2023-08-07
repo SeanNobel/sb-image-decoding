@@ -92,6 +92,9 @@ class FacePreprocessor:
         # ( ~1000, 90, 256, 256, 3 )
 
         if self.segment_len != self.resample_nsamples:
-            y = signal.resample(y, self.resample_nsamples, axis=1)
+            y = np.stack(
+                [signal.resample(_y, self.resample_nsamples, axis=0) for _y in y]
+            )
+            # ( ~1000, 16, 256, 256, 3 )
 
         return y, drop_segments
