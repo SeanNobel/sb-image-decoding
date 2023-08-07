@@ -1,6 +1,7 @@
-run_name: not-learned-variance
-type: video
 dataset: UHD
+train_name: not-learned-variance
+clip_train_name: video
+type: video
 
 unet1:
   dim: 128

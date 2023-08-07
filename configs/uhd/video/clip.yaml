@@ -33,7 +33,6 @@ baseline_ratio: 0.2 # ratio compared to segment length
 
 eeg_load_bufsize: 1000 # samples
 
-
 # ==== Training ==== #
 project_name: nd_uhd_clip
 train_name: video
@@ -46,12 +45,13 @@ layout: ch_locations_2d
 
 F: 512 # CLIP embedding dimension
 
-reduce_time: False # Keep as video
+reduce_time: False # Keep as video if False
 
 vision:
-  type: dynamic # static (image) or dynamic (video)
+  # type: dynamic # static (image) or dynamic (video)
   pretrained: False # There is no pretrained CLIP model for video
   model: ViViT
+  resample_nsamples: 16
 
 vision_encoder:
   image_size: 128
@@ -88,11 +88,11 @@ chance: False
 
 test_with_whole: False # It is not possible to test with whole for video (CPU memory)
 
-num_workers: 8
+num_workers: 4
 
 seed: 1234
 
-cuda_id: 0
+cuda_id: 1
 
 sweep_count: 3
 sweep_config:
