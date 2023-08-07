@@ -130,12 +130,16 @@ def train():
 
     classifier = Classifier(args)
 
-    models = Models(brain_encoder, vision_encoder, loss_func)
+    trained_models = Models(
+        brain_encoder,
+        vision_encoder if not args.vision.pretrained else None,
+        loss_func
+    )
 
     # ---------------------
     #      Optimizers
     # ---------------------
-    optimizer = torch.optim.Adam(models.get_params(), lr=args.lr)
+    optimizer = torch.optim.Adam(trained_models.get_params(), lr=args.lr)
 
     if args.lr_scheduler == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -163,7 +167,7 @@ def train():
         test_top1_accs = []
         inference_times = []
 
-        models.train()
+        trained_models.train()
         if args.accum_grad:
             optimizer.zero_grad()
 
@@ -199,9 +203,9 @@ def train():
         if args.accum_grad:
             optimizer.step()
 
-        _ = models.params_updated()
+        _ = trained_models.params_updated()
 
-        models.eval()
+        trained_models.eval()
         for X, Y, subject_idxs in tqdm(test_loader, desc="Test"):
             if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
@@ -269,11 +273,11 @@ def train():
 
         scheduler.step()
 
-        models.save(run_dir)
+        trained_models.save(run_dir)
 
         if np.mean(test_losses) < min_test_loss:
             cprint(f"New best. Saving models to {run_dir}", color="cyan")
-            models.save(run_dir, best=True)
+            trained_models.save(run_dir, best=True)
 
             min_test_loss = np.mean(test_losses)
 
