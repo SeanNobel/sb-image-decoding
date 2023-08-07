@@ -8,6 +8,12 @@
 
 ## Status
 
+### YLab GOD
+
+- 訓練とテストを混ぜてからdeep splitするmixes_deep splitを作成，CLIP sweepを開始．そのパフォーマンスによってはpriorの訓練に移る．
+
+### UHD
+
 - Videoを一つのCLIP embeddingにしてやるパイプラインのためのdownsamplingスクリプトのおわり待ち．おわったら実行：`python brain2face/train_clip.py config_path=uhd/video/clip.yaml`
 
 ## TODOs
@@ -47,15 +53,15 @@ python brain2face/preprocs/ylab_god.py
 
 ```bash
 # Normal
-python brain2face/train_clip.py config_path=ylab/god.yaml 
+python brain2face/train_clip.py config_path=ylab/god/clip.yaml 
 # Sweep
-nohup python brain2face/train_clip.py config_path=ylab/god.yaml sweep=True > logs/ylab/god/sweep_clip.log &
+nohup python brain2face/train_clip.py config_path=ylab/god/clip.yaml sweep=True > logs/ylab/god/sweep_clip.log &
 ```
 
 #### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
 
 ```bash
-python brain2face/eval_clip.py config_path=ylab/god.yaml
+python brain2face/eval_clip.py config_path=ylab/god/clip.yaml
 # For distributed DALLE-2 training, set for_webdataset=True in the yaml
 ```
 
