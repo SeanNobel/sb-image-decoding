@@ -93,6 +93,8 @@ chance: False
 
 test_with_whole: True
 
+num_workers: 4
+
 seed: 1234
 
 cuda_id: 2
