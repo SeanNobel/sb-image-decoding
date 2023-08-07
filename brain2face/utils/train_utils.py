@@ -127,7 +127,7 @@ def sequential_apply(
         return torch.cat(
             [
                 model(Image.fromarray(_X.squeeze())).unsqueeze(0)
-                for _X in tqdm(np.split(X, X.shape[0]), desc="Transforms")
+                for _X in np.split(X, X.shape[0])
             ]
         )
 
