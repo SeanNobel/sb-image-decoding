@@ -6,6 +6,10 @@
 
 - [DALLE-2 paper](https://arxiv.org/pdf/2204.06125.pdf)
 
+## Status
+
+- Videoを一つのCLIP embeddingにしてやるパイプラインのためのdownsamplingスクリプトのおわり待ち．おわったら実行：`python brain2face/train_clip.py config_path=uhd/video/clip.yaml`
+
 ## TODOs
 
 - [x] 他のconfigファイルの内容をimage.yamlに合わせる
@@ -44,7 +48,6 @@ python brain2face/preprocs/ylab_god.py
 ```bash
 # Normal
 python brain2face/train_clip.py config_path=ylab/god.yaml 
-
 # Sweep
 nohup python brain2face/train_clip.py config_path=ylab/god.yaml sweep=True > logs/ylab/god/sweep_clip.log &
 ```
@@ -58,9 +61,8 @@ python brain2face/eval_clip.py config_path=ylab/god.yaml
 
 #### Run DALLE-2 prior training
 
-- Normal training
-
 ```bash
+# Normal
 nohup python brain2face/train_diffusion_prior.py > logs/ylab/god/diffusion_prior.log &
 ```
 
@@ -75,9 +77,8 @@ python brain2face/eval_clip.py config_path=ylab/god.yaml
 
 #### Run DALLE-2 prior training
 
-- Normal training
-
 ```bash
+# Normal
 nohup python brain2face/train_diffusion_prior.py > logs/ylab/god/diffusion_prior.log &
 ```
 
@@ -112,32 +113,45 @@ nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out
 
 ### Run CLIP training
 
+#### Image
+
 ```bash
 # Normal
-python brain2face/train_clip.py config_path=uhd/image.yaml # video.yaml for video
-
+python brain2face/train_clip.py config_path=uhd/image/clip.yaml
 # Sweep
-nohup python brain2face/train_clip.py config_path=uhd/image.yaml sweep=True > logs/uhd/sweep_clip.log &
+nohup python brain2face/train_clip.py config_path=uhd/image/clip.yaml sweep=True > logs/uhd/sweep_clip.log &
+```
+
+#### Video
+
+```bash
+# Normal
+python brain2face/train_clip.py config_path=uhd/video/clip.yaml
+# Sweep
+nohup python brain2face/train_clip.py config_path=uhd/video/clip.yaml sweep=True > logs/uhd/sweep_clip.log &
 ```
 
 ### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
 
+#### Image
+
 ```bash
-python brain2face/eval_clip.py config_path=uhd/image.yaml # video.yaml for video
+python brain2face/eval_clip.py config_path=uhd/image/clip.yaml
 # For distributed DALLE-2 training, set for_webdataset=True in the yaml
+```
+
+#### Video
+
+```bash
+python brain2face/eval_clip.py config_path=uhd/video/clip.yaml
 ```
 
 ### Run DALLE-2 prior training
 
-- Normal training
-
 ```bash
+# Normal
 python brain2face/train_diffusion_prior.py
-```
-
-- Distributed training
-
-```bash
+# Distributed
 python brain2face/train_diffusion_prior_distributed.py
 ```
 
@@ -146,27 +160,24 @@ python brain2face/train_diffusion_prior_distributed.py
 - Normal training
 
 ```bash
+# Normal
 nohup python brain2face/train_decoder.py > logs/uhd/train_decoder.log &
-```
 
-- Distributed training
-
-```bash
-# tar face_images
+# Distributed (deprecated)
+## tar face_images
 bash tar_face_images.sh
-
-# login to huggingface hub
+## login to huggingface hub
 huggingface-cli login
-
-# create a repository in huggingface whose name matches tracker.save.huggingface_repo in decoder.json
-
-# need to create this directory manually
+## create a repository in huggingface whose name matches tracker.save.huggingface_repo in decoder.json
+## need to create this directory manually
 mkdir .tracker_data
-
+## Run distributedtraining
 python brain2face/train_decoder_distributed.py
 ```
 
 ### Finally generate face images from EEG
+
+#### Image
 
 ```bash
 python brain2face/eval_pipeline.py config_path=uhd/image.yaml
