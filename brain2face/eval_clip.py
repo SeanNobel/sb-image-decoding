@@ -126,11 +126,13 @@ def infer(args: DictConfig) -> None:
     for mode in ["train", "test"]:
         Z_list = []
         Y_list = []
-        vision_saver = VisionSaver(
-            os.path.join(save_dir, mode),
-            to_tensored=not args.vision.pretrained,  # Whether the image is divided by 255
-            is_video=not args.reduce_time,
-        )
+        vision_saver = VisionSaver(args, os.path.join(save_dir, mode))
+        #     to_tensored=not args.vision.pretrained,  # Whether the image is divided by 255
+        #     is_video=not args.reduce_time,
+        #     as_h5=args.as_h5,
+        #     size=args.vision_encoder.image_size,
+        #     frames=args.fps * args.seq_len,
+        # )
         emb_saver = EmbeddingSaver(os.path.join(save_dir, mode))
 
         for X, Y, subject_idxs in tqdm(eval(f"{mode}_loader"), f"Embedding {mode} set"):
@@ -155,6 +157,8 @@ def infer(args: DictConfig) -> None:
             Y_list.append(Y.cpu())
 
         emb_saver.save(torch.cat(Z_list), torch.cat(Y_list))
+
+        vision_saver.close()
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")

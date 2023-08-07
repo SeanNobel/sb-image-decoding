@@ -1,4 +1,7 @@
-dataset: YLabGOD
+dataset: UHD
+train_name: video # The one specified in CLIP training config.
+clip_train_name: video
+type: video
 
 dim: 512
 depth: 6
@@ -21,11 +24,11 @@ ema_update_every: 10
 cuda_id: 1
 seed: 1234
 
-use_wandb: True
+use_wandb: False
 wandb:
   project: diffusion_prior
   entity: sensho
-  run_name: god_test
+  run_name: uhd_video
 
 
 lr_scheduler: none # cosine or multistep or none

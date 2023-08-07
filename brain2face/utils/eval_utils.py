@@ -3,8 +3,10 @@ import numpy as np
 import torch
 import cv2
 from PIL import Image
+import h5py
 from omegaconf import DictConfig, OmegaConf
 from termcolor import cprint
+from typing import Optional
 
 from brain2face.utils.constants import EMB_CHUNK_SIZE
 
@@ -12,44 +14,107 @@ from brain2face.utils.constants import EMB_CHUNK_SIZE
 class VisionSaver:
     def __init__(
         self,
+        args,
         save_dir: str,
-        to_tensored: bool,
-        is_video: bool = False,
+        channels: int = 3,  # FIXME: hard-coded
         for_webdataset: bool = False,
     ) -> None:
+        self.to_tensored = not args.vision.pretrained
+        self.is_video = not args.reduce_time
+        self.as_h5 = args.as_h5
+        self.fps = args.fps
+        frames = args.fps * args.seq_len
+        size = args.vision_encoder.image_size
+
         self.sample_idx = 0
         self.chunk_idx = 0
 
         if for_webdataset:
             self.save_dir_prefix = os.path.join(
-                save_dir, "for_webdataset", "images" if not is_video else "videos"
+                save_dir, "for_webdataset", "images" if not self.is_video else "videos"
             )
             self.save_dir = self._update_save_dir(self.chunk_idx)
 
             self.save = self._save_for_webdataset
 
         else:
-            self.save_dir = os.path.join(save_dir, "images" if not is_video else "videos")
+            if self.as_h5:
+                self.save_dir = save_dir
+            else:
+                self.save_dir = os.path.join(
+                    save_dir, "images" if not self.is_video else "videos"
+                )
+
             os.makedirs(self.save_dir, exist_ok=True)
+
+            if self.as_h5:
+                # NOTE: h5 file contains many videos as a single file.
+                # with h5py.File(os.path.join(save_dir, "videos.h5"), "a") as hdf:
+                self.hdf = h5py.File(os.path.join(save_dir, "videos.h5"), "w")
+                self.dataset = self.hdf.require_dataset(
+                    name="videos",
+                    shape=(0, frames, size, size, channels),
+                    maxshape=(None, frames, size, size, channels),
+                    dtype=np.float32,
+                )
 
             self.save = self._save
 
-        self.to_tensored = to_tensored
-        self.is_video = is_video
-        self.extension = ".jpg" if not is_video else ".mp4"
-
     def _save(self, Y: torch.Tensor) -> None:
-        for y in Y:
-            save_path = os.path.join(
-                self.save_dir, str(self.sample_idx).zfill(5) + self.extension
-            )
+        if self.as_h5:
+            self._save_video_as_h5(Y)
 
-            if not self.is_video:
-                self._save_image(y, save_path)
-            else:
-                self._save_video(y, save_path)
+        else:
+            for y in Y:
+                if not self.is_video:
+                    self._save_image(y)
+                else:
+                    self._save_video(y)
 
-            self.sample_idx += 1
+                self.sample_idx += 1
+
+    def _save_image(self, y: torch.Tensor) -> None:
+        save_path = os.path.join(self.save_dir, str(self.sample_idx).zfill(5) + ".jpg")
+
+        image = y.numpy()
+
+        if self.to_tensored:
+            image = (image * 255).astype(np.uint8).transpose(1, 2, 0)
+        else:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        cv2.imwrite(save_path, image)
+
+    def _save_video_as_h5(self, y: torch.Tensor) -> None:
+        """_summary_
+        Args:
+            y ( b, frames, channels, size, size ): _description_
+        """
+        video = y.numpy().transpose(0, 1, 3, 4, 2)
+        # ( b, frames, size, size, channels )
+
+        self.dataset.resize(self.dataset.shape[0] + video.shape[0], axis=0)
+        self.dataset[-video.shape[0] :] = video
+
+    def _save_video(self, y: torch.Tensor) -> None:
+        """_summary_
+        Args:
+            y ( frames, channels, size, size ): _description_
+            fps (float, optional): _description_. Defaults to 30.0.
+        """
+        video = y.numpy()  # ( frames, channels, size, size )
+        video = (video * 255).astype(np.uint8).transpose(0, 2, 3, 1)
+        # ( frames, size, size, channels )
+
+        save_path = os.path.join(self.save_dir, str(self.sample_idx).zfill(5) + ".mp4")
+
+        fmt = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(save_path, fmt, self.fps, tuple(video.shape[1:3]))
+
+        for frame in video:
+            writer.write(frame)
+
+        writer.release()
 
     def _save_for_webdataset(self, Y: torch.Tensor) -> None:
         """Saves batch of images to save_dir. (00000.jpg, 00001.jpg, ...)
@@ -62,7 +127,9 @@ class VisionSaver:
                 self.save_dir,
                 str(self.chunk_idx).zfill(4)
                 + str(self.sample_idx).zfill(len(str(EMB_CHUNK_SIZE)) - 1)
-                + self.extension,
+                + ".mp4"
+                if self.is_video
+                else ".jpg",
             )
 
             if not self.is_video:
@@ -78,35 +145,16 @@ class VisionSaver:
 
                 self.save_dir = self._update_save_dir(self.chunk_idx)
 
-    def _save_image(self, y: torch.Tensor, save_path: str) -> None:
-        image = y.numpy()
-
-        if self.to_tensored:
-            image = (image * 255).astype(np.uint8).transpose(1, 2, 0)
-        else:
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        cv2.imwrite(save_path, image)
-
-    def _save_video(self, y: torch.Tensor, save_path: str, fps: float = 30.0) -> None:
-        video = y.numpy()  # ( frames, channels, size, size )
-
-        video = (video * 255).astype(np.uint8).transpose(0, 2, 3, 1)
-
-        fmt = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(save_path, fmt, fps, tuple(video.shape[1:3]))
-
-        for frame in video:
-            writer.write(frame)
-
-        writer.release()
-
     def _update_save_dir(self, chunk_idx: int) -> str:
         """Updates self.save_dir, creates it, and returns it."""
         save_dir = os.path.join(self.save_dir_prefix, str(chunk_idx).zfill(4))
         os.makedirs(save_dir, exist_ok=True)
 
         return save_dir
+
+    def close(self) -> None:
+        if self.as_h5:
+            self.hdf.close()
 
 
 class EmbeddingSaver:

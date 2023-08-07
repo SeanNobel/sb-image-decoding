@@ -6,6 +6,7 @@ import torchvision
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 import numpy as np
+import scipy.signal as signal
 import cv2
 from PIL import Image
 import glob
@@ -423,30 +424,54 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
 
 class CollateFunctionForVideoHDF5(nn.Module):
-    def __init__(self, Y_ref: List[h5py._hl.dataset.Dataset], frame_size: int) -> None:
+    def __init__(
+        self,
+        Y_ref: Union[List[h5py._hl.dataset.Dataset], h5py._hl.dataset.Dataset],
+        resample_nsamples: Optional[int] = None,
+        frame_size: Optional[int] = None,
+    ) -> None:
+        """_summary_
+        Args:
+            Y_ref: Is a list for CLIP dataset and h5 dataset for EmbVideoDataset.
+            frame_size (Optional[int], optional): _description_. Defaults to None.
+        """
         super().__init__()
         self.Y_ref = Y_ref
+        self.resample_nsamples = resample_nsamples
         self.frame_size = frame_size
 
-    def forward(self, batch: List[torch.Tensor]) -> torch.Tensor:
-        """
-        Args:
-            batch: ( samples, segment_len=90, features=17 ) or ( samples, features=17, segment_len=90 )
-        Returns:
-            batch: ( samples, features=17, segment_len=90 )
-        """
-        X = torch.stack([item[0] for item in batch])
-        # NOTE: item[2] is subject_idx and item[1] is sample_idx
-        Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
-        subject_idxs = torch.stack([item[2] for item in batch])
+        self.clip_training = isinstance(Y_ref, list)
 
-        Y = self._video_transforms(Y, self.frame_size)
+    def forward(self, batch: List[torch.Tensor]) -> Tuple[torch.Tensor]:
+        if self.clip_training:
+            X = torch.stack([item[0] for item in batch])
 
-        return X, Y, subject_idxs
+            # NOTE: item[2] is subject_idx and item[1] is sample_idx
+            Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
+
+            Y = self._video_transforms(Y, self.frame_size)
+
+            # Y = Y.permute(0, 1, 4, 2, 3)
+
+            subject_idxs = torch.stack([item[2] for item in batch])
+
+            return X, Y, subject_idxs
+
+        else:
+            Y_embed = torch.stack([item[0] for item in batch])
+
+            Y = np.stack([self.Y_ref[item[1]] for item in batch])
+
+            Y = self._video_transforms(Y, self.resample_nsamples, self.frame_size)
+
+            return Y_embed, Y
 
     @staticmethod
     def _video_transforms(
-        Y: np.ndarray, frame_size: int, to_grayscale: bool = False
+        Y: np.ndarray,
+        resample_nsamples: Optional[int] = None,
+        frame_size: Optional[int] = None,
+        to_grayscale: bool = False,
     ) -> torch.Tensor:
         """
         - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
@@ -458,24 +483,29 @@ class CollateFunctionForVideoHDF5(nn.Module):
         Returns:
             Y: ( batch_size, segment_len=90, 3, vision_encoder.image_size, vision_encoder.image_size )
         """
+        if resample_nsamples is not None:
+            Y = signal.resample(Y, resample_nsamples, axis=1)
+
         segment_len = Y.shape[1]
 
         Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
         # ( samples*segment_len, 3, size, size )
 
-        video_transforms = [
-            transforms.Resize(
-                frame_size, interpolation=InterpolationMode.BICUBIC, antialias=True
-            ),
-        ]
+        video_transforms = []
+
+        if frame_size is not None:
+            video_transforms += [
+                transforms.Resize(
+                    frame_size, interpolation=InterpolationMode.BICUBIC, antialias=True
+                )
+            ]
         if to_grayscale:
             video_transforms += [transforms.Grayscale()]
 
-        video_transforms = transforms.Compose(video_transforms)
+        if len(video_transforms) > 0:
+            video_transforms = transforms.Compose(video_transforms)
 
-        # NOTE: Avoid CPU out of memory
-        # Y = sequential_apply(Y, video_transforms, batch_size=256)
-        Y = video_transforms(Y)
+            Y = video_transforms(Y)
 
         Y = Y.contiguous().view(-1, segment_len, *Y.shape[-3:])
 
@@ -568,26 +598,46 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
 
 
 class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset: str, train: bool = True) -> None:
+    def __init__(
+        self,
+        dataset: str,
+        resample_nsamples: Optional[int] = None,
+        train: bool = True,
+    ) -> None:
         super().__init__()
 
-        self.Y = torch.load(
+        self.Y_embed = torch.load(
             f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/vision_embds.pt"
         )
         # FIXME
-        self.Y = self.Y[:32]
+        # self.Y_embed = self.Y_embed[:128]
 
-        self.Y_video = self._load_videos(
-            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"
-        )
+        self.Y_ref = h5py.File(
+            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos.h5",
+            "r",
+        )["videos"]
 
-        assert len(self.Y) == len(self.Y_video)
+        # self.Y = self._load_videos(
+        #     f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"
+        # )
+        self.Y = torch.arange(len(self.Y_ref), dtype=torch.int64)
+
+        assert len(self.Y_embed) == len(self.Y)
+
+        # FIXME: Setting time dimension next to batch for UnetTemporalConv
+        self.Y_embed = self.Y_embed.permute(0, 2, 1)
+
+        # NOTE: Y will be resampled in the collate function.
+        if resample_nsamples is not None:
+            self.Y_embed = torch.from_numpy(
+                signal.resample(self.Y_embed.numpy(), resample_nsamples, axis=1)
+            )
 
     def __len__(self):
         return len(self.Y)
 
     def __getitem__(self, i):
-        return self.Y[i], self.Y_video[i]
+        return self.Y_embed[i], self.Y[i]
 
     @staticmethod
     def _load_videos(dir: str) -> torch.Tensor:
@@ -600,12 +650,13 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         # FIXME
         return torch.stack(
             [
-                torchvision.io.read_video(path)[0].to(torch.float32) / 255.0
+                torchvision.io.read_video(path, pts_unit="sec")[0].to(torch.float32)
+                / 255.0
                 for path in tqdm(
-                    natsorted(glob.glob(dir + "/*.mp4"))[:32], desc="Loading videos"
+                    natsorted(glob.glob(dir + "/*.mp4")), desc="Loading videos"  # [:128],
                 )
             ]
-        ).permute(0, 1, 4, 2, 3)
+        )
 
 
 class UHDPipelineDataset(UHDCLIPDataset):

@@ -1,5 +1,5 @@
 run_name: test
-type: video
+type: image
 dataset: UHD
 
 unet1:
@@ -13,13 +13,13 @@ unet2:
 image_embed_dim: 512
 channels: 3
 
-frame_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
-frame_numbers: [90, 90] # Not doing temporal super-resolution for now
+image_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
 
 timesteps: 1000
 
 epochs: 20
-batch_size: 1
+batch_size: 16
+accum_grad: False
 lr: 3.0e-4
 wd: 1.0e-2
 ema_beta: 0.99
@@ -28,8 +28,9 @@ ema_update_every: 10
 
 cuda_id: 0
 seed: 1234
+log_level: INFO
 
-use_wandb: False
+use_wandb: True
 wandb:
   project: decoder_uhd
   entity: sensho
