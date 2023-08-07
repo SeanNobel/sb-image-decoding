@@ -21,7 +21,7 @@ def load_resample(chunk: np.ndarray, down: float):
     return chunk
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="uhd")
+@hydra.main(version_base=None, config_path="../../configs/uhd/video", config_name="clip")
 def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()

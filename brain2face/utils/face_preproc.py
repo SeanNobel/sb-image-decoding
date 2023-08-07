@@ -2,6 +2,7 @@ import os, sys
 import numpy as np
 import torch
 import cv2
+import scipy.signal as signal
 from termcolor import cprint
 from tqdm import tqdm
 from typing import Tuple, Optional
@@ -29,6 +30,8 @@ class FacePreprocessor:
 
         self.fps = int(self.cap.get(cv2.CAP_PROP_FPS))
         self.segment_len = self.fps * args.seq_len  # 90
+
+        self.resample_nsamples = args.vision.resample_nsamples
 
         self.extractor = FaceExtractor(
             args.face_extractor, input_size, "center", self.fps
@@ -87,5 +90,8 @@ class FacePreprocessor:
         y = np.stack(y_list)  # ( ~100000, 256, 256, 3 )
         y = crop_and_segment(y, self.segment_len)
         # ( ~1000, 90, 256, 256, 3 )
+
+        if self.segment_len != self.resample_nsamples:
+            y = signal.resample(y, self.resample_nsamples, axis=1)
 
         return y, drop_segments

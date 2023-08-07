@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: init
+preproc_name: downsampled
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
