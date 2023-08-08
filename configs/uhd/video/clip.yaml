@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: init_downsampled
+preproc_name: init
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
@@ -51,7 +51,7 @@ vision:
   # type: dynamic # static (image) or dynamic (video)
   pretrained: False # There is no pretrained CLIP model for video
   model: ViViT
-  resample_nsamples: 16
+  resample_nsamples: 90 # 16 FIXME: hard-coded
 
 vision_encoder:
   image_size: 128
