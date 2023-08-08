@@ -10,23 +10,33 @@
 
 ### YLab GOD
 
-- 訓練とテストを混ぜてからdeep splitするmixes_deep splitを作成，CLIP sweepを開始．そのパフォーマンスによってはpriorの訓練に移る．
+- (8/7) 訓練とテストを混ぜてからdeep splitするmixes_deep splitを作成，CLIP sweepを開始．そのパフォーマンスによってはpriorの訓練に移る．
 
 ### UHD
 
-- Videoを一つのCLIP embeddingにしてやるパイプラインのためのdownsamplingスクリプトのおわり待ち．おわったら実行：`python brain2face/train_clip.py config_path=uhd/video/clip.yaml`
+- (8/8) Diffusion priorの訓練でロスがnanになったが，元々はならず大きな変更も加えていない．パイプライン全体の訓練を最初からやってみる．今は30Hzのまま時間次元ありCLIPを学習中．
+
+- (8/8) Downsamplingスクリプトがおわったが，CLIP embeddingが時間次元を持ったままのパイプラインを作ることにした．時間次元をバッチ次元とflattenしてのprior trainingを走らせている．Video decoderの訓練はすでに前やってある（分散を学習しないことで学習を安定させたやつ）．
+
+- (8/7) Videoを一つのCLIP embeddingにしてやるパイプラインのためのdownsamplingスクリプトのおわり待ち．おわったら実行：`python brain2face/train_clip.py config_path=uhd/video/clip.yaml`
 
 ## TODOs
+
+Aug
+
+- [ ] dalle2_videoのサンプリングメソッドたちを動画に対応させる．
+
+Jul
 
 - [x] 他のconfigファイルの内容をimage.yamlに合わせる
 - [x] Preprocessingのfaceの出力を.npyから.h5にする
 - [x] args.face.encoded=Trueでも元の画像を保存できるようにする
-  - [ ] この過程でargs.face.pretrainedに変わったので，YLabGOD以外も対応させる
-  - [ ] train_clip.pyも今動かない状態
+  - [x] この過程でargs.face.pretrainedに変わったので，YLabGOD以外も対応させる
+  - [x] train_clip.pyも今動かない状態
 - [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
   - Known subjectでのactivationとの類似度とかを取ってそれで重みづけするとか
 - [ ] 毎回のsweepで一つchance modelが走るようにする
-- [ ] YLabGOD以外も`y_reformer`を`loader`にする
+- [x] YLabGOD以外も`y_reformer`を`loader`にする
 - YLab
   - [x] チャネル空間座標の導入
   - [x] 実時間を3秒からハイパラにする
@@ -37,7 +47,7 @@
 - UHD
   - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
 - Decoder training
-  - [ ] `NeuroDiffusionCLIPEmbVideoDataset`のメモリー問題を解決
+  - [x] `NeuroDiffusionCLIPEmbVideoDataset`のメモリー問題を解決
 
 <br>
 
@@ -186,7 +196,13 @@ python brain2face/train_decoder_distributed.py
 #### Image
 
 ```bash
-python brain2face/eval_pipeline.py config_path=uhd/image.yaml
+python brain2face/eval_image_pipeline.py config_path=uhd/image/clip.yaml
+```
+
+#### Video
+
+```bash
+python brain2face/eval_video_pipeline.py config_path=uhd/video/clip.yaml
 ```
 
 <br>
