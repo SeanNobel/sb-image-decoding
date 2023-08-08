@@ -2,6 +2,7 @@ dataset: UHD
 train_name: video # The one specified in CLIP training config.
 clip_train_name: video
 type: video
+temporal_emb: True
 
 dim: 512
 depth: 6
@@ -12,9 +13,9 @@ image_embed_dim: 512
 timesteps: 100
 cond_drop_prob: 0.2
 
-epochs: 500
+epochs: 50
 # train_ratio: 0.8
-batch_size: 64
+batch_size: 2 # For embs with temporal dimension, batch_size is multiplied by timesteps.
 lr: 3.0e-4
 wd: 1.0e-2
 ema_beta: 0.99
@@ -26,9 +27,9 @@ seed: 1234
 
 use_wandb: False
 wandb:
-  project: diffusion_prior
+  project: nd_uhd_prior
   entity: sensho
-  run_name: uhd_video
+  run_name: dynamic-embs
 
 
 lr_scheduler: none # cosine or multistep or none

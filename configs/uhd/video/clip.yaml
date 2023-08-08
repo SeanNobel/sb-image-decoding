@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: downsampled
+preproc_name: init_downsampled
 
 data_root: /mnt/tsukuyomi/uhd-eeg/
 # ica_data_root: /home/sensho/brain2face/driving_ica/
@@ -56,8 +56,7 @@ vision:
 vision_encoder:
   image_size: 128
   patch_size: 32
-  fps: ${fps}
-  seq_len: ${seq_len}
+  num_frames: ${vision.resample_nsamples}
   dim: ${F}
   depth: 2
   in_channels: 3

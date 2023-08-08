@@ -38,10 +38,12 @@ def train() -> None:
             config=wandb.config,
             save_code=True,
         )
-        wandb.run.name = args.run_name
+        wandb.run.name = args.train_name
         wandb.run.save()
 
-    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.type, args.run_name)
+    run_dir = os.path.join(
+        "runs/decoder", args.dataset.lower(), args.type, args.train_name
+    )
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -53,8 +55,12 @@ def train() -> None:
     # -----------------------
     resample_nsamples = args.frame_numbers[0]
 
-    train_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset, resample_nsamples)
-    test_set = NeuroDiffusionCLIPEmbVideoDataset(args.dataset, resample_nsamples, train=False)  # fmt: skip
+    train_set = NeuroDiffusionCLIPEmbVideoDataset(
+        args.dataset, args.clip_train_name, resample_nsamples
+    )
+    test_set = NeuroDiffusionCLIPEmbVideoDataset(
+        args.dataset, args.clip_train_name, resample_nsamples, train=False
+    )
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
@@ -161,8 +167,8 @@ def train() -> None:
                 "train_loss_unet2": np.mean(train_losses_unet2),
                 "test_loss_unet1": np.mean(test_losses_unet1),
                 "test_loss_unet2": np.mean(test_losses_unet2),
-                "lrate_unet1": getattr(decoder_trainer, f"optim0").param_groups[0]["lr"],
-                "lrate_unet2": getattr(decoder_trainer, f"optim1").param_groups[0]["lr"],
+                "lrate_unet1": getattr(decoder_trainer, "optim0").param_groups[0]["lr"],
+                "lrate_unet2": getattr(decoder_trainer, "optim1").param_groups[0]["lr"],
             }
             wandb.log(performance_now)
 

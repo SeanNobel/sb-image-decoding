@@ -8,14 +8,9 @@ from einops.layers.torch import Rearrange
 
 from typing import Optional, Union
 
-# helpers
-
 
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
-
-
-# classes
 
 
 class PreNorm(nn.Module):
@@ -183,8 +178,7 @@ class ViViT(nn.Module):
         self,
         image_size,
         patch_size,
-        fps,
-        seq_len,
+        num_frames,
         dim=192,
         depth=4,
         heads=3,
@@ -196,8 +190,6 @@ class ViViT(nn.Module):
         scale_dim=4,
     ):
         super().__init__()
-        
-        num_frames = seq_len * fps
 
         # assert pool in {'cls',
         #                 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
@@ -278,14 +270,14 @@ class OpenFaceMapper(nn.Module):
         self.conv2 = nn.Conv1d(
             hid_dim, out_channels, kernel_size=3, stride=1, padding="same"
         )
-        
+
         if reduce_time:
             self.flatten = nn.Flatten()
             self.linear = nn.Linear(
                 in_features=out_channels * int(seq_len * fps),
                 out_features=out_channels * time_multiplier,
             )
-            
+
         else:
             self.linear = None
 
@@ -294,7 +286,7 @@ class OpenFaceMapper(nn.Module):
         X = F.gelu(self.batchnorm(X))
 
         X = F.gelu(self.conv2(X))
-        
+
         if self.linear is not None:
             X = self.linear(self.flatten(X))
 
