@@ -26,6 +26,7 @@ from clip.model import CLIP
 from brain2face.utils.brain_preproc import segment_then_blcorr
 from brain2face.utils.train_utils import sequential_apply
 from brain2face.utils.preproc_utils import crop_and_segment, crop_longer, sequential_load
+from brain2face.utils.timer import timer
 
 mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
@@ -449,7 +450,7 @@ class CollateFunctionForVideoHDF5(nn.Module):
             # NOTE: item[2] is subject_idx and item[1] is sample_idx
             Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
 
-            Y = self._video_transforms(Y, self.frame_size)
+            Y = self._video_transforms(Y, self.resample_nsamples, self.frame_size)
 
             # Y = Y.permute(0, 1, 4, 2, 3)
 
@@ -469,8 +470,8 @@ class CollateFunctionForVideoHDF5(nn.Module):
     @staticmethod
     def _video_transforms(
         Y: np.ndarray,
-        resample_nsamples: Optional[int] = None,
-        frame_size: Optional[int] = None,
+        resample_nsamples: Optional[int],
+        frame_size: Optional[int],
         to_grayscale: bool = False,
     ) -> torch.Tensor:
         """
@@ -483,10 +484,13 @@ class CollateFunctionForVideoHDF5(nn.Module):
         Returns:
             Y: ( batch_size, segment_len=90, 3, vision_encoder.image_size, vision_encoder.image_size )
         """
-        if resample_nsamples is not None:
-            Y = signal.resample(Y, resample_nsamples, axis=1)
-
         segment_len = Y.shape[1]
+
+        if resample_nsamples is not None:
+            if resample_nsamples == segment_len:
+                cprint("resample_nsamples is equal to segment_len. Consider not passing resample_nsamples to collate function.", "yellow")  # fmt: skip
+
+            Y = signal.resample(Y, resample_nsamples, axis=1)
 
         Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
         # ( samples*segment_len, 3, size, size )
@@ -548,15 +552,15 @@ class StyleGANCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
 
 class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset: str, train: bool = True) -> None:
+    def __init__(self, dataset: str, train_name: str, train: bool = True) -> None:
         super().__init__()
 
-        self.Z = torch.load(
-            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/brain_embds.pt"
+        prefix = os.path.join(
+            "data/clip_embds", dataset.lower(), train_name, "train" if train else "test"
         )
-        self.Y = torch.load(
-            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/image_embds.pt"
-        )
+
+        self.Z = torch.load(os.path.join(prefix, "brain_embds.pt"))
+        self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
 
         assert self.Z.shape == self.Y.shape
 
@@ -568,15 +572,15 @@ class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
 
 
 class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset: str, train: bool = True) -> None:
+    def __init__(self, dataset: str, train_name: str, train: bool = True) -> None:
         super().__init__()
 
-        self.Y = torch.load(
-            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/vision_embds.pt"
+        prefix = os.path.join(
+            "data/clip_embds", dataset.lower(), train_name, "train" if train else "test"
         )
-        self.Y_img = self._load_images(
-            f"data/clip_embds/{dataset.lower()}/{'train' if train else 'test'}/images"
-        )
+
+        self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
+        self.Y_img = self._load_images(os.path.join(prefix, "images"))
 
         assert len(self.Y) == len(self.Y_img)
 
@@ -601,21 +605,21 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         dataset: str,
+        train_name: str,
         resample_nsamples: Optional[int] = None,
         train: bool = True,
     ) -> None:
         super().__init__()
 
-        self.Y_embed = torch.load(
-            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/vision_embds.pt"
+        prefix = os.path.join(
+            "data/clip_embds", dataset.lower(), train_name, "train" if train else "test"
         )
+
+        self.Y_embed = torch.load(os.path.join(prefix, "vision_embds.pt"))
         # FIXME
         # self.Y_embed = self.Y_embed[:128]
 
-        self.Y_ref = h5py.File(
-            f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos.h5",
-            "r",
-        )["videos"]
+        self.Y_ref = h5py.File(os.path.join(prefix, "videos.h5"), "r")["videos"]
 
         # self.Y = self._load_videos(
         #     f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"

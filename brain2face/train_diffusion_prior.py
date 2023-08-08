@@ -15,7 +15,7 @@ from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior, DiffusionPrior
 from brain2face.datasets import NeuroDiffusionCLIPEmbDataset
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="diffusion_prior")
+@hydra.main(version_base=None, config_path="../configs/uhd/video", config_name="prior")
 def train(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -30,10 +30,10 @@ def train(args: DictConfig) -> None:
             config=wandb.config,
             save_code=True,
         )
-        wandb.run.name = args.run_name
+        wandb.run.name = args.train_name
         wandb.run.save()
 
-    run_dir = os.path.join("runs/prior", args.dataset.lower(), args.run_name)
+    run_dir = os.path.join("runs/prior", args.dataset.lower(), args.train_name)
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -41,8 +41,8 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    train_set = NeuroDiffusionCLIPEmbDataset(args.dataset)
-    test_set = NeuroDiffusionCLIPEmbDataset(args.dataset, train=False)
+    train_set = NeuroDiffusionCLIPEmbDataset(args.dataset, args.clip_train_name)
+    test_set = NeuroDiffusionCLIPEmbDataset(args.dataset, args.clip_train_name, train=False)  # fmt: skip
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
@@ -82,24 +82,6 @@ def train(args: DictConfig) -> None:
         ema_update_every=args.ema_update_every,
     )
 
-    # params = diffusion_prior.parameters()
-
-    # optimizer = torch.optim.Adam(params, lr=args.lr)
-
-    # if args.lr_scheduler == "cosine":
-    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #         optimizer, T_max=args.epochs, eta_min=args.lr * 0.01
-    #     )
-    # elif args.lr_scheduler == "multistep":
-    #     mlstns = [int(m * args.epochs) for m in args.lr_multistep_mlstns]
-    #     scheduler = torch.optim.lr_scheduler.MultiStepLR(
-    #         optimizer, milestones=mlstns, gamma=args.lr_step_gamma
-    #     )
-    # elif args.lr_scheduler == "none":
-    #     scheduler = None
-    # else:
-    #     raise ValueError
-
     # -----------------------
     #     Strat training
     # -----------------------
@@ -113,38 +95,35 @@ def train(args: DictConfig) -> None:
         for Z, Y in tqdm(train_loader):
             Z, Y = Z.to(device), Y.to(device)
 
+            # NOTE: CLIP embeddings with temporal dimension
+            if args.temporal_emb:
+                Z = Z.permute(0, 2, 1).contiguous().view(-1, Z.shape[1])
+                Y = Y.permute(0, 2, 1).contiguous().view(-1, Y.shape[1])
+
             loss = diffusion_prior_trainer(text_embed=Z, image_embed=Y)
             # , max_batch_size=4)
 
             train_losses.append(loss)
-            # train_top10_accs.append(train_top10_acc)
-            # train_top1_accs.append(train_top1_acc)
 
             diffusion_prior_trainer.update()
-
-            # optimizer.zero_grad()
-
-            # loss.backward()
-
-            # optimizer.step()
 
         # diffusion_prior.eval()
         for Z, Y in test_loader:
             Z, Y = Z.to(device), Y.to(device)
 
-            # with torch.no_grad():
+            if args.temporal_emb:
+                Z = Z.permute(0, 2, 1).contiguous().view(-1, Z.shape[1])
+                Y = Y.permute(0, 2, 1).contiguous().view(-1, Y.shape[1])
+
             loss = diffusion_prior_trainer(text_embed=Z, image_embed=Y)
             # , max_batch_size=4)
 
             test_losses.append(loss)
-            # test_top10_accs.append(test_top10_acc)
-            # test_top1_accs.append(test_top1_acc)
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
             f"avg train loss: {np.mean(train_losses):.3f} | ",
             f"avg test loss: {np.mean(test_losses):.3f} | ",
-            # f"lr: {optimizer.param_groups[0]['lr']:.5f}",
         )
 
         if args.use_wandb:
@@ -152,12 +131,9 @@ def train(args: DictConfig) -> None:
                 "epoch": epoch,
                 "train_loss": np.mean(train_losses),
                 "test_loss": np.mean(test_losses),
-                # "lrate": optimizer.param_groups[0]["lr"],
+                "lrate": diffusion_prior_trainer.optimizer.param_groups[0]["lr"],
             }
             wandb.log(performance_now)
-
-        # if scheduler is not None:
-        #     scheduler.step()
 
         torch.save(diffusion_prior.state_dict(), os.path.join(run_dir, "prior_last.pt"))
 

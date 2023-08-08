@@ -76,8 +76,12 @@ def train():
 
     if len(train_set.Y_ref) > 0:
         assert len(train_set.Y_ref) == len(test_set.Y_ref)
+
         collate_fn = CollateFunctionForVideoHDF5(
-            train_set.Y_ref, args.vision_encoder.image_size
+            train_set.Y_ref,
+            # NOTE: Resampling in collate function is too costly.
+            # resample_nsamples=args.vision.resample_nsamples,
+            frame_size=args.vision_encoder.image_size,
         )
     else:
         collate_fn = None
