@@ -160,6 +160,7 @@ def pipeline(_args: DictConfig) -> None:
         prior=diffusion_prior,
         decoder=decoder,
         temporal_emb=args_prior.temporal_emb,
+        prior_num_samples=1,  # NOTE: Somehow setting this number larger reduces batch size. Why?
     )
 
     # ----------------
@@ -169,22 +170,25 @@ def pipeline(_args: DictConfig) -> None:
 
     X = X.to(device_clip)
 
-    brain_emb = sequential_apply(
-        X, brain_encoder, args_clip.batch_size, subject_idxs=subject_idxs
-    ).to(device_dalle2)
+    brain_embed = brain_encoder(X, subject_idxs).to(device_dalle2)
 
-    images = sequential_apply(brain_emb, dalle2, batch_size=256)
+    videos = dalle2(text_embed=brain_embed)
     # , return_pil_images=True)
 
-    images = (images.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
-    # ( timesteps, 256, 256, 3 )
+    video = videos[0]
+    cprint(video, "yellow")
+    cprint(video.mean(), "yellow")
+    cprint(video.shape, "yellow")
+
+    video = (video.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
+    # ( t=90, 256, 256, 3 )
 
     fmt = cv2.VideoWriter_fourcc("m", "p", "4", "v")
     writer = cv2.VideoWriter(
-        "assets/generated_videos/first_render.mp4", fmt, 30, tuple(images.shape[1:3])
+        "assets/generated_videos/temporal_conv.mp4", fmt, 30, tuple(video.shape[1:3])
     )
 
-    for frame in images:
+    for frame in video:
         writer.write(frame)
         # cv2.imwrite(f"assets/generated_images/{i}.jpg", np.array(image, dtype=np.uint8))
 
