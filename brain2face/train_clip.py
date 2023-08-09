@@ -135,9 +135,7 @@ def train():
     classifier = Classifier(args)
 
     trained_models = Models(
-        brain_encoder,
-        vision_encoder if not args.vision.pretrained else None,
-        loss_func
+        brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
     )
 
     # ---------------------

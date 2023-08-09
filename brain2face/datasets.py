@@ -230,16 +230,16 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             loader = partial(self._loader, args=args, train=train)
 
         super().__init__(args, subject_paths, train, loader)
-        
+
     @staticmethod
     def _mixed_deep_loader(
         args, subject_path: str, train: bool, _loader: Callable
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         X, Y = [], []
-        
+
         for train_orig in [True, False]:
             _X, _Y = _loader(args, subject_path, train_orig)
-            
+
             split_idx = int(_X.shape[0] * args.train_ratio)
             if train:
                 _X = _X[:split_idx]
@@ -247,10 +247,10 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             else:
                 _X = _X[split_idx:]
                 _Y = _Y[split_idx:]
-                
+
             X.append(_X)
             Y.append(_Y)
-        
+
         return torch.cat(X), torch.cat(Y)
 
     @staticmethod
@@ -368,8 +368,14 @@ class YLabE0030CLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
 
 class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
-    def __init__(self, args, train: bool = True) -> None:
+    def __init__(
+        self, args, train: bool = True, session_id: Optional[int] = None
+    ) -> Optional[List[str]]:
         session_paths = glob.glob(f"data/preprocessed/uhd/{args.preproc_name}/*/")
+
+        if session_id is not None:
+            orig_session_paths = session_paths.copy()
+            session_paths = [session_paths[session_id]]
 
         if not args.reduce_time:
             # y_reformer = partial(
@@ -391,6 +397,9 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
 
         # FIXME: I've forgot to take first 128 channels from 139 while preprocessing
         self.X = self.X[:, : args.num_channels]
+
+        if session_id is not None:
+            return orig_session_paths
 
     @staticmethod
     def _loader(
@@ -690,23 +699,35 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
 
 class UHDPipelineDataset(UHDCLIPDataset):
     def __init__(self, args, session_id: int, train: bool = True) -> None:
-        super().__init__(args, train)
+        orig_session_paths = super().__init__(args, train, session_id=session_id)
 
-        sample_idxs = torch.where(self.subject_idx == session_id)[0]
-        self.X = self.X[sample_idxs]
-        self.Y = self.Y[sample_idxs]
-        self.subject_idx = self.subject_idx[sample_idxs]
+        # sample_idxs = torch.where(self.subject_idx == session_id)[0]
+        # self.X = self.X[sample_idxs]
+        # NOTE: We don't need face for the pipeline.
+        # self.Y = self.Y[sample_idxs]
+        # self.subject_idx = self.subject_idx[sample_idxs]
 
-        self.X = self.to_sequence(args, self.X)
+        # self.X = self.to_sequence(args, self.X)
         self.subject_idx = torch.full((len(self.X),), session_id, dtype=torch.uint8)
+
+        # FIXME: This might not work for DynamicChanLoc2d.
+        self.subject_names = [path.split("/")[-2] for path in orig_session_paths]
 
     def __getitem__(self, i):
         return self.X[i], self.subject_idx[i]
 
     @staticmethod
     def to_sequence(args, X: torch.Tensor) -> torch.Tensor:
-        X = X.permute(0, 2, 1)
-        X = X.contiguous().view(-1, X.shape[-1])
+        """This method was only used when tried to make a video from totally independent
+        runs of the pipeline from seq_len EEG samples. To do that this method takes EEG
+        samples with sliding window and stacks them.
+        Args:
+            X ( samples, channels, timesteps ): _description_
+        Returns:
+            X ( _samples, channels, timesteps ): _description_
+        """
+        X = X.permute(0, 2, 1)  # ( s, t, c )
+        X = X.contiguous().view(-1, X.shape[-1])  # ( s * t, c )
 
         X = X[:1200]  # 10 seconds
 
