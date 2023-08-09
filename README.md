@@ -14,6 +14,8 @@
 
 ### UHD
 
+- (8/9) dalle2_videoのサンプリングに関するメソッドが動画に対応したので，パイプライン走らせられる状態になった．依然時間次元30HzのCLIP学習待ち．
+
 - (8/8) Diffusion priorの訓練でロスがnanになったが，元々はならず大きな変更も加えていない．パイプライン全体の訓練を最初からやってみる．今は30Hzのまま時間次元ありCLIPを学習中．
 
 - (8/8) Downsamplingスクリプトがおわったが，CLIP embeddingが時間次元を持ったままのパイプラインを作ることにした．時間次元をバッチ次元とflattenしてのprior trainingを走らせている．Video decoderの訓練はすでに前やってある（分散を学習しないことで学習を安定させたやつ）．
@@ -24,7 +26,7 @@
 
 Aug
 
-- [ ] dalle2_videoのサンプリングメソッドたちを動画に対応させる．
+- [x] dalle2_videoのサンプリングメソッドたちを動画に対応させる．
 
 Jul
 
@@ -191,7 +193,7 @@ mkdir .tracker_data
 python brain2face/train_decoder_distributed.py
 ```
 
-### Finally generate face images from EEG
+### Finally generate face images / videos from EEG
 
 #### Image
 
