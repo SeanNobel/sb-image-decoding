@@ -174,9 +174,9 @@ python brain2face/eval_clip.py config_path=uhd/video/clip.yaml
 
 ```bash
 # Normal
-python brain2face/train_diffusion_prior.py
+python brain2face/train_prior.py
 # Distributed
-python brain2face/train_diffusion_prior_distributed.py
+python brain2face/distributed_train_prior.py
 ```
 
 ### Run DALLE-2 decoder training

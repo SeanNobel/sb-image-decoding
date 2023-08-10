@@ -603,6 +603,9 @@ class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
         self.Z = torch.load(os.path.join(prefix, "brain_embds.pt"))
         self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
 
+        cprint(f"Loaded brain embeddings {self.Z.shape} from {prefix}", "cyan")
+        cprint(f"Loaded vision embeddings {self.Y.shape} from {prefix}", "cyan")
+
         assert self.Z.shape == self.Y.shape
 
     def __len__(self):
