@@ -223,30 +223,37 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         )
 
         if args.split == "mixed_deep":
-            loader = partial(
-                self._mixed_deep_loader, args=args, train=train, _loader=self._loader
-            )
+            loader = partial(self._mixed_loader, args, train=train, _loader=self._loader)
+        elif args.split == "mixed_shallow":
+            loader = partial(self._mixed_loader, args, train=None, _loader=self._loader)
         else:
             loader = partial(self._loader, args=args, train=train)
 
         super().__init__(args, subject_paths, train, loader)
 
     @staticmethod
-    def _mixed_deep_loader(
-        args, subject_path: str, train: bool, _loader: Callable
+    def _mixed_loader(
+        args, subject_path: str, train: Optional[bool], _loader: Callable
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Splits X and Y deeply if train (bool) is not None. If train is None, it is for mixed_shallow
+        split and that will be done by torch.utils.data.random_split in training script.
+        """
         X, Y = [], []
 
         for train_orig in [True, False]:
             _X, _Y = _loader(args, subject_path, train_orig)
 
-            split_idx = int(_X.shape[0] * args.train_ratio)
-            if train:
-                _X = _X[:split_idx]
-                _Y = _Y[:split_idx]
-            else:
-                _X = _X[split_idx:]
-                _Y = _Y[split_idx:]
+            # NOTE: Split is done here (not above in DatasetBase) as I need to put original
+            #       train and test equally to new train and test.
+            if train is not None:
+                split_idx = int(_X.shape[0] * args.train_ratio)
+                if train:
+                    _X = _X[:split_idx]
+                    _Y = _Y[:split_idx]
+                else:
+                    _X = _X[split_idx:]
+                    _Y = _Y[split_idx:]
 
             X.append(_X)
             Y.append(_Y)
