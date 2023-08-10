@@ -51,7 +51,7 @@ def train():
     # -----------------------
     #       Dataloader
     # -----------------------
-    if args.split == "shallow":
+    if args.split in ["shallow", "mixed_shallow"]:
         dataset = eval(f"{args.dataset}CLIPDataset")(args)
 
         train_size = int(len(dataset.X) * args.train_ratio)

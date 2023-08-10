@@ -10,11 +10,17 @@
 
 ### YLab GOD
 
-- (8/7) 訓練とテストを混ぜてからdeep splitするmixes_deep splitを作成，CLIP sweepを開始．そのパフォーマンスによってはpriorの訓練に移る．
+- (8/10) mixed_deepでもまったくtest accが上がらなかったので，mixed_shallowを作成，CLIP sweepを開始．
+
+- (8/7) 訓練とテストを混ぜてからdeep splitするmixed_deep splitを作成，CLIP sweepを開始．そのパフォーマンスによってはpriorの訓練に移る．
 
 ### UHD
 
+- (8/10) CLIP学習がおわっていないがevalを回してclip_embdsをいったん作ってprior訓練してみる．
+
 - (8/9) dalle2_videoのサンプリングに関するメソッドが動画に対応したので，パイプライン走らせられる状態になった．依然時間次元30HzのCLIP学習待ち．
+  - 学習済みCLIPモデル：`runs/uhd/video/d_drop-0.3_/`
+
 
 - (8/8) Diffusion priorの訓練でロスがnanになったが，元々はならず大きな変更も加えていない．パイプライン全体の訓練を最初からやってみる．今は30Hzのまま時間次元ありCLIPを学習中．
 

@@ -65,7 +65,7 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-split: mixed_deep # none or mixed_deep
+split: mixed_shallow # none or mixed_deep or mixed_shallow
 # Split is predefined as different sessions for ECoG GOD dataset, but
 # mixed_deep first mixes train and val, then splits them deeply.
 train_ratio: 0.8
