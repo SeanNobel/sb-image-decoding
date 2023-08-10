@@ -35,6 +35,7 @@ def infer(args: DictConfig) -> None:
     torch.manual_seed(args.seed)
 
     run_dir = get_run_dir(args)
+    cprint(f"Using model paramas in: {run_dir}", "cyan")
 
     save_dir = os.path.join("data/clip_embds", args.dataset.lower(), args.train_name)
     os.makedirs(save_dir, exist_ok=True)
@@ -67,7 +68,8 @@ def infer(args: DictConfig) -> None:
     if len(train_set.Y_ref) > 0:
         assert len(train_set.Y_ref) == len(test_set.Y_ref)
         collate_fn = CollateFunctionForVideoHDF5(
-            train_set.Y_ref, args.vision_encoder.image_size
+            train_set.Y_ref,
+            frame_size=args.vision_encoder.image_size,
         )
     else:
         collate_fn = None
