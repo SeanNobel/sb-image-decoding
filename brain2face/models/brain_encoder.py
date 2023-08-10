@@ -278,7 +278,7 @@ class SubjectBlockSA(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, k, D1, D2):
+    def __init__(self, k: int, D1: int, D2: int, ksize: int = 3):
         super(ConvBlock, self).__init__()
 
         self.k = k
@@ -288,7 +288,7 @@ class ConvBlock(nn.Module):
         self.conv0 = nn.Conv1d(
             in_channels=self.in_channels,
             out_channels=self.D2,
-            kernel_size=3,
+            kernel_size=ksize,
             padding="same",
             dilation=2 ** ((2 * k) % 5),
         )
@@ -296,7 +296,7 @@ class ConvBlock(nn.Module):
         self.conv1 = nn.Conv1d(
             in_channels=self.D2,
             out_channels=self.D2,
-            kernel_size=3,
+            kernel_size=ksize,
             padding="same",
             dilation=2 ** ((2 * k + 1) % 5),
         )
@@ -304,7 +304,7 @@ class ConvBlock(nn.Module):
         self.conv2 = nn.Conv1d(
             in_channels=self.D2,
             out_channels=2 * self.D2,
-            kernel_size=3,
+            kernel_size=ksize,
             padding="same",
             dilation=2,  # NOTE: The text doesn't say this, but the picture shows dilation=2
         )
@@ -363,7 +363,10 @@ class BrainEncoder(nn.Module):
 
         self.conv_blocks = nn.Sequential()
         for k in range(5):
-            self.conv_blocks.add_module(f"conv{k}", ConvBlock(k, self.D1, self.D2))
+            self.conv_blocks.add_module(
+                f"conv{k}",
+                ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
+            )
 
         self.conv_final1 = nn.Conv1d(
             in_channels=self.D2,
