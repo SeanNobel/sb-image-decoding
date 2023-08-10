@@ -62,23 +62,27 @@ def train():
             generator=torch.Generator().manual_seed(args.seed),
         )
 
+        Y_ref = dataset.Y_ref
+        
         subject_names = dataset.subject_names
 
     # NOTE: If not shallow, split is done inside dataset class
     else:
         train_set = eval(f"{args.dataset}CLIPDataset")(args)
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
-
-        subject_names = train_set.subject_names
+        
         test_size = len(test_set.X)
+
+        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths." # fmt: skip
+        Y_ref = train_set.Y_ref
+        
+        subject_names = train_set.subject_names
 
     cprint(f"Test size: {test_size}", "cyan")
 
-    if len(train_set.Y_ref) > 0:
-        assert len(train_set.Y_ref) == len(test_set.Y_ref)
-
+    if len(Y_ref) > 0:
         collate_fn = CollateFunctionForVideoHDF5(
-            train_set.Y_ref,
+            Y_ref,
             # NOTE: Resampling in collate function is too costly.
             # resample_nsamples=args.vision.resample_nsamples,
             frame_size=args.vision_encoder.image_size,
