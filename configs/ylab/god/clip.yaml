@@ -60,6 +60,8 @@ final_ksize: 2
 final_stride: 2
 head_activation: True
 time_multiplier: 1
+ksizes:
+  conv_block: 3
 biases:
   conv_block: True
   conv_subj_sa: True
@@ -97,8 +99,10 @@ sweep_config:
     name: test_top10_acc
     goal: maximize
   parameters:
-    d_drop:
-      values: [0.1, 0.2, 0.3]
+    ksizes.conv_block:
+      values: [3, 5, 7]
+    # d_drop:
+    #   values: [0.1, 0.2, 0.3]
     # seq_onset:
     #   values: [0.0, 0.5, 1.0, 1.5]
     # layout:

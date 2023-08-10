@@ -10,7 +10,7 @@
 
 ### YLab GOD
 
-- (8/10) mixed_deepでもまったくtest accが上がらなかったので，mixed_shallowを作成，CLIP sweepを開始．
+- (8/10) mixed_deepでもまったくtest accが上がらなかったので，mixed_shallowを作成，CLIP sweepを開始．ついでにconv blockのkernel sizeを3, 5, 7でsweep
 
 - (8/7) 訓練とテストを混ぜてからdeep splitするmixed_deep splitを作成，CLIP sweepを開始．そのパフォーマンスによってはpriorの訓練に移る．
 
