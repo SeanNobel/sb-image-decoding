@@ -74,7 +74,7 @@ def infer(args: DictConfig) -> None:
 
     if len(Y_ref) > 0:
         collate_fn = CollateFunctionForVideoHDF5(
-            train_set.Y_ref,
+            Y_ref,
             frame_size=args.vision_encoder.image_size,
         )
     else:
@@ -158,8 +158,19 @@ def infer(args: DictConfig) -> None:
             else:
                 Y = vision_encoder(Y)
 
+            assert Z.shape == Y.shape, f"Z.shape: {Z.shape}, Y.shape: {Y.shape}"
+            b, d, t = Z.shape
+
+            Z = Z.reshape(b, -1)
+            Y = Y.reshape(b, -1)
+
             Z /= Z.norm(dim=-1, keepdim=True)
             Y /= Y.norm(dim=-1, keepdim=True)
+
+            Z = Z.reshape(b, d, t)
+            Y = Y.reshape(b, d, t)
+
+            cprint(Z.mean(), "yellow")
 
             Z_list.append(Z.cpu())
             Y_list.append(Y.cpu())
