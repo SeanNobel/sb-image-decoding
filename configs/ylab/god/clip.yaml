@@ -99,12 +99,14 @@ sweep_config:
     name: test_top10_acc
     goal: maximize
   parameters:
-    ksizes.conv_block:
-      values: [3, 5, 7]
+    # ksizes.conv_block:
+    #   values: [3, 5, 7]
     # d_drop:
     #   values: [0.1, 0.2, 0.3]
     # seq_onset:
     #   values: [0.0, 0.5, 1.0, 1.5]
+    seq_len:
+      values: [2.0, 1.5, 1.0]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
     # biases.conv_block:
