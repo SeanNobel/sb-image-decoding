@@ -534,7 +534,7 @@ class CollateFunctionForVideoHDF5(nn.Module):
             Y = signal.resample(Y, resample_nsamples, axis=1)
 
         Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
-        # ( samples*segment_len, 3, size, size )
+        # ( batch_size * resample_nsamples, 3, size, size )
 
         video_transforms = []
 
@@ -552,7 +552,7 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = video_transforms(Y)
 
-        Y = Y.contiguous().view(-1, segment_len, *Y.shape[-3:])
+        Y = Y.contiguous().view(-1, resample_nsamples, *Y.shape[-3:])
 
         Y = Y.to(torch.float32) / 255.0
 
