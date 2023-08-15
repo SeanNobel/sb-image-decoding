@@ -63,19 +63,19 @@ def train():
         )
 
         Y_ref = dataset.Y_ref
-        
+
         subject_names = dataset.subject_names
 
     # NOTE: If not shallow, split is done inside dataset class
     else:
         train_set = eval(f"{args.dataset}CLIPDataset")(args)
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
-        
+
         test_size = len(test_set.X)
 
-        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths." # fmt: skip
+        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
         Y_ref = train_set.Y_ref
-        
+
         subject_names = train_set.subject_names
 
     cprint(f"Test size: {test_size}", "cyan")

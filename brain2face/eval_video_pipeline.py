@@ -2,6 +2,7 @@ import os, sys
 import numpy as np
 import cv2
 import torch
+import scipy.signal as signal
 from termcolor import cprint
 
 import hydra
@@ -36,6 +37,24 @@ def pipeline(_args: DictConfig) -> None:
     #       that pytorch-dalle2 uses
     device_clip = "cuda:2"
     device_dalle2 = "cuda:0"
+
+    brain_enc_path = os.path.join(run_dir_clip, "brain_encoder_best.pt")
+    prior_path = os.path.join(
+        "runs/prior",
+        args_clip.dataset.lower(),
+        args_prior.train_name,
+        "prior_last.pt",
+    )
+    decoder_path = os.path.join(
+        "runs/decoder",
+        args_clip.dataset.lower(),
+        args_decoder.type,
+        args_decoder.train_name,
+        "decoder_best.pt",
+    )
+    cprint(f"Loading brain encoder weights from {brain_enc_path}", "cyan")
+    cprint(f"Loading prior weights from {prior_path}", "cyan")
+    cprint(f"Loading decoder weights from {decoder_path}", "cyan")
 
     # ----------------
     #    Dataloader
@@ -79,16 +98,13 @@ def pipeline(_args: DictConfig) -> None:
             time_multiplier=args_clip.time_multiplier,
         ).to(device_clip)
 
-    weights_brain_enc = torch.load(
-        os.path.join(run_dir_clip, "brain_encoder_best.pt"), map_location=device_clip
-    )
+    brain_encoder.load_state_dict(torch.load(brain_enc_path, map_location=device_clip))
+    brain_encoder.eval()
+
     # NOTE: Taking num_subjects from the saved weights.
     # num_subjects = len(
     #     [key for key in weights_brain_enc.keys() if "subject_layer" in key]
     # )
-
-    brain_encoder.load_state_dict(weights_brain_enc)
-    brain_encoder.eval()
 
     # ---- Diffusion Prior ---- #
     prior_network = DiffusionPriorNetwork(
@@ -106,17 +122,7 @@ def pipeline(_args: DictConfig) -> None:
         condition_on_text_encodings=False,
     ).to(device_dalle2)
 
-    diffusion_prior.load_state_dict(
-        torch.load(
-            os.path.join(
-                "runs/prior",
-                args_clip.dataset.lower(),
-                args_prior.train_name,
-                "prior_last.pt",
-            ),
-            map_location=device_dalle2,
-        )
-    )
+    diffusion_prior.load_state_dict(torch.load(prior_path, map_location=device_dalle2))
 
     # ---- Decoder ---- #
     unet1 = UnetTemporalConv(
@@ -143,18 +149,7 @@ def pipeline(_args: DictConfig) -> None:
         learned_variance=False,
     ).to(device_dalle2)
 
-    decoder.load_state_dict(
-        torch.load(
-            os.path.join(
-                "runs/decoder",
-                args_clip.dataset.lower(),
-                args_decoder.type,
-                args_decoder.train_name,
-                "decoder_best.pt",
-            ),
-            map_location=device_dalle2,
-        )
-    )
+    decoder.load_state_dict(torch.load(decoder_path, map_location=device_dalle2))
 
     dalle2 = DALLE2Video(
         prior=diffusion_prior,
@@ -172,20 +167,30 @@ def pipeline(_args: DictConfig) -> None:
 
     brain_embed = brain_encoder(X, subject_idxs).to(device_dalle2)
 
+    # FIXME: Resampling from 90 to 16 frames as I cannot train video decoder with 90 frames.
+    brain_embed = signal.resample(brain_embed.cpu().numpy(), num=16, axis=-1)
+    brain_embed = torch.from_numpy(brain_embed).to(device_dalle2)
+    # brain_embed = brain_embed.mean(dim=-1)
+
+    cprint(brain_embed.shape, "yellow")
+
     videos = dalle2(text_embed=brain_embed)
     # , return_pil_images=True)
 
     video = videos[0]
-    cprint(video, "yellow")
-    cprint(video.mean(), "yellow")
-    cprint(video.shape, "yellow")
+
+    video = (video - video.min()) / (video.max() - video.min())
 
     video = (video.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
     # ( t=90, 256, 256, 3 )
 
+    cprint(video, "yellow")
+    cprint(video.mean(), "yellow")
+    cprint(video.shape, "yellow")
+
     fmt = cv2.VideoWriter_fourcc("m", "p", "4", "v")
     writer = cv2.VideoWriter(
-        "assets/generated_videos/temporal_conv.mp4", fmt, 30, tuple(video.shape[1:3])
+        "assets/generated_videos/temporal_conv.mp4", fmt, 5, tuple(video.shape[1:3])
     )
 
     for frame in video:
