@@ -18,7 +18,11 @@
 
 ### UHD
 
-- (8/15) Video Decoderを30Hzのまま訓練することはGPUメモリの不足でできないので，16Hzでやりなおし．パイプラインを走らせるときもDatasetやCollateFnでリサンプリングする．
+- (8/17) CLIP学習用のUnet3dEncoderを実装する．
+
+- (8/16) Unet3Dを実装する．
+
+- (8/15) Video Decoderを30Hzのまま訓練することはGPUメモリの不足でできないので，16サンプル(5.3Hzくらい)でやりなおし．パイプラインを走らせるときもDatasetやCollateFnでリサンプリングする．
 
 - (8/10) CLIP学習がおわっていないがevalを回してclip_embdsをいったん作ってprior訓練してみる．
 
