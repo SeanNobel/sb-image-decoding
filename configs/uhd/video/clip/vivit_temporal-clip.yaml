@@ -33,53 +33,57 @@ baseline_ratio: 0.2 # ratio compared to segment length
 
 eeg_load_bufsize: 1000 # samples
 
-
 # ==== Training ==== #
-project_name: neuro-diffusion_uhd_clip
-train_name: image # Will be updated when it's a sweep
-debug: False
+project_name: nd_uhd_clip
+train_name: unet3d
+debug: True
 
-dataset: UHD # UHD / YLabECoG / StyleGAN
+dataset: UHD
 
 montage_path: brain2face/utils/montages/electrodes_uhd.xml
 layout: ch_locations_2d
 
 F: 512 # CLIP embedding dimension
 
-reduce_time: True # Reduce video to image
+reduce_time: True # Keep as video if False
 
 vision:
-  type: static # static (image) or dynamic (video)
-  reduction: extract # extract or mean. Only for reduce_time: True
-  pretrained: False # Whether to embed images using pretrained CLIP model
-  model: ViT
+  # type: dynamic # static (image) or dynamic (video)
+  pretrained: True # There is no pretrained CLIP model for video
+  model: ViViT
   pretrained_model: ViT-B/32 # Used if pretrained is True
-  encoded: False # False is basically only for StyleGAN
-  
+  resample_nsamples: 90 # 16 FIXME: hard-coded
+  reduction: extract # none / mean / extract
+
 vision_encoder:
-  image_size: 256
+  image_size: 128
   patch_size: 32
+  num_frames: ${vision.resample_nsamples}
   dim: ${F}
-  depth: 6
-  heads: 16
-  mlp_dim: 2048
-  dropout: 0.1
-  emb_dropout: 0.1
+  depth: 2
+  in_channels: 3
 
 # Brain encoder
 D1: 270
 D2: 320
 K: 32
-d_drop: 0.1 # Channel distance for spatial dropout
+d_drop: 0.3 # Channel distance for spatial dropout
 # NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
 final_ksize: 2
 final_stride: 2
-head_activation: False
+head_activation: True
+time_multiplier: 1
+ksizes:
+  conv_block: 3
+biases:
+  conv_block: True
+  conv_subj_sa: True
+  linear_reduc_time: True
 
-split: shallow # shallow / deep / subject_random / subject_each
+split: deep # shallow / deep / subject_random / subject_each
 train_ratio: 0.8
 batch_size: 64
-lr: 0.005
+lr: 0.001
 lr_scheduler: multistep # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
@@ -91,7 +95,7 @@ accum_grad: False
 
 chance: False
 
-test_with_whole: True
+test_with_whole: False # It is not possible to test with whole for video (CPU memory)
 
 num_workers: 4
 
@@ -99,35 +103,19 @@ seed: 1234
 
 cuda_id: 2
 
-sweep_count: 20
+sweep_count: 3
 sweep_config:
-  method: bayes
+  method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    split:
-      values: [deep, shallow]
     d_drop:
-      values: [0.1, 0.3, 0.5]
-    vision.encoded:
-      values: [True, False]
-    head_activation:
-      values: [True, False]
-    final_ksize_stride:
-      values: [1, 2]
-    vision.reduction:
-      values: [extract, mean]
+      values: [0.3, 0.2, 0.4]
 
 # ==== Evaluation ==== #
 eval:
-  split: shallow
-  d_drop: 0.1
-  vision:
-    reduction: extract
-    encoded: False
-  head_activation: False
-  final_ksize_stride: 2
+  d_drop: 0.3
 
-as_h5: False
+as_h5: True
 for_webdataset: False

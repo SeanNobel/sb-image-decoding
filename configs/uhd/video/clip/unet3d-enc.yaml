@@ -35,7 +35,7 @@ eeg_load_bufsize: 1000 # samples
 
 # ==== Training ==== #
 project_name: nd_uhd_clip
-train_name: video
+train_name: unet3d
 debug: False
 
 dataset: UHD
@@ -45,21 +45,24 @@ layout: ch_locations_2d
 
 F: 512 # CLIP embedding dimension
 
-reduce_time: False # Keep as video if False
+reduce_time: True # This parameter is for models, not for preprocessing or dataclass.
 
 vision:
   # type: dynamic # static (image) or dynamic (video)
   pretrained: False # There is no pretrained CLIP model for video
-  model: ViViT
+  model: Unet3DEncoder
+  pretrained_model: ViT-B/32 # Used if pretrained is True
   resample_nsamples: 90 # 16 FIXME: hard-coded
+  reduction: none # none / mean / extract
 
 vision_encoder:
   image_size: 128
-  patch_size: 32
+  # patch_size: 32
   num_frames: ${vision.resample_nsamples}
   dim: ${F}
-  depth: 2
+  num_layers: 3
   in_channels: 3
+  init_conv_dim: 16
 
 # Brain encoder
 D1: 270

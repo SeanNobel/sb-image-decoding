@@ -1,5 +1,5 @@
 dataset: UHD
-train_name: unlearn-variance_16Hz
+train_name: unet3d
 clip_train_name: video
 type: video
 
@@ -11,7 +11,7 @@ unet2:
   dim: 16
   dim_mults: [1, 2, 4, 8, 16]
 
-image_embed_dim: 512
+video_embed_dim: 512
 channels: 3
 
 frame_sizes: [64, 128] # First Unet up to 128px, then Unet up to 256px
@@ -33,7 +33,7 @@ cuda_id: 0
 seed: 1234
 log_level: INFO
 
-use_wandb: True
+use_wandb: False
 wandb:
   project: nd_uhd_video-decoder
   entity: sensho
