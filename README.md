@@ -10,11 +10,19 @@
 
 ### YLab GOD
 
+- (8/14) 画像掲示からseq_len=0.5秒間のECoGを使っていたので情報が乗っていないのかもしれない．画像掲示から0.5-1.0, 1.0-1.5, 1.5-2.0秒間のECoGで訓練sweep
+
 - (8/10) mixed_deepでもまったくtest accが上がらなかったので，mixed_shallowを作成，CLIP sweepを開始．ついでにconv blockのkernel sizeを3, 5, 7でsweep
 
 - (8/7) 訓練とテストを混ぜてからdeep splitするmixed_deep splitを作成，CLIP sweepを開始．そのパフォーマンスによってはpriorの訓練に移る．
 
 ### UHD
+
+- (8/17) CLIP学習用のUnet3dEncoderを実装する．
+
+- (8/16) Unet3Dを実装する．
+
+- (8/15) Video Decoderを30Hzのまま訓練することはGPUメモリの不足でできないので，16サンプル(5.3Hzくらい)でやりなおし．パイプラインを走らせるときもDatasetやCollateFnでリサンプリングする．
 
 - (8/10) CLIP学習がおわっていないがevalを回してclip_embdsをいったん作ってprior訓練してみる．
 
@@ -174,14 +182,14 @@ python brain2face/eval_clip.py config_path=uhd/video/clip.yaml
 
 ```bash
 # Normal
-python brain2face/train_diffusion_prior.py
+python brain2face/train_prior.py
 # Distributed
-python brain2face/train_diffusion_prior_distributed.py
+python brain2face/distributed_train_prior.py
 ```
 
 ### Run DALLE-2 decoder training
 
-- Normal training
+#### Image
 
 ```bash
 # Normal
@@ -197,6 +205,12 @@ huggingface-cli login
 mkdir .tracker_data
 ## Run distributedtraining
 python brain2face/train_decoder_distributed.py
+```
+
+#### Video
+
+```bash
+nohup python brain2face/train_video_decoder.py config_path=uhd/video/decoder.yaml > logs/uhd/train_video_decoder.log &
 ```
 
 ### Finally generate face images / videos from EEG

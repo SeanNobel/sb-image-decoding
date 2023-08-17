@@ -35,6 +35,7 @@ def infer(args: DictConfig) -> None:
     torch.manual_seed(args.seed)
 
     run_dir = get_run_dir(args)
+    cprint(f"Using model paramas in: {run_dir}", "cyan")
 
     save_dir = os.path.join("data/clip_embds", args.dataset.lower(), args.train_name)
     os.makedirs(save_dir, exist_ok=True)
@@ -44,7 +45,7 @@ def infer(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    if args.split == "shallow":
+    if args.split in ["shallow", "mixed_shallow"]:
         dataset = eval(f"{args.dataset}CLIPDataset")(args)
 
         train_size = int(len(dataset.X) * args.train_ratio)
@@ -56,18 +57,25 @@ def infer(args: DictConfig) -> None:
             # Must use the same seed as train
         )
 
+        Y_ref = dataset.Y_ref
+
         subject_names = dataset.subject_names
+
     else:
         train_set = eval(f"{args.dataset}CLIPDataset")(args)
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
 
-        subject_names = train_set.subject_names
         test_size = len(test_set.X)
 
-    if len(train_set.Y_ref) > 0:
-        assert len(train_set.Y_ref) == len(test_set.Y_ref)
+        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
+        Y_ref = train_set.Y_ref
+
+        subject_names = train_set.subject_names
+
+    if len(Y_ref) > 0:
         collate_fn = CollateFunctionForVideoHDF5(
-            train_set.Y_ref, args.vision_encoder.image_size
+            Y_ref,
+            frame_size=args.vision_encoder.image_size,
         )
     else:
         collate_fn = None
@@ -150,8 +158,19 @@ def infer(args: DictConfig) -> None:
             else:
                 Y = vision_encoder(Y)
 
+            assert Z.shape == Y.shape, f"Z.shape: {Z.shape}, Y.shape: {Y.shape}"
+            b, d, t = Z.shape
+
+            Z = Z.reshape(b, -1)
+            Y = Y.reshape(b, -1)
+
             Z /= Z.norm(dim=-1, keepdim=True)
             Y /= Y.norm(dim=-1, keepdim=True)
+
+            Z = Z.reshape(b, d, t)
+            Y = Y.reshape(b, d, t)
+
+            cprint(Z.mean(), "yellow")
 
             Z_list.append(Z.cpu())
             Y_list.append(Y.cpu())

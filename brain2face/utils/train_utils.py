@@ -165,3 +165,10 @@ def sequential_apply(
                 )
             ]
         )
+
+
+def conv_output_size(input_size: int, ksize: int, stride: int, repetition: int):
+    for _ in range(repetition):
+        input_size = (input_size - ksize) // stride + 1
+
+    return input_size

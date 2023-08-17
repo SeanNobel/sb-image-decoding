@@ -20,7 +20,7 @@ from brain2face.datasets import (
     CollateFunctionForVideoHDF5,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
-from brain2face.models.face_encoders import ViT, ViViT, OpenFaceMapper
+from brain2face.models.vision_encoders import ViT, ViViT, Unet3DEncoder, OpenFaceMapper
 from brain2face.models.classifier import Classifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
@@ -63,19 +63,19 @@ def train():
         )
 
         Y_ref = dataset.Y_ref
-        
+
         subject_names = dataset.subject_names
 
     # NOTE: If not shallow, split is done inside dataset class
     else:
         train_set = eval(f"{args.dataset}CLIPDataset")(args)
         test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
-        
+
         test_size = len(test_set.X)
 
-        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths." # fmt: skip
+        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
         Y_ref = train_set.Y_ref
-        
+
         subject_names = train_set.subject_names
 
     cprint(f"Test size: {test_size}", "cyan")

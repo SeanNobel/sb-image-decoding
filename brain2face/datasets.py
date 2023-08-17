@@ -384,7 +384,7 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             orig_session_paths = session_paths.copy()
             session_paths = [session_paths[session_id]]
 
-        if not args.reduce_time:
+        if args.vision.reduction == "none":
             # y_reformer = partial(
             #     self.transform_video, image_size=args.vision_encoder.image_size
             # )
@@ -486,10 +486,11 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
     def forward(self, batch: List[torch.Tensor]) -> Tuple[torch.Tensor]:
         if self.clip_training:
-            X = torch.stack([item[0] for item in batch])
+            X = torch.stack([item[0] for item in batch])  # ( b, channels=128, t=360 )
 
             # NOTE: item[2] is subject_idx and item[1] is sample_idx
             Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
+            # ( b, t=90, h, w, c )
 
             Y = self._video_transforms(Y, self.resample_nsamples, self.frame_size)
 
@@ -533,8 +534,11 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = signal.resample(Y, resample_nsamples, axis=1)
 
+        else:
+            resample_nsamples = segment_len
+
         Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
-        # ( samples*segment_len, 3, size, size )
+        # ( b * resample_nsamples, 3, h, w )
 
         video_transforms = []
 
@@ -552,7 +556,7 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = video_transforms(Y)
 
-        Y = Y.contiguous().view(-1, segment_len, *Y.shape[-3:])
+        Y = Y.contiguous().view(-1, resample_nsamples, *Y.shape[-3:])
 
         Y = Y.to(torch.float32) / 255.0
 
@@ -602,6 +606,9 @@ class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
 
         self.Z = torch.load(os.path.join(prefix, "brain_embds.pt"))
         self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
+
+        cprint(f"Loaded brain embeddings {self.Z.shape} from {prefix}", "cyan")
+        cprint(f"Loaded vision embeddings {self.Y.shape} from {prefix}", "cyan")
 
         assert self.Z.shape == self.Y.shape
 
