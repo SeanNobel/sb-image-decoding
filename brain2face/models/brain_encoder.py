@@ -8,6 +8,7 @@ from typing import Optional, Union, Callable, List
 from termcolor import cprint
 
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
+from brain2face.utils.train_utils import conv_output_size
 
 
 class SpatialAttention(nn.Module):
@@ -113,9 +114,9 @@ class SubjectSpatialAttention(nn.Module):
             X, [self.num_channels, X.shape[1] - self.num_channels], dim=1
         )
         assert pad.sum() == 0
-        
+
         X = self.spatial_attention(X)
-        
+
         X = self.conv(X)
         # X = self.conv2(X)
 
@@ -162,14 +163,14 @@ class SubjectBlock(nn.Module):
 
         else:
             cprint("Unknown subject.", "yellow")
-            
+
             X = torch.stack(
                 [self.subject_layer[i](X) for i in range(self.num_subjects)]
             ).mean(dim=0)
 
         return X
-   
-   
+
+
 class SubjectBlockConvDynamic(nn.Module):
     def __init__(self, args, num_subjects: int, layouts: DynamicChanLoc2d) -> None:
         super(SubjectBlockConvDynamic, self).__init__()
@@ -178,7 +179,7 @@ class SubjectBlockConvDynamic(nn.Module):
         self.num_channels = [
             layouts.get_loc(i).shape[0] for i in range(self.num_subjects)
         ]
-        
+
         self.subject_layer = nn.ModuleList(
             [
                 nn.Conv1d(
@@ -191,7 +192,7 @@ class SubjectBlockConvDynamic(nn.Module):
                 for i in range(self.num_subjects)
             ]
         )
-        
+
     def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor) -> torch.Tensor:
         X = torch.cat(
             [
@@ -199,16 +200,16 @@ class SubjectBlockConvDynamic(nn.Module):
                     torch.split(
                         x,
                         [self.num_channels[i], x.shape[0] - self.num_channels[i]],
-                        dim=0
+                        dim=0,
                     )[0].unsqueeze(dim=0)
                 )
                 for i, x in zip(subject_idxs, X)
             ]
         )  # ( B, 270, 256 )
-        
+
         return X
-     
-    
+
+
 class SubjectBlockSA(nn.Module):
     """Applies Spatial Attention to each subject separately"""
 
@@ -217,22 +218,22 @@ class SubjectBlockSA(nn.Module):
 
         self.layouts = layouts
         self.num_subjects = num_subjects
-        
+
         self.subject_layer = nn.ModuleList(
             [
                 SubjectSpatialAttention(args, self.layouts.get_loc(i))
                 for i in range(self.num_subjects)
             ]
         )
-        
+
         self.conv = nn.Conv1d(
             in_channels=args.D1,
             out_channels=args.D1,
             kernel_size=1,
             stride=1,
-            bias=args.biases.conv_block
+            bias=args.biases.conv_block,
         )
-        
+
     def forward(
         self,
         X: torch.Tensor,
@@ -251,7 +252,7 @@ class SubjectBlockSA(nn.Module):
                     for i in range(self.num_subjects)
                 ]
             )
-                
+
             regather_idxs = []
             for i in range(len(subject_idxs)):
                 prev, after = torch.tensor_split(subject_idxs, [i])
@@ -260,9 +261,9 @@ class SubjectBlockSA(nn.Module):
                     (prev <= subject_idxs[i]).sum() + (after < subject_idxs[i]).sum()
                 )
             regather_idxs = torch.tensor(regather_idxs).to(X.device)
-            
+
             X = torch.index_select(X, dim=0, index=regather_idxs)
-            
+
         else:
             # Sequential batch size = 1 input to each subject layer
             X = torch.cat(
@@ -271,9 +272,9 @@ class SubjectBlockSA(nn.Module):
                     for i, x in zip(subject_idxs, X)
                 ]
             )  # ( B, 270, 256 )
-            
+
         X = self.conv(X)
-        
+
         return X
 
 
@@ -344,10 +345,8 @@ class BrainEncoder(nn.Module):
         self.unknown_subject = unknown_subject
 
         if layout == ch_locations_2d:
-            self.subject_block = SubjectBlock(
-                args, len(subject_names), layout(args)
-            )
-            
+            self.subject_block = SubjectBlock(args, len(subject_names), layout(args))
+
         elif layout == DynamicChanLoc2d:
             if args.spatial_attention:
                 self.subject_block = SubjectBlockSA(
@@ -357,15 +356,14 @@ class BrainEncoder(nn.Module):
                 self.subject_block = SubjectBlockConvDynamic(
                     args, len(subject_names), layout(args, subject_names)
                 )
-                
+
         else:
             raise TypeError
 
         self.conv_blocks = nn.Sequential()
         for k in range(5):
             self.conv_blocks.add_module(
-                f"conv{k}",
-                ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
+                f"conv{k}", ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
             )
 
         self.conv_final1 = nn.Conv1d(
@@ -414,9 +412,9 @@ class BrainEncoderReduceTime(nn.Module):
             args,
             subject_names=subject_names,
             layout=layout,
-            unknown_subject=unknown_subject
+            unknown_subject=unknown_subject,
         )
-        
+
         self.conv1 = nn.Conv1d(
             in_channels=args.F,
             out_channels=args.F,
@@ -432,7 +430,9 @@ class BrainEncoderReduceTime(nn.Module):
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
-            in_features=args.F * (self._conv_output_size(
+            in_features=args.F
+            * (
+                conv_output_size(
                     int(args.seq_len * args.brain_resample_sfreq),
                     ksize=args.final_ksize,
                     stride=args.final_stride,
@@ -443,19 +443,12 @@ class BrainEncoderReduceTime(nn.Module):
             bias=args.biases.linear_reduc_time,
         )
         self.activation = args.head_activation
-        
-    @staticmethod
-    def _conv_output_size(input_size: int, ksize: int, stride: int, repetition: int):
-        for _ in range(repetition):
-            input_size = (input_size - ksize) // stride + 1
-            
-        return input_size
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
     ) -> torch.Tensor:
         X = self.brain_encoder(X, subject_idxs)
-        
+
         X = self.conv1(X)
         X = self.conv2(X)
         X = self.linear(self.flatten(X))
