@@ -384,7 +384,7 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             orig_session_paths = session_paths.copy()
             session_paths = [session_paths[session_id]]
 
-        if not args.reduce_time:
+        if args.vision.reduction == "none":
             # y_reformer = partial(
             #     self.transform_video, image_size=args.vision_encoder.image_size
             # )
@@ -486,10 +486,11 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
     def forward(self, batch: List[torch.Tensor]) -> Tuple[torch.Tensor]:
         if self.clip_training:
-            X = torch.stack([item[0] for item in batch])
+            X = torch.stack([item[0] for item in batch])  # ( b, channels=128, t=360 )
 
             # NOTE: item[2] is subject_idx and item[1] is sample_idx
             Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
+            # ( b, t=90, h, w, c )
 
             Y = self._video_transforms(Y, self.resample_nsamples, self.frame_size)
 
@@ -533,8 +534,11 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = signal.resample(Y, resample_nsamples, axis=1)
 
+        else:
+            resample_nsamples = segment_len
+
         Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
-        # ( batch_size * resample_nsamples, 3, size, size )
+        # ( b * resample_nsamples, 3, h, w )
 
         video_transforms = []
 
