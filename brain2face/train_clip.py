@@ -20,7 +20,13 @@ from brain2face.datasets import (
     CollateFunctionForVideoHDF5,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
-from brain2face.models.vision_encoders import ViT, ViViT, Unet3DEncoder, OpenFaceMapper
+from brain2face.models.vision_encoders import (
+    ViT,
+    ViViT,
+    ViViTReduceTime,
+    Unet3DEncoder,
+    OpenFaceMapper,
+)
 from brain2face.models.classifier import Classifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
