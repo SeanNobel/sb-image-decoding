@@ -18,7 +18,7 @@ from brain2face.datasets import (
     CollateFunctionForVideoHDF5,
 )
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
-from brain2face.models.face_encoders import ViT, ViViT
+from brain2face.models.vision_encoders import ViT, ViViT, ViViTReduceTime, Unet3DEncoder
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.train_utils import sequential_apply
 from brain2face.utils.eval_utils import (
@@ -159,16 +159,21 @@ def infer(args: DictConfig) -> None:
                 Y = vision_encoder(Y)
 
             assert Z.shape == Y.shape, f"Z.shape: {Z.shape}, Y.shape: {Y.shape}"
-            b, d, t = Z.shape
 
-            Z = Z.reshape(b, -1)
-            Y = Y.reshape(b, -1)
+            if not args.reduce_time:
+                b, d, t = Z.shape
+
+                Z = Z.reshape(b, -1)
+                Y = Y.reshape(b, -1)
+            else:
+                assert Z.ndim == 2, f"Z.ndim: {Z.ndim}"
 
             Z /= Z.norm(dim=-1, keepdim=True)
             Y /= Y.norm(dim=-1, keepdim=True)
 
-            Z = Z.reshape(b, d, t)
-            Y = Y.reshape(b, d, t)
+            if not args.reduce_time:
+                Z = Z.reshape(b, d, t)
+                Y = Y.reshape(b, d, t)
 
             cprint(Z.mean(), "yellow")
 
