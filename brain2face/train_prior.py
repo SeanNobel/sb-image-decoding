@@ -8,14 +8,13 @@ from termcolor import cprint
 from typing import Union, Optional
 import wandb
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior, DiffusionPriorTrainer
 
 from brain2face.datasets import NeuroDiffusionCLIPEmbDataset
 
 
-@hydra.main(version_base=None, config_path="../configs/uhd/video", config_name="prior")
 def train(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -146,28 +145,17 @@ def train(args: DictConfig) -> None:
             min_test_loss = np.mean(test_losses)
 
 
-# @hydra.main(version_base=None, config_path="../configs", config_name="default")
-# def run(_args: DictConfig) -> None:
-#     global args, sweep
+@hydra.main(version_base=None, config_path="../configs", config_name="default")
+def run(_args: DictConfig) -> None:
+    # NOTE: Using default.yaml only for specifying the experiment settings yaml.
+    args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-#     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
-#     args = OmegaConf.load(os.path.join("configs", _args.config_path))
+    with open_dict(args):
+        args.use_wandb = _args.use_wandb
 
-#     sweep = _args.sweep
-
-#     if sweep:
-#         sweep_config = OmegaConf.to_container(
-#             args.sweep_config, resolve=True, throw_on_missing=True
-#         )
-
-#         sweep_id = wandb.sweep(sweep_config, project=args.project_name)
-
-#         wandb.agent(sweep_id, train, count=args.sweep_count)
-
-#     else:
-#         train()
+    train(args)
 
 
 if __name__ == "__main__":
-    # run()
-    train()
+    run()
+    # train()
