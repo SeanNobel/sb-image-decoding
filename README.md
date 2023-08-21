@@ -28,6 +28,8 @@ References
 
 ### UHD
 
+- (8/21) Video Decoderは訓練途中のものではあるが，パイプライン全体を走らせて初の3D U-Netでの動画生成をした．結果，ちゃんと動画が生成された．Video Decoderがbatch size=1でも訓練できないためモデルを小さくしている（それでも訓練に非常に時間がかかる）ので，Lightning FSDPを導入してmodel parallelismを試す．
+
 - (8/18) Unet3DEncoderを使ったCLIP学習はViViTほどパフォーマンスが出ない．ViViTReduceTimeを実装，CLIP学習を開始．学習途中のUnet3DEncoderではあるが，static embeddingでパイプラインを通してデバッグするための`eval_clip.py`を開始．
 
 - (8/17) CLIP学習用のUnet3dEncoderを実装．
@@ -175,7 +177,7 @@ python brain2face/eval_clip.py config_path={path}.yaml
 ### Run DALLE-2 prior training
 
 ```bash
-python brain2face/train_prior.py
+python brain2face/train_prior.py config_path=uhd/video/prior/{fname}.yaml
 ```
 
 ### DALLE-2 decoder training
