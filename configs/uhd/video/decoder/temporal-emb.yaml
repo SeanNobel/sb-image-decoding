@@ -1,7 +1,8 @@
 dataset: UHD
 train_name: unet3d
-clip_train_name: video
+clip_train_name: unet3d
 type: video
+temporal_emb: True
 
 unet1:
   dim: 128

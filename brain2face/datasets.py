@@ -494,7 +494,8 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = self._video_transforms(Y, self.resample_nsamples, self.frame_size)
 
-            # Y = Y.permute(0, 1, 4, 2, 3)
+            # FIXME: Only videos after CLIP embbeding are divided by 255.
+            Y = Y.to(torch.float32) / 255.0
 
             subject_idxs = torch.stack([item[2] for item in batch])
 
@@ -519,12 +520,11 @@ class CollateFunctionForVideoHDF5(nn.Module):
         """
         - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
         - Reduces the video to grayscale if specified
-        - Scale [0 - 255] -> [0. - 1.]
         Args:
             Y: ( batch_size, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
             image_size: args.vivit.image_size
         Returns:
-            Y: ( batch_size, segment_len=90, 3, vision_encoder.image_size, vision_encoder.image_size )
+            Y: ( batch_size, 3, segment_len, vision_encoder.image_size, vision_encoder.image_size )
         """
         segment_len = Y.shape[1]
 
@@ -558,9 +558,7 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
         Y = Y.contiguous().view(-1, resample_nsamples, *Y.shape[-3:])
 
-        Y = Y.to(torch.float32) / 255.0
-
-        return Y
+        return Y.permute(0, 2, 1, 3, 4)  # ( b, c, t, h, w )
 
 
 class StyleGANCLIPDataset(NeuroDiffusionCLIPDatasetBase):
@@ -676,11 +674,11 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
 
         assert len(self.Y_embed) == len(self.Y)
 
-        # FIXME: Setting time dimension next to batch for UnetTemporalConv
-        self.Y_embed = self.Y_embed.permute(0, 2, 1)
-
         # NOTE: Y will be resampled in the collate function.
         if resample_nsamples is not None:
+            # FIXME: Setting time dimension next to batch for UnetTemporalConv
+            self.Y_embed = self.Y_embed.permute(0, 2, 1)
+
             self.Y_embed = torch.from_numpy(
                 signal.resample(self.Y_embed.numpy(), resample_nsamples, axis=1)
             )

@@ -252,6 +252,32 @@ class ViViT(nn.Module):
         return h.permute(0, 2, 1)
 
 
+class ViViTReduceTime(nn.Module):
+    def __init__(self, dim: int, num_frames: int, *args, **kwargs):
+        super().__init__()
+
+        self.vivit = ViViT(*args, dim=dim, num_frames=num_frames, **kwargs)
+
+        self.reduce_time = nn.Sequential(
+            nn.Conv1d(dim, dim, kernel_size=3, stride=2),
+            nn.SiLU(),
+            nn.Conv1d(dim, dim, kernel_size=3, stride=2),
+            nn.SiLU(),
+            nn.Flatten(),
+            nn.Linear(
+                in_features=dim
+                * conv_output_size(num_frames, ksize=3, stride=2, repetition=2),
+                out_features=dim,
+            ),
+            nn.GELU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.vivit(x)
+
+        return self.reduce_time(x)
+
+
 def Downsample3D(dim: int, dim_out: int):
     # https://arxiv.org/abs/2208.03641 shows this is the most optimal way to downsample
     # named SP-conv in the paper, but basically a pixel unshuffle

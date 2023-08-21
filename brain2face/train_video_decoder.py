@@ -9,7 +9,7 @@ from typing import Union, Optional
 import logging
 import wandb
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_video.dalle2_video import (
     Unet3D,
@@ -24,7 +24,7 @@ from brain2face.datasets import (
 )
 
 
-def train() -> None:
+def train(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
@@ -53,7 +53,7 @@ def train() -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    resample_nsamples = args.frame_numbers[0]
+    resample_nsamples = args.frame_numbers[0] if args.temporal_emb else None
 
     train_set = NeuroDiffusionCLIPEmbVideoDataset(
         args.dataset, args.clip_train_name, resample_nsamples
@@ -81,17 +81,17 @@ def train() -> None:
     # ---------------------
     #        Models
     # ---------------------
-    unet1 = UnetTemporalConv(
+    unet1 = Unet3D(
         dim=args.unet1.dim,
-        image_embed_dim=args.image_embed_dim,
+        video_embed_dim=args.video_embed_dim,
         channels=args.channels,
         dim_mults=tuple(args.unet1.dim_mults),
         cond_on_text_encodings=False,
     ).to(device)
 
-    unet2 = UnetTemporalConv(
+    unet2 = Unet3D(
         dim=args.unet2.dim,
-        image_embed_dim=args.image_embed_dim,
+        video_embed_dim=args.video_embed_dim,
         channels=args.channels,
         dim_mults=tuple(args.unet2.dim_mults),
         cond_on_text_encodings=False,
@@ -184,24 +184,13 @@ def train() -> None:
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
 def run(_args: DictConfig) -> None:
-    global args, sweep
-
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-    sweep = _args.sweep
+    with open_dict(args):
+        args.use_wandb = _args.use_wandb
 
-    if sweep:
-        sweep_config = OmegaConf.to_container(
-            args.sweep_config, resolve=True, throw_on_missing=True
-        )
-
-        sweep_id = wandb.sweep(sweep_config, project=args.project_name)
-
-        wandb.agent(sweep_id, train, count=args.sweep_count)
-
-    else:
-        train()
+    train(args)
 
 
 if __name__ == "__main__":

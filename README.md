@@ -4,7 +4,17 @@
 
 <div align="center"><img src="assets/neuro-diffusion.jpeg" width=700></div>
 
-- [DALLE-2 paper](https://arxiv.org/pdf/2204.06125.pdf)
+References
+
+- Hierarchical Text-Conditional Image Generation with CLIP Latents ([Ramesh et al., Apr 2022](https://arxiv.org/pdf/2204.06125.pdf))
+
+### DALLE-2 Video
+
+References
+
+- Video Diffusion Models ([Ho et al., Apr 2022](https://arxiv.org/abs/2204.03458))
+
+- Imagen Video: High Definition Video Generation with Diffusion Models ([Ho et al., Oct 2022](https://arxiv.org/abs/2210.02303))
 
 ## Status
 
@@ -18,9 +28,13 @@
 
 ### UHD
 
-- (8/17) CLIP学習用のUnet3dEncoderを実装する．
+- (8/21) Video Decoderは訓練途中のものではあるが，パイプライン全体を走らせて初の3D U-Netでの動画生成をした．結果，ちゃんと動画が生成された．Video Decoderがbatch size=1でも訓練できないためモデルを小さくしている（それでも訓練に非常に時間がかかる）ので，Lightning FSDPを導入してmodel parallelismを試す．
 
-- (8/16) Unet3Dを実装する．
+- (8/18) Unet3DEncoderを使ったCLIP学習はViViTほどパフォーマンスが出ない．ViViTReduceTimeを実装，CLIP学習を開始．学習途中のUnet3DEncoderではあるが，static embeddingでパイプラインを通してデバッグするための`eval_clip.py`を開始．
+
+- (8/17) CLIP学習用のUnet3dEncoderを実装．
+
+- (8/16) Unet3Dを実装．
 
 - (8/15) Video Decoderを30Hzのまま訓練することはGPUメモリの不足でできないので，16サンプル(5.3Hzくらい)でやりなおし．パイプラインを走らせるときもDatasetやCollateFnでリサンプリングする．
 
@@ -69,13 +83,13 @@ Jul
 
 ## Yanagisawa Lab GOD dataset
 
-### Run preprocess
+### Preprocessing
 
 ```bash
 python brain2face/preprocs/ylab_god.py
 ```
 
-### Run CLIP training
+### CLIP training
 
 ```bash
 # Normal
@@ -118,13 +132,13 @@ nohup python brain2face/train_diffusion_prior.py > logs/ylab/god/diffusion_prior
 
 ## Yanagisawa Lab OpenFace (E0030 dataset)
 
-### Run preprocess
+### Preprocessing
 
 ```bash
 python brain2face/preprocs/ylab_e0030.py
 ```
 
-### Run CLIP training
+### CLIP training
 
 ```bash
 # Specify sweep configuration from .yaml
@@ -135,7 +149,7 @@ nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > l
 
 ## UHD
 
-### Run preprocess
+### Preprocessing
 
 ```bash
 nohup python brain2face/preprocs/uhd.py start_subj=0 end_subj=8 > logs/uhd/out1.log &
@@ -143,68 +157,35 @@ nohup python brain2face/preprocs/uhd.py start_subj=8 end_subj=16 > logs/uhd/out2
 nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out3.log &
 ```
 
-### Run CLIP training
-
-#### Image
+### CLIP training
 
 ```bash
 # Normal
-python brain2face/train_clip.py config_path=uhd/image/clip.yaml
+python brain2face/train_clip.py config_path={path}.yaml
+
 # Sweep
-nohup python brain2face/train_clip.py config_path=uhd/image/clip.yaml sweep=True > logs/uhd/sweep_clip.log &
+nohup python brain2face/train_clip.py config_path={path}.yaml sweep=True > logs/{path}.log &
 ```
 
-#### Video
+### CLIP evaluation (save CLIP embeds + corresponding images / videos)
 
 ```bash
-# Normal
-python brain2face/train_clip.py config_path=uhd/video/clip.yaml
-# Sweep
-nohup python brain2face/train_clip.py config_path=uhd/video/clip.yaml sweep=True > logs/uhd/sweep_clip.log &
-```
-
-### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
-
-#### Image
-
-```bash
-python brain2face/eval_clip.py config_path=uhd/image/clip.yaml
-# For distributed DALLE-2 training, set for_webdataset=True in the yaml
-```
-
-#### Video
-
-```bash
-python brain2face/eval_clip.py config_path=uhd/video/clip.yaml
+python brain2face/eval_clip.py config_path={path}.yaml
+# For distributed DALLE-2 training (not working now), set for_webdataset=True in the config file.
 ```
 
 ### Run DALLE-2 prior training
 
 ```bash
-# Normal
-python brain2face/train_prior.py
-# Distributed
-python brain2face/distributed_train_prior.py
+python brain2face/train_prior.py config_path=uhd/video/prior/{fname}.yaml
 ```
 
-### Run DALLE-2 decoder training
+### DALLE-2 decoder training
 
 #### Image
 
 ```bash
-# Normal
-nohup python brain2face/train_decoder.py > logs/uhd/train_decoder.log &
-
-# Distributed (deprecated)
-## tar face_images
-bash tar_face_images.sh
-## login to huggingface hub
-huggingface-cli login
-## create a repository in huggingface whose name matches tracker.save.huggingface_repo in decoder.json
-## need to create this directory manually
-mkdir .tracker_data
-## Run distributedtraining
-python brain2face/train_decoder_distributed.py
+nohup python brain2face/train_image_decoder.py config_path=uhd/image/decoder.yaml > logs/uhd/train_image_decoder.log &
 ```
 
 #### Video
@@ -213,19 +194,33 @@ python brain2face/train_decoder_distributed.py
 nohup python brain2face/train_video_decoder.py config_path=uhd/video/decoder.yaml > logs/uhd/train_video_decoder.log &
 ```
 
-### Finally generate face images / videos from EEG
-
-#### Image
+### Finally, run the pipeline and generate images / videos from EEG
 
 ```bash
-python brain2face/eval_image_pipeline.py config_path=uhd/image/clip.yaml
+python brain2face/eval_image_pipeline.py config_path={path}.yaml
 ```
 
-#### Video
+#### Distributed DALLE-2 prior training for image (deprecated)
 
 ```bash
-python brain2face/eval_video_pipeline.py config_path=uhd/video/clip.yaml
+python brain2face/distributed_train_prior.py
 ```
+
+#### Distributed DALLE-2 decoder training for image (deprecated)
+
+```bash
+# tar face_images
+bash tar_face_images.sh
+# login to huggingface hub
+huggingface-cli login
+# create a repository in huggingface whose name matches tracker.save.huggingface_repo in decoder.json
+# need to create this directory manually
+mkdir .tracker_data
+# Run distributedtraining
+python brain2face/train_decoder_distributed.py
+```
+
+
 
 <br>
 
