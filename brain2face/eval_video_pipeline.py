@@ -24,26 +24,33 @@ def pipeline(_args: DictConfig) -> None:
     args_clip = OmegaConf.load(os.path.join("configs", _args.config_path))
     args_clip = update_with_eval(args_clip)
 
-    args_prior = OmegaConf.load(
-        os.path.join("configs", os.path.dirname(_args.config_path), "prior.yaml")
-    )
-    args_decoder = OmegaConf.load(
-        os.path.join("configs", os.path.dirname(_args.config_path), "decoder.yaml")
+    args_prior, args_decoder = (
+        OmegaConf.load(
+            os.path.join(
+                "configs",
+                "/".join(_args.config_path.split("/")[:-2]),
+                model,
+                f"{'static' if args_clip.reduce_time else 'temporal'}-emb.yaml",
+            )
+        )
+        for model in ["prior", "decoder"]
     )
 
     run_dir_clip = get_run_dir(args_clip)
 
     # NOTE: devices need to be hard-coded, as I cannot figure out how the device
     #       that pytorch-dalle2 uses
-    device_clip = "cuda:2"
-    device_dalle2 = "cuda:0"
+    device_clip = "cuda:1"
+    device_prior = "cuda:1"
+    device_decoder = "cuda:2"
 
     brain_enc_path = os.path.join(run_dir_clip, "brain_encoder_best.pt")
     prior_path = os.path.join(
         "runs/prior",
         args_clip.dataset.lower(),
+        args_prior.type,
         args_prior.train_name,
-        "prior_last.pt",
+        "prior_best.pt",
     )
     decoder_path = os.path.join(
         "runs/decoder",
@@ -112,7 +119,7 @@ def pipeline(_args: DictConfig) -> None:
         depth=args_prior.depth,
         dim_head=args_prior.dim_head,
         heads=args_prior.heads,
-    ).to(device_dalle2)
+    ).to(device_prior)
 
     diffusion_prior = DiffusionPrior(
         net=prior_network,
@@ -120,26 +127,26 @@ def pipeline(_args: DictConfig) -> None:
         timesteps=args_prior.timesteps,
         cond_drop_prob=args_prior.cond_drop_prob,
         condition_on_text_encodings=False,
-    ).to(device_dalle2)
+    ).to(device_prior)
 
-    diffusion_prior.load_state_dict(torch.load(prior_path, map_location=device_dalle2))
+    diffusion_prior.load_state_dict(torch.load(prior_path, map_location=device_prior))
 
     # ---- Decoder ---- #
-    unet1 = UnetTemporalConv(
+    unet1 = Unet3D(
         dim=args_decoder.unet1.dim,
-        image_embed_dim=args_decoder.image_embed_dim,
+        video_embed_dim=args_decoder.video_embed_dim,
         channels=args_decoder.channels,
         dim_mults=tuple(args_decoder.unet1.dim_mults),
         cond_on_text_encodings=False,
-    ).to(device_dalle2)
+    ).to(device_decoder)
 
-    unet2 = UnetTemporalConv(
+    unet2 = Unet3D(
         dim=args_decoder.unet2.dim,
-        image_embed_dim=args_decoder.image_embed_dim,
+        video_embed_dim=args_decoder.video_embed_dim,
         channels=args_decoder.channels,
         dim_mults=tuple(args_decoder.unet2.dim_mults),
         cond_on_text_encodings=False,
-    ).to(device_dalle2)
+    ).to(device_decoder)
 
     decoder = VideoDecoder(
         unet=(unet1, unet2),
@@ -147,15 +154,16 @@ def pipeline(_args: DictConfig) -> None:
         frame_numbers=tuple(args_decoder.frame_numbers),
         timesteps=args_decoder.timesteps,
         learned_variance=False,
-    ).to(device_dalle2)
+    ).to(device_decoder)
 
-    decoder.load_state_dict(torch.load(decoder_path, map_location=device_dalle2))
+    decoder.load_state_dict(torch.load(decoder_path, map_location=device_decoder))
 
     dalle2 = DALLE2Video(
         prior=diffusion_prior,
         decoder=decoder,
         temporal_emb=args_prior.temporal_emb,
         prior_num_samples=1,  # NOTE: Somehow setting this number larger reduces batch size. Why?
+        decoder_cuda=device_decoder,
     )
 
     # ----------------
@@ -165,23 +173,33 @@ def pipeline(_args: DictConfig) -> None:
 
     X = X.to(device_clip)
 
-    brain_embed = brain_encoder(X, subject_idxs).to(device_dalle2)
+    Z = brain_encoder(X, subject_idxs)
+
+    # Normalization
+    if not args_clip.reduce_time:
+        b, d, t = Z.shape
+        Z = Z.reshape(b, -1)
+
+    Z /= Z.norm(dim=-1, keepdim=True)
+
+    if not args_clip.reduce_time:
+        Z = Z.reshape(b, d, t)
 
     # FIXME: Resampling from 90 to 16 frames as I cannot train video decoder with 90 frames.
-    brain_embed = signal.resample(brain_embed.cpu().numpy(), num=16, axis=-1)
-    brain_embed = torch.from_numpy(brain_embed).to(device_dalle2)
+    # Z = signal.resample(Z.cpu().numpy(), num=16, axis=-1)
+    # Z = torch.from_numpy(Z).to(device_prior)
     # brain_embed = brain_embed.mean(dim=-1)
 
-    cprint(brain_embed.shape, "yellow")
+    cprint(Z.shape, "yellow")
 
-    videos = dalle2(text_embed=brain_embed)
+    videos = dalle2(text_embed=Z)
     # , return_pil_images=True)
 
     video = videos[0]
 
-    video = (video - video.min()) / (video.max() - video.min())
+    # video = (video - video.min()) / (video.max() - video.min())
 
-    video = (video.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
+    video = (video.permute(1, 2, 3, 0).cpu().numpy() * 255).astype(np.uint8)
     # ( t=90, 256, 256, 3 )
 
     cprint(video, "yellow")
@@ -190,7 +208,7 @@ def pipeline(_args: DictConfig) -> None:
 
     fmt = cv2.VideoWriter_fourcc("m", "p", "4", "v")
     writer = cv2.VideoWriter(
-        "assets/generated_videos/temporal_conv.mp4", fmt, 5, tuple(video.shape[1:3])
+        "assets/generated_videos/unet3d.mp4", fmt, 5, tuple(video.shape[1:3])
     )
 
     for frame in video:
