@@ -26,3 +26,7 @@ pytest
 -e git+https://github.com/openai/CLIP.git#egg=clip-1.0
 
 huggingface_hub
+
+accelerate
+deepspeed
+transformers

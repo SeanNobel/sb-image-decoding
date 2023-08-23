@@ -11,6 +11,8 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+from accelerate import Accelerator, DeepSpeedPlugin
+
 from dalle2_video.dalle2_video import (
     Unet3D,
     UnetTemporalConv,
@@ -108,8 +110,13 @@ def train(args: DictConfig) -> None:
     # ---------------------
     #        Trainer
     # ---------------------
+    # accelerator = Accelerator(
+    #     deepspeed_plugin=
+    # )
+
     decoder_trainer = VideoDecoderTrainer(
         decoder,
+        # accelerator=accelerator,
         # accum_grad=args.accum_grad,
         # sub_batch_size=args.sub_batch_size if args.accum_grad else None,
         lr=args.lr,
