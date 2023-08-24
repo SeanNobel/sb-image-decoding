@@ -90,17 +90,17 @@ num_workers: 4
 
 seed: 1234
 
-cuda_id: 2
+cuda_id: 0
 
-sweep_count: 3
+sweep_count: 9
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    # ksizes.conv_block:
-    #   values: [3, 5, 7]
+    ksizes.conv_block:
+      values: [3, 5, 7]
     # d_drop:
     #   values: [0.1, 0.2, 0.3]
     # seq_onset:
