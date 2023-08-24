@@ -384,7 +384,7 @@ class UHDCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             orig_session_paths = session_paths.copy()
             session_paths = [session_paths[session_id]]
 
-        if not args.reduce_time:
+        if args.vision.reduction == "none":
             # y_reformer = partial(
             #     self.transform_video, image_size=args.vision_encoder.image_size
             # )
@@ -486,14 +486,16 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
     def forward(self, batch: List[torch.Tensor]) -> Tuple[torch.Tensor]:
         if self.clip_training:
-            X = torch.stack([item[0] for item in batch])
+            X = torch.stack([item[0] for item in batch])  # ( b, channels=128, t=360 )
 
             # NOTE: item[2] is subject_idx and item[1] is sample_idx
             Y = np.stack([self.Y_ref[item[2]][item[1]] for item in batch])
+            # ( b, t=90, h, w, c )
 
             Y = self._video_transforms(Y, self.resample_nsamples, self.frame_size)
 
-            # Y = Y.permute(0, 1, 4, 2, 3)
+            # FIXME: Only videos after CLIP embbeding are divided by 255.
+            Y = Y.to(torch.float32) / 255.0
 
             subject_idxs = torch.stack([item[2] for item in batch])
 
@@ -518,12 +520,11 @@ class CollateFunctionForVideoHDF5(nn.Module):
         """
         - Resizes the video frames if args.face_extractor.output_size != args.vivit.image_size
         - Reduces the video to grayscale if specified
-        - Scale [0 - 255] -> [0. - 1.]
         Args:
             Y: ( batch_size, segment_len=90, face_extractor.output_size=256, face_extractor.output_size=256, 3 )
             image_size: args.vivit.image_size
         Returns:
-            Y: ( batch_size, segment_len=90, 3, vision_encoder.image_size, vision_encoder.image_size )
+            Y: ( batch_size, 3, segment_len, vision_encoder.image_size, vision_encoder.image_size )
         """
         segment_len = Y.shape[1]
 
@@ -533,8 +534,11 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = signal.resample(Y, resample_nsamples, axis=1)
 
+        else:
+            resample_nsamples = segment_len
+
         Y = torch.from_numpy(Y).view(-1, *Y.shape[-3:]).permute(0, 3, 1, 2)
-        # ( samples*segment_len, 3, size, size )
+        # ( b * resample_nsamples, 3, h, w )
 
         video_transforms = []
 
@@ -552,11 +556,9 @@ class CollateFunctionForVideoHDF5(nn.Module):
 
             Y = video_transforms(Y)
 
-        Y = Y.contiguous().view(-1, segment_len, *Y.shape[-3:])
+        Y = Y.contiguous().view(-1, resample_nsamples, *Y.shape[-3:])
 
-        Y = Y.to(torch.float32) / 255.0
-
-        return Y
+        return Y.permute(0, 2, 1, 3, 4)  # ( b, c, t, h, w )
 
 
 class StyleGANCLIPDataset(NeuroDiffusionCLIPDatasetBase):
@@ -602,6 +604,9 @@ class NeuroDiffusionCLIPEmbDataset(torch.utils.data.Dataset):
 
         self.Z = torch.load(os.path.join(prefix, "brain_embds.pt"))
         self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
+
+        cprint(f"Loaded brain embeddings {self.Z.shape} from {prefix}", "cyan")
+        cprint(f"Loaded vision embeddings {self.Y.shape} from {prefix}", "cyan")
 
         assert self.Z.shape == self.Y.shape
 
@@ -669,11 +674,11 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
 
         assert len(self.Y_embed) == len(self.Y)
 
-        # FIXME: Setting time dimension next to batch for UnetTemporalConv
-        self.Y_embed = self.Y_embed.permute(0, 2, 1)
-
         # NOTE: Y will be resampled in the collate function.
         if resample_nsamples is not None:
+            # FIXME: Setting time dimension next to batch for UnetTemporalConv
+            self.Y_embed = self.Y_embed.permute(0, 2, 1)
+
             self.Y_embed = torch.from_numpy(
                 signal.resample(self.Y_embed.numpy(), resample_nsamples, axis=1)
             )

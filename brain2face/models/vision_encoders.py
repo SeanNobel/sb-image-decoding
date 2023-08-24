@@ -1,12 +1,16 @@
+import sys
 import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
+from termcolor import cprint
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
 from typing import Optional, Union
+
+from brain2face.utils.train_utils import conv_output_size
 
 
 def pair(t):
@@ -246,6 +250,110 @@ class ViViT(nn.Module):
         # x = h.mean(dim=1) if self.pool == 'mean' else h[:, 0]
 
         return h.permute(0, 2, 1)
+
+
+class ViViTReduceTime(nn.Module):
+    def __init__(self, dim: int, num_frames: int, *args, **kwargs):
+        super().__init__()
+
+        self.vivit = ViViT(*args, dim=dim, num_frames=num_frames, **kwargs)
+
+        self.reduce_time = nn.Sequential(
+            nn.Conv1d(dim, dim, kernel_size=3, stride=2),
+            nn.SiLU(),
+            nn.Conv1d(dim, dim, kernel_size=3, stride=2),
+            nn.SiLU(),
+            nn.Flatten(),
+            nn.Linear(
+                in_features=dim
+                * conv_output_size(num_frames, ksize=3, stride=2, repetition=2),
+                out_features=dim,
+            ),
+            nn.GELU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.vivit(x)
+
+        return self.reduce_time(x)
+
+
+def Downsample3D(dim: int, dim_out: int):
+    # https://arxiv.org/abs/2208.03641 shows this is the most optimal way to downsample
+    # named SP-conv in the paper, but basically a pixel unshuffle
+    return nn.Sequential(
+        Rearrange("b c t (h s1) (w s2) -> b (c s1 s2) t h w", s1=2, s2=2),
+        nn.Conv3d(dim * 4, dim_out, 1),
+    )
+
+
+def Block3D(dim: int, dim_out: int, groups: int = 8):
+    return nn.Sequential(
+        nn.Conv3d(
+            dim, dim_out, kernel_size=(5, 3, 3), stride=(2, 1, 1), padding=(0, 1, 1)
+        ),
+        nn.GroupNorm(groups, dim_out),
+        nn.SiLU(),
+    )
+
+
+class Unet3DEncoder(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        image_size: int,
+        num_frames: int,
+        num_layers: int = 3,
+        in_channels: int = 3,
+        init_conv_dim: int = 16,
+    ):
+        super().__init__()
+
+        mid_dims = [in_channels, init_conv_dim]
+        for _ in range(num_layers - 1):
+            mid_dims.append(mid_dims[-1] * 2)
+
+        in_out = list(zip(mid_dims[:-1], mid_dims[1:]))
+        # e.g. [[(3, 16), (16, 32), (32, 64)]
+
+        self.downs = nn.ModuleList([])
+
+        for dim_in, dim_out in in_out:
+            self.downs.append(
+                nn.Sequential(
+                    Downsample3D(dim_in, dim_out),
+                    Block3D(dim_out, dim_out),
+                    # Block3D(dim_out, dim_out),
+                    Downsample3D(dim_out, dim_out),
+                )
+            )
+
+        flat_dim = (
+            mid_dims[-1]
+            * conv_output_size(num_frames, 5, 2, num_layers)
+            * (image_size // ((2 * 2) ** num_layers)) ** 2
+        )
+
+        self.to_out = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(flat_dim, dim),
+        )
+
+    def forward(self, x: torch.Tensor):
+        """TODO: I've been working with video dims ( b, t, c, h, w ) but ( b, c, t, h, w ) fits
+        better in many cases like Conv3d. Probably I should change preprocessing to handle videos
+        in ( b, c, t, h, w ).
+        Args:
+            x ( b, t, c, h, w ): Videos.
+        Returns:
+            x: _description_
+        """
+        x = x.permute(0, 2, 1, 3, 4)
+
+        for down in self.downs:
+            x = down(x)
+
+        return self.to_out(x)
 
 
 class OpenFaceMapper(nn.Module):
