@@ -135,12 +135,6 @@ def infer(args: DictConfig) -> None:
         Z_list = []
         Y_list = []
         vision_saver = VisionSaver(args, os.path.join(save_dir, mode))
-        #     to_tensored=not args.vision.pretrained,  # Whether the image is divided by 255
-        #     is_video=not args.reduce_time,
-        #     as_h5=args.as_h5,
-        #     size=args.vision_encoder.image_size,
-        #     frames=args.fps * args.seq_len,
-        # )
         emb_saver = EmbeddingSaver(os.path.join(save_dir, mode))
 
         for X, Y, subject_idxs in tqdm(eval(f"{mode}_loader"), f"Embedding {mode} set"):
