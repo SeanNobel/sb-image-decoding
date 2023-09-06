@@ -1,6 +1,7 @@
-run_name: test
+dataset: YLabGOD
+train_name: test
+clip_train_name: test
 type: image
-dataset: UHD
 
 unet1:
   dim: 128
