@@ -20,6 +20,10 @@ References
 
 ### YLab GOD
 
+- (9/6) priorの訓練が50エポックでは足りなかった（+ wandbを使えていなかった）ので200エポックにして回し直す．
+
+- (8/25) 画像掲示がそもそも500msなので前回のsweepに意味がないことに気づいた．test accは上がっていないが，とりあえずパイプライン全体を訓練して訓練データで生成画像をGTと比較してみる．現在priorを訓練中．
+
 - (8/14) 画像掲示からseq_len=0.5秒間のECoGを使っていたので情報が乗っていないのかもしれない．画像掲示から0.5-1.0, 1.0-1.5, 1.5-2.0秒間のECoGで訓練sweep
 
 - (8/10) mixed_deepでもまったくtest accが上がらなかったので，mixed_shallowを作成，CLIP sweepを開始．ついでにconv blockのkernel sizeを3, 5, 7でsweep

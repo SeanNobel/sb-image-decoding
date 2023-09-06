@@ -22,6 +22,7 @@ def get_stim_fnames(ecog: h5py._hl.files.File) -> list:
     Y = []
     
     stim_fname = ecog["trigger_info"]["stim_fname"]
+    print(f"Number of stimuli: {len(stim_fname)}")
     
     for i in range(len(stim_fname)):
         ref = stim_fname[i][0] # h5py reference object
@@ -41,10 +42,11 @@ def get_stim_fnames(ecog: h5py._hl.files.File) -> list:
 def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, List[int]]:
     """
     Returns:
-        X: ( n_frames, n_channels, n_timesteps )
+        X: ( frames, channels, timesteps )
     """    
     signals = ecog["data_st"]["signals"][()].astype(np.float64)
-    orig_sfreq = int(ecog["data_st"]["sampling_rate"][()][0][0])
+    # ( channels, timesteps )
+    orig_sfreq = int(ecog["data_st"]["sampling_rate"][()][0][0]) # 10000Hz
     
     signals = brain_preproc(
         args, signals, orig_sfreq=orig_sfreq, segment=False, resample=False
@@ -54,6 +56,7 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
     onsets = np.nan_to_num(onsets, nan=-1).astype(int)
     offsets = ecog["trigger_info"]["stim_offset"][()].squeeze()
     offsets = np.nan_to_num(offsets, nan=-1).astype(int)
+    print(f"Number of onsets: {len(onsets)}")
     
     X = []
     dropped_idxs = []
@@ -72,7 +75,10 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
                 
     X = np.stack(X) # ( segments, channels, segment_len=250 )
     
-    X = baseline_correction(X, int(0.5 * args.baseline_ratio * args.brain_resample_sfreq))
+    X = baseline_correction(
+        X,
+        int(args.max_seq_len * args.baseline_ratio * args.brain_resample_sfreq)
+    )
     
     return X, dropped_idxs
 
@@ -107,7 +113,7 @@ def preproc(args, subject_name: str, fnames: List[str]) -> Optional[Tuple[np.nda
     return np.concatenate(X), np.concatenate(Y)
 
 
-@hydra.main(version_base=None, config_path="../../configs/ylab", config_name="god")
+@hydra.main(version_base=None, config_path="../../configs/ylab/god", config_name="clip")
 def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = hydra.utils.get_original_cwd()
@@ -124,6 +130,9 @@ def main(args: DictConfig) -> None:
         
         fnames_val = natsorted(glob.glob(f"{ecog_dir}*Val*.mat"))
         X_val, Y_val = preproc(args, subject_name, fnames_val)
+        
+        if X_val is None:
+            continue
             
         cprint(f"Subject {subject_name} has {len(fnames_train)} train sessions and {len(fnames_val)} validation sessions \nECoG: train {X_train.shape}, val {X_val.shape} \nImage: train {Y_train.shape}, val {Y_val.shape}", "cyan")
         
