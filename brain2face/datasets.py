@@ -626,7 +626,10 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
         )
 
         self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
-        self.Y_img = self._load_images(os.path.join(prefix, "images"))
+        
+        # self.Y_img = self._load_jpg(os.path.join(prefix, "images"))
+        self.Y_img = h5py.File(os.path.join(prefix, "images.h5"), "r")["images"]
+        self.Y_img = torch.from_numpy(self.Y_img[:]) / 255.0
 
         assert len(self.Y) == len(self.Y_img)
 
@@ -637,7 +640,7 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
         return self.Y[i], self.Y_img[i]
 
     @staticmethod
-    def _load_images(dir: str) -> torch.Tensor:
+    def _load_jpg(dir: str) -> torch.Tensor:
         images = []
         for path in tqdm(natsorted(glob.glob(dir + "/*.jpg")), desc="Loading images"):
             image = cv2.imread(path).astype(np.float32) / 255.0
