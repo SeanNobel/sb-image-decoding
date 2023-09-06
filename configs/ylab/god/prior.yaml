@@ -13,7 +13,7 @@ image_embed_dim: 512
 timesteps: 100
 cond_drop_prob: 0.2
 
-epochs: 50
+epochs: 200
 # train_ratio: 0.8
 batch_size: 128 # For embs with temporal dimension, batch_size is multiplied by timesteps.
 lr: 3.0e-4
