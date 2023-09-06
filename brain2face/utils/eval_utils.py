@@ -19,12 +19,14 @@ class VisionSaver:
         channels: int = 3,  # FIXME: hard-coded
         for_webdataset: bool = False,
     ) -> None:
-        self.to_tensored = not args.vision.pretrained
-        self.is_video = not args.reduce_time
         self.as_h5 = args.as_h5
-        self.fps = args.fps
-        frames = args.fps * args.seq_len
+        self.to_tensored = not args.vision.pretrained
         size = args.vision_encoder.image_size
+        
+        self.is_video = not args.reduce_time
+        if self.is_video:
+            self.fps = args.fps
+            frames = args.fps * args.seq_len
 
         self.sample_idx = 0
         self.chunk_idx = 0
@@ -48,13 +50,17 @@ class VisionSaver:
             os.makedirs(self.save_dir, exist_ok=True)
 
             if self.as_h5:
+                name = "videos" if self.is_video else "images"
+                shape = (channels, frames, size, size) if self.is_video else (channels, size, size) # fmt: skip
+                
                 # NOTE: h5 file contains many videos as a single file.
                 # with h5py.File(os.path.join(save_dir, "videos.h5"), "a") as hdf:
-                self.hdf = h5py.File(os.path.join(save_dir, "videos.h5"), "w")
+                self.hdf = h5py.File(os.path.join(save_dir, f"{name}.h5"), "w")
+                
                 self.dataset = self.hdf.require_dataset(
-                    name="videos",
-                    shape=(0, frames, size, size, channels),
-                    maxshape=(None, frames, size, size, channels),
+                    name=name,
+                    shape=(0, *shape),
+                    maxshape=(None, *shape),
                     dtype=np.float32,
                 )
 
@@ -62,7 +68,7 @@ class VisionSaver:
 
     def _save(self, Y: torch.Tensor) -> None:
         if self.as_h5:
-            self._save_video_as_h5(Y)
+            self._save_as_h5(Y)
 
         else:
             for y in Y:
@@ -72,6 +78,21 @@ class VisionSaver:
                     self._save_video(y)
 
                 self.sample_idx += 1
+                
+    def _save_as_h5(self, y: torch.Tensor) -> None:
+        """_summary_
+        Args:
+            y ( b, frames, channels, h, w ) or ( b, h, w, channels ): _description_
+        """
+        if y.ndim == 5:
+            y = y.permute(0, 2, 1, 3, 4) # ( b, channels, frames, h, w )
+        elif y.ndim == 4:
+            y = y.permute(0, 3, 1, 2) # ( b, channels, h, w )
+        else:
+            raise ValueError(f"y.ndim must be 4 or 5, but got {y.ndim}.")
+
+        self.dataset.resize(self.dataset.shape[0] + y.shape[0], axis=0)
+        self.dataset[-y.shape[0] :] = y.numpy()
 
     def _save_image(self, y: torch.Tensor) -> None:
         save_path = os.path.join(self.save_dir, str(self.sample_idx).zfill(5) + ".jpg")
@@ -84,17 +105,6 @@ class VisionSaver:
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         cv2.imwrite(save_path, image)
-
-    def _save_video_as_h5(self, y: torch.Tensor) -> None:
-        """_summary_
-        Args:
-            y ( b, frames, channels, size, size ): _description_
-        """
-        video = y.numpy().transpose(0, 1, 3, 4, 2)
-        # ( b, frames, size, size, channels )
-
-        self.dataset.resize(self.dataset.shape[0] + video.shape[0], axis=0)
-        self.dataset[-video.shape[0] :] = video
 
     def _save_video(self, y: torch.Tensor) -> None:
         """_summary_

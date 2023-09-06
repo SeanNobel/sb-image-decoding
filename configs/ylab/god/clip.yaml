@@ -1,12 +1,12 @@
 # ==== Preprocessing ==== #
-preproc_name: drop_fsurfer_incons_subjs
+preproc_name: bugfixing
 
 data_root: /storage/dataset/ECoG/internal/GODv2-4/
 freesurfer_dir: /storage/data/freesurfer/Subject_ECoG/
 
 segment_in_preproc: True
 
-max_seq_len: 2.0 # how long to take during preprocessing
+max_seq_len: 0.5 # This value CANNOT be changed from 0.5.
 
 brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
@@ -90,23 +90,25 @@ num_workers: 4
 
 seed: 1234
 
-cuda_id: 2
+cuda_id: 0
 
-sweep_count: 3
+sweep_count: 9
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
+    split:
+      values: [mixed_shallow, mixed_deep]
     # ksizes.conv_block:
     #   values: [3, 5, 7]
     # d_drop:
     #   values: [0.1, 0.2, 0.3]
     # seq_onset:
     #   values: [0.0, 0.5, 1.0, 1.5]
-    seq_len:
-      values: [2.0, 1.5, 1.0]
+    # seq_len:
+    #   values: [2.0, 1.5, 1.0]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
     # biases.conv_block:
@@ -116,7 +118,9 @@ sweep_config:
     # biases.linear_reduc_time:
     #   values: [True, False]
 
+# ==== Evaluation ==== #
 eval:
-  seq_onset: 0
+  split: mixed_shallow
 
+as_h5: True
 for_webdataset: False
