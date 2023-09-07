@@ -20,7 +20,9 @@ References
 
 ### YLab GOD
 
-- (9/6) priorの訓練が50エポックでは足りなかった（+ wandbを使えていなかった）ので200エポックにして回し直す．
+- (9/7) [Priorの訓練200エポックが完了](https://wandb.ai/sensho/nd_god_prior/runs/u70r7dga?workspace=user-sensho)．Image decoderの訓練を開始．
+
+- (9/6) Priorの訓練が50エポックでは足りなかった（+ wandbを使えていなかった）ので200エポックにして回し直す．
 
 - (8/25) 画像掲示がそもそも500msなので前回のsweepに意味がないことに気づいた．test accは上がっていないが，とりあえずパイプライン全体を訓練して訓練データで生成画像をGTと比較してみる．現在priorを訓練中．
 
