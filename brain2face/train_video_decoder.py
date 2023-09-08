@@ -44,7 +44,7 @@ def train(args: DictConfig) -> None:
         wandb.run.save()
 
     run_dir = os.path.join(
-        "runs/decoder", args.dataset.lower(), args.type, args.train_name
+        "runs/decoder", args.dataset.lower(), args.train_name
     )
     os.makedirs(run_dir, exist_ok=True)
 
