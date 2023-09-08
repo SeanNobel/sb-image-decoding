@@ -20,6 +20,8 @@ References
 
 ### YLab GOD
 
+- (9/8) 訓練データに対して，パイプラインに通して画像を生成してみた（`generated/ylabgod`）．Decoderを20エポックしか訓練していなかったので，100エポックにして再訓練．
+
 - (9/7) [Priorの訓練200エポックが完了](https://wandb.ai/sensho/nd_god_prior/runs/u70r7dga?workspace=user-sensho)．Image decoderの訓練を開始．
 
 - (9/6) Priorの訓練が50エポックでは足りなかった（+ wandbを使えていなかった）ので200エポックにして回し直す．
