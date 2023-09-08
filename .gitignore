@@ -1,3 +1,5 @@
+generated/
+
 brain2face/models/lightning/
 
 tmp/
