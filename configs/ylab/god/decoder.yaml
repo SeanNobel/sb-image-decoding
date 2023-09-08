@@ -1,5 +1,5 @@
 dataset: YLabGOD
-train_name: test
+train_name: epochs_100
 clip_train_name: test
 type: image
 
@@ -18,7 +18,7 @@ image_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
 
 timesteps: 1000
 
-epochs: 20
+epochs: 100
 batch_size: 16
 accum_grad: False
 lr: 3.0e-4
@@ -27,11 +27,11 @@ ema_beta: 0.99
 ema_update_after_step: 1000
 ema_update_every: 10
 
-cuda_id: 1
+cuda_id: 0
 seed: 1234
 log_level: INFO
 
 use_wandb: True
 wandb:
-  project: decoder_uhd
+  project: nd_god_decoder
   entity: sensho
