@@ -35,7 +35,8 @@ def pipeline(_args: DictConfig) -> None:
 
     run_dir_clip = get_run_dir(args_clip)
     
-    gen_dir = os.path.join("generated", args_clip.dataset.lower())
+    gen_dir = os.path.join("generated", args_clip.dataset.lower(), args_decoder.train_name)
+    os.makedirs(gen_dir, exist_ok=True)
 
     # NOTE: devices need to be hard-coded, as I cannot figure out how the device
     #       that pytorch-dalle2 uses
