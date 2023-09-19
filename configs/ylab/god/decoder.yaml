@@ -1,5 +1,5 @@
 dataset: YLabGOD
-train_name: epochs_100
+train_name: epochs_800
 clip_train_name: test
 type: image
 
@@ -18,7 +18,7 @@ image_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
 
 timesteps: 1000
 
-epochs: 100
+epochs: 800
 batch_size: 16
 accum_grad: False
 lr: 3.0e-4
