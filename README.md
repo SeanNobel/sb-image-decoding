@@ -20,6 +20,10 @@ References
 
 ### YLab GOD
 
+- (9/19) 100エポックでもGTに近い画像は生成されなかった．
+  - Decoderだけの評価としてimage_emedsから直接生成してみたところ，少しGTに似た画像が生成された．
+  - Decoderを800エポックで再訓練．
+
 - (9/8) 訓練データに対して，パイプラインに通して画像を生成してみた（`generated/ylabgod`）．Decoderを20エポックしか訓練していなかったので，100エポックにして再訓練．
 
 - (9/7) [Priorの訓練200エポックが完了](https://wandb.ai/sensho/nd_god_prior/runs/u70r7dga?workspace=user-sensho)．Image decoderの訓練を開始．
@@ -29,6 +33,7 @@ References
 - (8/25) 画像掲示がそもそも500msなので前回のsweepに意味がないことに気づいた．test accは上がっていないが，とりあえずパイプライン全体を訓練して訓練データで生成画像をGTと比較してみる．現在priorを訓練中．
 
 - (8/14) 画像掲示からseq_len=0.5秒間のECoGを使っていたので情報が乗っていないのかもしれない．画像掲示から0.5-1.0, 1.0-1.5, 1.5-2.0秒間のECoGで訓練sweep
+  - (9/19) ↑画像掲示が0.5秒なので意味がないはずだが，やらなかった？（画像掲示間のインターバルはゼロ秒！）
 
 - (8/10) mixed_deepでもまったくtest accが上がらなかったので，mixed_shallowを作成，CLIP sweepを開始．ついでにconv blockのkernel sizeを3, 5, 7でsweep
 
