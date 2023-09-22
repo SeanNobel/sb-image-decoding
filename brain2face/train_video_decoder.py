@@ -17,8 +17,8 @@ from dalle2_video.dalle2_video import (
     Unet3D,
     UnetTemporalConv,
     VideoDecoder,
-    VideoDecoderTrainer,
 )
+from dalle2_video.trainer import VideoDecoderTrainer
 
 from brain2face.datasets import (
     NeuroDiffusionCLIPEmbVideoDataset,
@@ -121,6 +121,7 @@ def train(args: DictConfig) -> None:
         # sub_batch_size=args.sub_batch_size if args.accum_grad else None,
         lr=args.lr,
         wd=args.wd,
+        use_ema=False,
         ema_beta=args.ema_beta,
         ema_update_after_step=args.ema_update_after_step,
         ema_update_every=args.ema_update_every,
