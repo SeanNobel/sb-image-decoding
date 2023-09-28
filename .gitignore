@@ -6,9 +6,6 @@ tmp/
 
 src/
 
-assets/*
-!assets/neuro-diffusion.jpeg
-
 data/*
 !data/.gitkeep
 
