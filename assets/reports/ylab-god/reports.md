@@ -28,38 +28,38 @@
 - 左がGT（RGBとBGRを間違えて保存してしまいました），右が生成画像．
 
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/0_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/0.jpg">
+  <img src="generated_epochs800/0_gt.jpg">
+  <img src="generated_epochs800/0.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/5_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/5.jpg">
+  <img src="generated_epochs800/5_gt.jpg">
+  <img src="generated_epochs800/5.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/6_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/6.jpg">
+  <img src="generated_epochs800/6_gt.jpg">
+  <img src="generated_epochs800/6.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/7_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/7.jpg">
+  <img src="generated_epochs800/7_gt.jpg">
+  <img src="generated_epochs800/7.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/9_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/9.jpg">
+  <img src="generated_epochs800/9_gt.jpg">
+  <img src="generated_epochs800/9.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/17_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/17.jpg">
+  <img src="generated_epochs800/17_gt.jpg">
+  <img src="generated_epochs800/17.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/21_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/21.jpg">
+  <img src="generated_epochs800/21_gt.jpg">
+  <img src="generated_epochs800/21.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/26_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/26.jpg">
+  <img src="generated_epochs800/26_gt.jpg">
+  <img src="generated_epochs800/26.jpg">
 </p>
 <p float="left">
-  <img src="../../../generated/ylabgod/decoder/31_gt.jpg">
-  <img src="../../../generated/ylabgod/decoder/31.jpg">
+  <img src="generated_epochs800/31_gt.jpg">
+  <img src="generated_epochs800/31.jpg">
 </p>
