@@ -24,3 +24,42 @@
 ### 生成画像
 
 - ①〜③で一貫したtrain/test splitをしていて，以下はtrainデータに対する生成画像．Testデータは①のCLIP学習が上手く行っていないのでまだ生成してみていない．
+
+- 左がGT（RGBとBGRを間違えて保存してしまいました），右が生成画像．
+
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/0_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/0.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/5_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/5.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/6_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/6.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/7_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/7.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/9_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/9.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/17_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/17.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/21_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/21.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/26_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/26.jpg">
+</p>
+<p float="left">
+  <img src="../../../generated/ylabgod/decoder/31_gt.jpg">
+  <img src="../../../generated/ylabgod/decoder/31.jpg">
+</p>
