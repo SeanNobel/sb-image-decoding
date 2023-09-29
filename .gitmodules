@@ -2,5 +2,5 @@
 	path = encoder4editing
 	url = https://github.com/SeanNobel/encoder4editing.git
 [submodule "dalle2_video"]
-	path = dalle2_video
+	path = dalle2-video
 	url = https://github.com/SeanNobel/DALLE2-video.git

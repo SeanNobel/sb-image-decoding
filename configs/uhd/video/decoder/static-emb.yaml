@@ -30,7 +30,7 @@ decoder_trainer:
   ema_update_after_step: 1000
   ema_update_every: 10
 
-cuda_id: 0
+cuda_id: 1
 seed: 1234
 log_level: INFO
 

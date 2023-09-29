@@ -37,7 +37,7 @@ pip install -e .
 
 ### UHD
 
-- (8/21) Video Decoderは訓練途中のものではあるが，パイプライン全体を走らせて初の3D U-Netでの動画生成をした．結果，ちゃんと動画が生成された．Video Decoderがbatch size=1でも訓練できないためモデルを小さくしている（それでも訓練に非常に時間がかかる）ので，Lightning FSDPを導入してmodel parallelismを試す．
+- (8/21) Video Decoderは訓練途中のものではあるが，パイプライン全体を走らせて初の3D U-Netでの動画生成をした．結果，ちゃんと動画が生成された．Video Decoderがbatch size=1でも訓練できないためモデルを小さくしている（それでも訓練に非常に時間がかかる）ので，Lightning FSDPかAccelerate DeepSpeedを導入してmodel parallelismを試す．
 
 - (8/18) Unet3DEncoderを使ったCLIP学習はViViTほどパフォーマンスが出ない．ViViTReduceTimeを実装，CLIP学習を開始．学習途中のUnet3DEncoderではあるが，static embeddingでパイプラインを通してデバッグするための`eval_clip.py`を開始．
 
@@ -90,75 +90,21 @@ Jul
 
 <br>
 
-## Yanagisawa Lab GOD dataset
+## Preprocessing
 
-### Preprocessing
+### Yanagisawa Lab GOD
 
 ```bash
 python brain2face/preprocs/ylab_god.py
 ```
 
-### CLIP training
-
-```bash
-# Normal
-python brain2face/train_clip.py config_path=ylab/god/clip.yaml
-# Sweep
-nohup python brain2face/train_clip.py config_path=ylab/god/clip.yaml sweep=True > logs/ylab/god/sweep_clip.log &
-```
-
-#### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
-
-```bash
-python brain2face/eval_clip.py config_path=ylab/god/clip.yaml
-# For distributed DALLE-2 training, set for_webdataset=True in the yaml
-```
-
-#### Run DALLE-2 prior training
-
-```bash
-# Normal
-nohup python brain2face/train_diffusion_prior.py > logs/ylab/god/diffusion_prior.log &
-```
-
-<br>
-
-#### Run CLIP evaluation and generate CLIP embeddings (+ corresponding images)
-
-```bash
-python brain2face/eval_clip.py config_path=ylab/god.yaml
-# For distributed DALLE-2 training, set for_webdataset=True in the yaml
-```
-
-#### Run DALLE-2 prior training
-
-```bash
-# Normal
-nohup python brain2face/train_diffusion_prior.py > logs/ylab/god/diffusion_prior.log &
-```
-
-<br>
-
-## Yanagisawa Lab OpenFace (E0030 dataset)
-
-### Preprocessing
+### Yanagisawa Lab OpenFace (subject E0030)
 
 ```bash
 python brain2face/preprocs/ylab_e0030.py
 ```
 
-### CLIP training
-
-```bash
-# Specify sweep configuration from .yaml
-nohup python brain2face/train_clip.py config_path=ylab/e0030.yaml sweep=True > logs/ylab/sweep_clip.log &
-```
-
-<br>
-
-## UHD
-
-### Preprocessing
+### UHD
 
 ```bash
 nohup python brain2face/preprocs/uhd.py start_subj=0 end_subj=8 > logs/uhd/out1.log &
@@ -166,56 +112,104 @@ nohup python brain2face/preprocs/uhd.py start_subj=8 end_subj=16 > logs/uhd/out2
 nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out3.log &
 ```
 
-### CLIP training
+### Hayashi Lab @ AIST
+
+- Submodule [encoder4editing](https://github.com/SeanNobel/encoder4editing)
+
+- Download StyleGAN inversion model trained on FFHQ StyleGAN
+
+```bash
+cd encoder4editing/weights
+gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT
+```
+
+- Run preprocess (using 4 GPUs)
+
+```bash
+CUDA_VISIBLE_DEVICES=0 nohup python brain2face/preprocs/stylegan.py start_subj=0 end_subj=8 > logs/ica/out1.log &
+CUDA_VISIBLE_DEVICES=1 nohup python brain2face/preprocs/stylegan.py start_subj=8 end_subj=16 > logs/ica/out2.log &
+CUDA_VISIBLE_DEVICES=2 nohup python brain2face/preprocs/stylegan.py start_subj=16 end_subj=24 > logs/ica/out3.log &
+CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=24 end_subj=32 > logs/ica/out4.log &
+```
+
+<br>
+
+## CLIP training
 
 ```bash
 # Normal
-python brain2face/train_clip.py config_path={path}.yaml
+python brain2face/train_clip.py config_path={path to config}.yaml 
 
 # Sweep
-nohup python brain2face/train_clip.py config_path={path}.yaml sweep=True > logs/{path}.log &
+nohup python brain2face/train_clip.py config_path={path to config}.yaml sweep=True > logs/{path to log}.log &
 ```
 
-### CLIP evaluation (save CLIP embeds + corresponding images / videos)
+<br>
+
+## CLIP evaluation (save CLIP embeds + corresponding images / videos)
 
 ```bash
-python brain2face/eval_clip.py config_path={path}.yaml
-# For distributed DALLE-2 training (not working now), set for_webdataset=True in the config file.
+python brain2face/eval_clip.py config_path={path to config}.yaml
+# For distributed DALLE-2 training, set for_webdataset=True in the config file. (<- not working now)
 ```
 
-### Run DALLE-2 prior training
+<br>
+
+## DALLE-2 prior training
 
 ```bash
-python brain2face/train_prior.py config_path=uhd/video/prior/{fname}.yaml
+python brain2face/train_prior.py config_path={path to config}.yaml
 ```
 
-### DALLE-2 decoder training
+<br>
 
-#### Image
+## DALLE-2 decoder training
+
+### Image
 
 ```bash
-nohup python brain2face/train_image_decoder.py config_path=uhd/image/decoder.yaml > logs/uhd/train_image_decoder.log &
+nohup python brain2face/train_image_decoder.py config_path={path to config}.yaml > logs/{path to log}.log &
 ```
 
-#### Video
+### Video
 
 ```bash
-nohup python brain2face/train_video_decoder.py config_path=uhd/video/decoder.yaml > logs/uhd/train_video_decoder.log &
+nohup python brain2face/train_video_decoder.py config_path={path to config}.yaml > logs/{path to log}.log &
 ```
 
-### Finally, run the pipeline and generate images / videos from EEG
+### Video (with DeepSpeed)
+
+- First run `accelerate config` with answering 'no' to the question 'Do you want to specify a json file to a DeepSpeed config?'
 
 ```bash
-python brain2face/eval_image_pipeline.py config_path={path}.yaml
+accelerate launch brain2face/train_video_decoder.py config_path={path to config}.yaml
 ```
 
-#### Distributed DALLE-2 prior training for image (deprecated)
+## Finally, run the pipeline and generate images / videos from EEG
+
+### Image
+
+```bash
+python brain2face/eval_image_pipeline.py config_path={path to config}.yaml
+```
+
+### Video
+
+```bash
+python brain2face/eval_video_pipeline.py config_path={path to config}.yaml
+```
+
+<br>
+
+## Deprecated
+
+### Distributed DALLE-2 prior training for image (deprecated)
 
 ```bash
 python brain2face/distributed_train_prior.py
 ```
 
-#### Distributed DALLE-2 decoder training for image (deprecated)
+### Distributed DALLE-2 decoder training for image (deprecated)
 
 ```bash
 # tar face_images
@@ -227,28 +221,4 @@ huggingface-cli login
 mkdir .tracker_data
 # Run distributedtraining
 python brain2face/train_decoder_distributed.py
-```
-
-
-
-<br>
-
-## Hayashi Lab @ AIST
-
-- Submodule [encoder4editing](https://github.com/SeanNobel/encoder4editing)
-
-- Download StyleGAN inversion model trained on FFHQ StyleGAN
-
-```bash
-cd encoder4editing/weights
-gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT
-```
-
-### Run preprocess (using 4 GPUs)
-
-```bash
-CUDA_VISIBLE_DEVICES=0 nohup python brain2face/preprocs/stylegan.py start_subj=0 end_subj=8 > logs/ica/out1.log &
-CUDA_VISIBLE_DEVICES=1 nohup python brain2face/preprocs/stylegan.py start_subj=8 end_subj=16 > logs/ica/out2.log &
-CUDA_VISIBLE_DEVICES=2 nohup python brain2face/preprocs/stylegan.py start_subj=16 end_subj=24 > logs/ica/out3.log &
-CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=24 end_subj=32 > logs/ica/out4.log &
 ```

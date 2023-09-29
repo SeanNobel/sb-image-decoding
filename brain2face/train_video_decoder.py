@@ -15,7 +15,6 @@ from accelerate import Accelerator
 from dalle2_video.dalle2_video import (
     Unet3D,
     VideoDecoder,
-    VideoDecoderTrainer,
 )
 
 
@@ -115,6 +114,10 @@ def train(args: DictConfig) -> None:
     # ---------------------
     #        Trainer
     # ---------------------
+    # accelerator = Accelerator(
+    #     deepspeed_plugin=
+    # )
+
     decoder_trainer = VideoDecoderTrainer(
         decoder,
         accelerator=accelerator,
