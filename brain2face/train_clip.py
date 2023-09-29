@@ -49,7 +49,7 @@ def train():
     else:
         run_name = args.train_name
 
-    run_dir = os.path.join("runs", args.dataset.lower(), args.train_name, run_name)
+    run_dir = os.path.join("runs", args.dataset.lower(), run_name)
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"

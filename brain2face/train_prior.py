@@ -32,7 +32,7 @@ def train(args: DictConfig) -> None:
         wandb.run.name = args.train_name
         wandb.run.save()
 
-    run_dir = os.path.join("runs/prior", args.dataset.lower(), args.type, args.train_name)
+    run_dir = os.path.join("runs/prior", args.dataset.lower(), args.train_name)
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"

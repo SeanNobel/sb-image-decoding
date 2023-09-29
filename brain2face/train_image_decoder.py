@@ -8,14 +8,14 @@ from termcolor import cprint
 from typing import Union, Optional
 import wandb
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 
 from brain2face.datasets import NeuroDiffusionCLIPEmbImageDataset
 
 
-def train() -> None:
+def train(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
@@ -29,10 +29,12 @@ def train() -> None:
             config=wandb.config,
             save_code=True,
         )
-        wandb.run.name = args.run_name
+        wandb.run.name = args.train_name
         wandb.run.save()
 
-    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.type, args.run_name)
+    run_dir = os.path.join(
+        "runs/decoder", args.dataset.lower(), args.train_name
+    )
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -40,8 +42,12 @@ def train() -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    train_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset)
-    test_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset, train=False)
+    train_set = NeuroDiffusionCLIPEmbImageDataset(
+        args.dataset, args.clip_train_name
+    )
+    test_set = NeuroDiffusionCLIPEmbImageDataset(
+        args.dataset, args.clip_train_name, train=False
+    )
 
     loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
     train_loader = torch.utils.data.DataLoader(
@@ -89,24 +95,6 @@ def train() -> None:
         ema_update_after_step=args.ema_update_after_step,
         ema_update_every=args.ema_update_every,
     )
-
-    # params = diffusion_prior.parameters()
-
-    # optimizer = torch.optim.Adam(params, lr=args.lr)
-
-    # if args.lr_scheduler == "cosine":
-    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #         optimizer, T_max=args.epochs, eta_min=args.lr * 0.01
-    #     )
-    # elif args.lr_scheduler == "multistep":
-    #     mlstns = [int(m * args.epochs) for m in args.lr_multistep_mlstns]
-    #     scheduler = torch.optim.lr_scheduler.MultiStepLR(
-    #         optimizer, milestones=mlstns, gamma=args.lr_step_gamma
-    #     )
-    # elif args.lr_scheduler == "none":
-    #     scheduler = None
-    # else:
-    #     raise ValueError
 
     # -----------------------
     #     Strat training
@@ -191,24 +179,26 @@ def train() -> None:
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
 def run(_args: DictConfig) -> None:
-    global args, sweep
-
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
+    
+    with open_dict(args):
+        args.use_wandb = _args.use_wandb
+    
+    train(args)
 
-    sweep = _args.sweep
+    # sweep = _args.sweep
 
-    if sweep:
-        sweep_config = OmegaConf.to_container(
-            args.sweep_config, resolve=True, throw_on_missing=True
-        )
+    # if sweep:
+    #     sweep_config = OmegaConf.to_container(
+    #         args.sweep_config, resolve=True, throw_on_missing=True
+    #     )
 
-        sweep_id = wandb.sweep(sweep_config, project=args.project_name)
+    #     sweep_id = wandb.sweep(sweep_config, project=args.project_name)
 
-        wandb.agent(sweep_id, train, count=args.sweep_count)
+    #     wandb.agent(sweep_id, train, count=args.sweep_count)
 
-    else:
-        train()
+    # else:
 
 
 if __name__ == "__main__":

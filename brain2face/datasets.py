@@ -216,11 +216,17 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
 
 
 class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
-    def __init__(self, args, train: bool = True) -> None:
+    def __init__(
+        self, args, train: bool = True, session_id: Optional[int] = None
+    ) -> Optional[List[str]]:
         # NOTE: it is important to sort here to match montage paths in layout.py
         subject_paths = natsorted(
             glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
         )
+        
+        if session_id is not None:
+            orig_subject_paths = subject_paths.copy()
+            subject_paths = [subject_paths[session_id]]
 
         if args.split == "mixed_deep":
             loader = partial(self._mixed_loader, args, train=train, _loader=self._loader)
@@ -230,6 +236,9 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             loader = partial(self._loader, args=args, train=train)
 
         super().__init__(args, subject_paths, train, loader)
+        
+        if session_id is not None:
+            return orig_subject_paths
 
     @staticmethod
     def _mixed_loader(
@@ -626,7 +635,10 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
         )
 
         self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
-        self.Y_img = self._load_images(os.path.join(prefix, "images"))
+        
+        # self.Y_img = self._load_jpg(os.path.join(prefix, "images"))
+        self.Y_img = h5py.File(os.path.join(prefix, "images.h5"), "r")["images"]
+        self.Y_img = torch.from_numpy(self.Y_img[:]) / 255.0
 
         assert len(self.Y) == len(self.Y_img)
 
@@ -637,7 +649,7 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
         return self.Y[i], self.Y_img[i]
 
     @staticmethod
-    def _load_images(dir: str) -> torch.Tensor:
+    def _load_jpg(dir: str) -> torch.Tensor:
         images = []
         for path in tqdm(natsorted(glob.glob(dir + "/*.jpg")), desc="Loading images"):
             image = cv2.imread(path).astype(np.float32) / 255.0
@@ -756,6 +768,16 @@ class UHDPipelineDataset(UHDCLIPDataset):
         cprint(X.shape, "cyan")
 
         return X
+    
+
+class YLabGODPipelineDataset(YLabGODCLIPDataset):
+    def __init__(self, args, session_id: int, train: bool = True) -> None:
+        orig_session_paths = super().__init__(args, train, session_id=session_id)
+        
+        self.subject_idx = torch.full((len(self.X),), session_id, dtype=torch.uint8)
+        
+        # FIXME: This might not work for DynamicChanLoc2d.
+        self.subject_names = [path.split("/")[-2] for path in orig_session_paths]
 
 
 if __name__ == "__main__":
