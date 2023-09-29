@@ -18,11 +18,12 @@ torch
 natsort
 pytest
 
-# dalle2-pytorch
--e git+https://github.com/SeanNobel/DALLE2-pytorch.git@bugfixes#egg=dalle2_pytorch
+dalle2-pytorch==1.14.2
 
--e git+https://github.com/SeanNobel/DALLE2-video.git@main#egg=dalle2_video
+deepspeed
 
--e git+https://github.com/openai/CLIP.git#egg=clip-1.0
+# -e git+https://github.com/SeanNobel/DALLE2-video.git@main#egg=dalle2_video
+
+# -e git+https://github.com/openai/CLIP.git#egg=clip-1.0
 
 huggingface_hub

@@ -16,6 +16,11 @@ References
 
 - Imagen Video: High Definition Video Generation with Diffusion Models ([Ho et al., Oct 2022](https://arxiv.org/abs/2210.02303))
 
+```bash
+cd dalle2_video/
+pip install -e .
+```
+
 ## Status
 
 ### YLab GOD
