@@ -12,11 +12,8 @@ import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 from accelerate import Accelerator
 
-from dalle2_video.dalle2_video import (
-    Unet3D,
-    VideoDecoder,
-)
-
+from dalle2_video.dalle2_video import Unet3D, VideoDecoder
+from dalle2_video.trainer import VideoDecoderTrainer
 
 from brain2face.datasets import (
     NeuroDiffusionCLIPEmbVideoDataset,
@@ -29,7 +26,7 @@ def train(args: DictConfig) -> None:
     torch.manual_seed(args.seed)
 
     accelerator = Accelerator()
-    accelerator.gradient_accumulation_steps = args.deepspeed.gradient_accumulation_steps
+    # accelerator.gradient_accumulation_steps = args.deepspeed.gradient_accumulation_steps
 
     device = accelerator.device
 
@@ -46,9 +43,7 @@ def train(args: DictConfig) -> None:
         wandb.run.name = args.train_name
         wandb.run.save()
 
-    run_dir = os.path.join(
-        "runs/decoder", args.dataset.lower(), args.train_name
-    )
+    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.train_name)
     os.makedirs(run_dir, exist_ok=True)
 
     logging.getLogger().setLevel(eval(f"logging.{args.log_level}"))
@@ -66,7 +61,7 @@ def train(args: DictConfig) -> None:
     )
 
     loader_args = {
-        "batch_size": args.batch_size,  # this will be overwritten by accelerator
+        "batch_size": args.batch_size,
         "drop_last": True,
         "num_workers": 4,
         "pin_memory": True,
@@ -74,13 +69,13 @@ def train(args: DictConfig) -> None:
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
         shuffle=True,
-        collate_fn=CollateFunctionForVideoHDF5(train_set.Y_ref, resample_nsamples),
+        collate_fn=train_set.collate_fn,
         **loader_args,
     )
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
         shuffle=False,
-        collate_fn=CollateFunctionForVideoHDF5(test_set.Y_ref, resample_nsamples),
+        collate_fn=test_set.collate_fn,
         **loader_args,
     )
 
@@ -114,10 +109,6 @@ def train(args: DictConfig) -> None:
     # ---------------------
     #        Trainer
     # ---------------------
-    # accelerator = Accelerator(
-    #     deepspeed_plugin=
-    # )
-
     decoder_trainer = VideoDecoderTrainer(
         decoder,
         accelerator=accelerator,
@@ -139,7 +130,7 @@ def train(args: DictConfig) -> None:
         test_losses_unet1 = []
         test_losses_unet2 = []
 
-        for Y_embed, Y in tqdm(train_loader):
+        for Y_embed, Y in tqdm(decoder_trainer.train_loader):
             Y_embed, Y = Y_embed.to(device), Y.to(device)
 
             loss_unet1 = decoder_trainer(video_embed=Y_embed, video=Y, unet_number=1)
@@ -151,7 +142,7 @@ def train(args: DictConfig) -> None:
             train_losses_unet1.append(loss_unet1)
             train_losses_unet2.append(loss_unet2)
 
-        for Y_embed, Y in tqdm(test_loader):
+        for Y_embed, Y in tqdm(decoder_trainer.val_loader):
             Y_embed, Y = Y_embed.to(device), Y.to(device)
 
             loss_unet1 = decoder_trainer(video_embed=Y_embed, video=Y, unet_number=1)
@@ -169,7 +160,7 @@ def train(args: DictConfig) -> None:
             f"avg test loss unet2: {np.mean(test_losses_unet2):.3f} | ",
         )
 
-        if args.use_wandb:
+        if args.use_wandb and accelerator.is_main_process:
             performance_now = {
                 "epoch": epoch,
                 "train_loss_unet1": np.mean(train_losses_unet1),
