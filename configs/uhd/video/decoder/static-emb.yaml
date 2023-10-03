@@ -21,7 +21,7 @@ frame_numbers: [90, 90] # Not doing temporal super-resolution for now
 timesteps: 1000
 
 epochs: 50
-batch_size: 1 # 64
+batch_size: 2 # 64
 
 decoder_trainer:
   lr: 3.0e-4
@@ -40,4 +40,4 @@ wandb:
   entity: sensho
 
 deepspeed:
-  gradient_accumulation_steps: 16
+  gradient_accumulation_steps: 32

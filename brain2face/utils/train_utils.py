@@ -13,8 +13,8 @@ class Models:
     def __init__(
         self,
         brain_encoder: nn.Module,
-        vision_encoder: Optional[nn.Module],
-        loss_func: nn.Module,
+        vision_encoder: Optional[nn.Module] = None,
+        loss_func: Optional[nn.Module] = None,
     ):
         self.brain_encoder = brain_encoder
         self.vision_encoder = vision_encoder
@@ -25,7 +25,7 @@ class Models:
             self.vision_encoder_params = self._clone_params_list(self.vision_encoder)
 
     def get_params(self):
-        params = list(self.brain_encoder.parameters()) + list(self.loss_func.parameters())
+        params = list(self.brain_encoder.parameters()) + list(self.loss_func.parameters())  # fmt: skip
 
         if self.vision_encoder is not None:
             params += list(self.vision_encoder.parameters())
@@ -47,7 +47,7 @@ class Models:
             if torch.equal(prev_params[key], new_params[key])
         ]
 
-    def params_updated(self) -> bool:
+    def params_updated(self, show_non_updated: bool = True) -> bool:
         updated = True
 
         new_params = self._clone_params_list(self.brain_encoder)
@@ -55,10 +55,11 @@ class Models:
             new_params, self.brain_encoder_params
         )
         if len(non_updated_layers) > 0:
-            cprint(
-                f"Following layers in brain encoder are not updated: {non_updated_layers}",
-                "red",
-            )
+            if show_non_updated:
+                cprint(
+                    f"Following layers in brain encoder are not updated: {non_updated_layers}",
+                    "red",
+                )
             updated = False
         self.brain_encoder_params = new_params
 
@@ -68,10 +69,11 @@ class Models:
                 new_params, self.vision_encoder_params
             )
             if len(non_updated_layers) > 0:
-                cprint(
-                    f"Following layers in vision encoder are not updated: {non_updated_layers}",
-                    "red",
-                )
+                if show_non_updated:
+                    cprint(
+                        f"Following layers in vision encoder are not updated: {non_updated_layers}",
+                        "red",
+                    )
                 updated = False
             self.vision_encoder_params = new_params
 
@@ -98,7 +100,9 @@ class Models:
         if self.vision_encoder is not None:
             torch.save(
                 self.vision_encoder.state_dict(),
-                os.path.join(run_dir, f"vision_encoder_{'best' if best else 'last'}.pt"),
+                os.path.join(
+                    run_dir, f"vision_encoder_{'best' if best else 'last'}.pt"
+                ),
             )
 
 
