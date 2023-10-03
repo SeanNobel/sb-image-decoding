@@ -10,15 +10,13 @@ import logging
 import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
-
-from accelerate import Accelerator, DeepSpeedPlugin
+from accelerate import Accelerator
 
 from dalle2_video.dalle2_video import (
     Unet3D,
-    UnetTemporalConv,
     VideoDecoder,
-    VideoDecoderTrainer,
 )
+
 
 from brain2face.datasets import (
     NeuroDiffusionCLIPEmbVideoDataset,
@@ -30,7 +28,12 @@ def train(args: DictConfig) -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    if args.use_wandb:
+    accelerator = Accelerator()
+    accelerator.gradient_accumulation_steps = args.deepspeed.gradient_accumulation_steps
+
+    device = accelerator.device
+
+    if args.use_wandb and accelerator.is_main_process:
         wandb.config = {
             k: v for k, v in dict(args).items() if k not in ["root_dir", "wandb"]
         }
@@ -48,8 +51,6 @@ def train(args: DictConfig) -> None:
     )
     os.makedirs(run_dir, exist_ok=True)
 
-    device = f"cuda:{args.cuda_id}"
-
     logging.getLogger().setLevel(eval(f"logging.{args.log_level}"))
 
     # -----------------------
@@ -64,17 +65,20 @@ def train(args: DictConfig) -> None:
         args.dataset, args.clip_train_name, resample_nsamples, train=False
     )
 
-    loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
+    loader_args = {
+        "batch_size": args.batch_size,  # this will be overwritten by accelerator
+        "drop_last": True,
+        "num_workers": 4,
+        "pin_memory": True,
+    }
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
-        batch_size=args.batch_size,
         shuffle=True,
         collate_fn=CollateFunctionForVideoHDF5(train_set.Y_ref, resample_nsamples),
         **loader_args,
     )
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
-        batch_size=args.batch_size,
         shuffle=False,
         collate_fn=CollateFunctionForVideoHDF5(test_set.Y_ref, resample_nsamples),
         **loader_args,
@@ -116,14 +120,12 @@ def train(args: DictConfig) -> None:
 
     decoder_trainer = VideoDecoderTrainer(
         decoder,
-        # accelerator=accelerator,
-        # accum_grad=args.accum_grad,
-        # sub_batch_size=args.sub_batch_size if args.accum_grad else None,
-        lr=args.lr,
-        wd=args.wd,
-        ema_beta=args.ema_beta,
-        ema_update_after_step=args.ema_update_after_step,
-        ema_update_every=args.ema_update_every,
+        accelerator=accelerator,
+        dataloaders={
+            "train": train_loader,
+            "val": test_loader,
+        },
+        **args.decoder_trainer,
     )
 
     # -----------------------
