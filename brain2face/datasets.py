@@ -25,7 +25,11 @@ from clip.model import CLIP
 
 from brain2face.utils.brain_preproc import segment_then_blcorr
 from brain2face.utils.train_utils import sequential_apply
-from brain2face.utils.preproc_utils import crop_and_segment, crop_longer, sequential_load
+from brain2face.utils.preproc_utils import (
+    crop_and_segment,
+    crop_longer,
+    sequential_load,
+)
 from brain2face.utils.timer import timer
 
 mne.set_log_level(verbose="WARNING")
@@ -92,9 +96,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
                 subject_idx = np.where(np.array(self.subject_names) == name)[0][0]
 
             subject_idx *= torch.ones(X.shape[0], dtype=torch.uint8)
-            cprint(
-                f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}", "cyan"
-            )
+            cprint(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}","cyan")  # fmt: skip
 
             X_list.append(X)
             Y_list.append(Y)
@@ -168,7 +170,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
     def _drop_bads(_subject_paths):
         subject_paths = []
         for path in _subject_paths:
-            if os.path.exists(path + "brain.npy") and os.path.exists(path + "vision.npy"):
+            if os.path.exists(path + "brain.npy") and os.path.exists(path + "vision.npy"):  # fmt: skip
                 subject_paths.append(path)
         return subject_paths
 
@@ -223,20 +225,22 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         subject_paths = natsorted(
             glob.glob(f"data/preprocessed/ylab/god/{args.preproc_name}/*/")
         )
-        
+
         if session_id is not None:
             orig_subject_paths = subject_paths.copy()
             subject_paths = [subject_paths[session_id]]
 
         if args.split == "mixed_deep":
-            loader = partial(self._mixed_loader, args, train=train, _loader=self._loader)
+            loader = partial(
+                self._mixed_loader, args, train=train, _loader=self._loader
+            )
         elif args.split == "mixed_shallow":
             loader = partial(self._mixed_loader, args, train=None, _loader=self._loader)
         else:
             loader = partial(self._loader, args=args, train=train)
 
         super().__init__(args, subject_paths, train, loader)
-        
+
         if session_id is not None:
             return orig_subject_paths
 
@@ -635,7 +639,7 @@ class NeuroDiffusionCLIPEmbImageDataset(torch.utils.data.Dataset):
         )
 
         self.Y = torch.load(os.path.join(prefix, "vision_embds.pt"))
-        
+
         # self.Y_img = self._load_jpg(os.path.join(prefix, "images"))
         self.Y_img = h5py.File(os.path.join(prefix, "images.h5"), "r")["images"]
         self.Y_img = torch.from_numpy(self.Y_img[:]) / 255.0
@@ -665,6 +669,7 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         dataset: str,
         train_name: str,
         resample_nsamples: Optional[int] = None,
+        as_h5: bool = True,
         train: bool = True,
     ) -> None:
         super().__init__()
@@ -677,12 +682,22 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
         # FIXME
         # self.Y_embed = self.Y_embed[:128]
 
-        self.Y_ref = h5py.File(os.path.join(prefix, "videos.h5"), "r")["videos"]
+        if as_h5:
+            self.Y_ref = h5py.File(os.path.join(prefix, "videos.h5"), "r")["videos"]
+            self.Y = torch.arange(len(self.Y_ref), dtype=torch.int64)
+
+            self.collate_fn = CollateFunctionForVideoHDF5(
+                self.Y_ref, resample_nsamples=resample_nsamples
+            )
+        else:
+            self.Y = h5py.File(os.path.join(prefix, "videos.h5"), "r")["videos"][:]
+            self.Y = torch.from_numpy(self.Y).permute(0, 4, 1, 2, 3)
+
+            self.collate_fn = None
 
         # self.Y = self._load_videos(
         #     f"data/clip_embds/{dataset.lower()}/video/{'train' if train else 'test'}/videos"
         # )
-        self.Y = torch.arange(len(self.Y_ref), dtype=torch.int64)
 
         assert len(self.Y_embed) == len(self.Y)
 
@@ -715,7 +730,8 @@ class NeuroDiffusionCLIPEmbVideoDataset(torch.utils.data.Dataset):
                 torchvision.io.read_video(path, pts_unit="sec")[0].to(torch.float32)
                 / 255.0
                 for path in tqdm(
-                    natsorted(glob.glob(dir + "/*.mp4")), desc="Loading videos"  # [:128],
+                    natsorted(glob.glob(dir + "/*.mp4")),
+                    desc="Loading videos",  # [:128],
                 )
             ]
         )
@@ -768,14 +784,14 @@ class UHDPipelineDataset(UHDCLIPDataset):
         cprint(X.shape, "cyan")
 
         return X
-    
+
 
 class YLabGODPipelineDataset(YLabGODCLIPDataset):
     def __init__(self, args, session_id: int, train: bool = True) -> None:
         orig_session_paths = super().__init__(args, train, session_id=session_id)
-        
+
         self.subject_idx = torch.full((len(self.X),), session_id, dtype=torch.uint8)
-        
+
         # FIXME: This might not work for DynamicChanLoc2d.
         self.subject_names = [path.split("/")[-2] for path in orig_session_paths]
 
