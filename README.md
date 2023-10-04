@@ -190,8 +190,22 @@ nohup python brain2face/train_video_decoder.py config_path={path to config}.yaml
 
 - First run `accelerate config` with answering 'no' to the question 'Do you want to specify a json file to a DeepSpeed config?'
 
+- One cannot use nohup with many distributed training APIs (https://github.com/pytorch/pytorch/issues/67538). Use tmux instead.
+
 ```bash
 accelerate launch brain2face/train_video_decoder.py config_path={path to config}.yaml
+```
+
+```bash
+tmux new -s train-video-decoder
+
+CUDA_VISIBLE_DEVICES=2,3 accelerate launch brain2face/train_video_decoder.py config_path=uhd/video/decoder/static-emb.yaml use_wandb=True
+
+[Ctrl+b -> d] # detach from tmux session
+
+tmux ls # check running sessions
+
+tmux attach -t train-video-decoder
 ```
 
 ## Finally, run the pipeline and generate images / videos from EEG
