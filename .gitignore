@@ -1,7 +1,3 @@
-assets/*
-!assets/reports/
-!assets/neuro-diffusion.jpeg
-
 generated/
 
 brain2face/models/lightning/
