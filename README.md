@@ -46,6 +46,8 @@ pip install -e .
 
 ### UHD
 
+- (10/5) ms4-5に移行して昨日フルサイズモデルを訓練し始めたが，unet1の学習が進まない．EMAを使用していることが原因かもしれないので，EMAをオフにして新しい訓練を開始．
+
 - (8/21) Video Decoderは訓練途中のものではあるが，パイプライン全体を走らせて初の3D U-Netでの動画生成をした．結果，ちゃんと動画が生成された．Video Decoderがbatch size=1でも訓練できないためモデルを小さくしている（それでも訓練に非常に時間がかかる）ので，Lightning FSDPかAccelerate DeepSpeedを導入してmodel parallelismを試す．
 
 - (8/18) Unet3DEncoderを使ったCLIP学習はViViTほどパフォーマンスが出ない．ViViTReduceTimeを実装，CLIP学習を開始．学習途中のUnet3DEncoderではあるが，static embeddingでパイプラインを通してデバッグするための`eval_clip.py`を開始．
@@ -206,6 +208,11 @@ CUDA_VISIBLE_DEVICES=2,3 accelerate launch brain2face/train_video_decoder.py con
 tmux ls # check running sessions
 
 tmux attach -t train-video-decoder
+```
+
+```bash
+# Edit accelerate config if necessary (e.g. main_process_port)
+vi ~/.cache/huggingface/accelerate/default_config.yaml
 ```
 
 ## Finally, run the pipeline and generate images / videos from EEG

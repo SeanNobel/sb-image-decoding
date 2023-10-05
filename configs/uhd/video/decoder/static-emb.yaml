@@ -1,5 +1,5 @@
 dataset: UHD
-train_name: unet3d
+train_name: no-ema
 clip_train_name: unet3d
 type: video
 temporal_emb: False
@@ -26,6 +26,7 @@ batch_size: 2 # 64
 decoder_trainer:
   lr: 3.0e-4
   wd: 1.0e-2
+  use_ema: False
   ema_beta: 0.99
   ema_update_after_step: 1000
   ema_update_every: 10
