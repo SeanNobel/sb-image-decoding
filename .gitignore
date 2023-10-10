@@ -1,3 +1,9 @@
+assets/*
+!assets/reports/
+!assets/god_channel_names.csv
+!assets/neuro-diffusion.jpeg
+!assets/original-model.png
+
 generated/
 
 brain2face/models/lightning/
