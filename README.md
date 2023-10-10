@@ -46,6 +46,11 @@ pip install -e .
 
 ### UHD
 
+- (10/10) 現在decoderの学習に使用しているCLIP embeddingsがどの学習済みモデルからのものなのか定かでなくなった＆ちゃんとサーチで性能比較をしていなかったので，CLIPの学習をやりなおす．Unet3DEncoderとViViTReduceTimeともにd_drop={0.3, 0.2, 0.4}でsweepを開始．
+  - Preprocessedデータのface.h5をchunkingした．
+
+- (10/6) EMAが原因ではない．DeepSpeedを使わず1GPUなら両方のUNetの学習が進んだ．DeepSpeedのときはunetsを直接継承していないdecoderしかaccelerator.prepareに渡していないことが原因かもしれないので，次はそれをやる．
+
 - (10/5) ms4-5に移行して昨日フルサイズモデルを訓練し始めたが，unet1の学習が進まない．EMAを使用していることが原因かもしれないので，EMAをオフにして新しい訓練を開始．
 
 - (8/21) Video Decoderは訓練途中のものではあるが，パイプライン全体を走らせて初の3D U-Netでの動画生成をした．結果，ちゃんと動画が生成された．Video Decoderがbatch size=1でも訓練できないためモデルを小さくしている（それでも訓練に非常に時間がかかる）ので，Lightning FSDPかAccelerate DeepSpeedを導入してmodel parallelismを試す．
@@ -208,6 +213,8 @@ CUDA_VISIBLE_DEVICES=2,3 accelerate launch brain2face/train_video_decoder.py con
 tmux ls # check running sessions
 
 tmux attach -t train-video-decoder
+
+tmux kill-session -t train-video-decoder
 ```
 
 ```bash
