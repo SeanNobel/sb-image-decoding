@@ -101,9 +101,9 @@ num_workers: 4
 
 seed: 1234
 
-cuda_id: 0
+cuda_id: 1
 
-sweep_count: 3
+sweep_count: 1
 sweep_config:
   method: grid
   metric:
@@ -111,7 +111,7 @@ sweep_config:
     goal: maximize
   parameters:
     d_drop:
-      values: [0.3, 0.2, 0.4]
+      values: [0.1]
 
 # ==== Evaluation ==== #
 eval:
