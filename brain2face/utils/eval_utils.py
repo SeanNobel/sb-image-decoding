@@ -22,8 +22,9 @@ class VisionSaver:
         self.as_h5 = args.as_h5
         self.to_tensored = not args.vision.pretrained
         size = args.vision_encoder.image_size
-        
-        self.is_video = not args.reduce_time
+
+        # NOTE: Model will always reduce time if it's video.
+        self.is_video = args.reduce_time
         if self.is_video:
             self.fps = args.fps
             frames = args.fps * args.seq_len
@@ -51,12 +52,12 @@ class VisionSaver:
 
             if self.as_h5:
                 name = "videos" if self.is_video else "images"
-                shape = (channels, frames, size, size) if self.is_video else (channels, size, size) # fmt: skip
-                
+                shape = (channels, frames, size, size) if self.is_video else (channels, size, size)  # fmt: skip
+
                 # NOTE: h5 file contains many videos as a single file.
                 # with h5py.File(os.path.join(save_dir, "videos.h5"), "a") as hdf:
                 self.hdf = h5py.File(os.path.join(save_dir, f"{name}.h5"), "w")
-                
+
                 self.dataset = self.hdf.require_dataset(
                     name=name,
                     shape=(0, *shape),
@@ -78,18 +79,17 @@ class VisionSaver:
                     self._save_video(y)
 
                 self.sample_idx += 1
-                
+
     def _save_as_h5(self, y: torch.Tensor) -> None:
         """_summary_
         Args:
-            y ( b, frames, channels, h, w ) or ( b, h, w, channels ): _description_
+            y ( b, c, t, h, w ) or ( b, h, w, c )?: _description_
         """
-        if y.ndim == 5:
-            y = y.permute(0, 2, 1, 3, 4) # ( b, channels, frames, h, w )
-        elif y.ndim == 4:
-            y = y.permute(0, 3, 1, 2) # ( b, channels, h, w )
+        if y.ndim == 4:
+            # FIXME: Not sure if this is correct. Need to check next time do image.
+            y = y.permute(0, 3, 1, 2)  # ( b, channels, h, w )
         else:
-            raise ValueError(f"y.ndim must be 4 or 5, but got {y.ndim}.")
+            assert y.ndim == 5, f"y.ndim must be 4 or 5, but got {y.ndim}."
 
         self.dataset.resize(self.dataset.shape[0] + y.shape[0], axis=0)
         self.dataset[-y.shape[0] :] = y.numpy()
@@ -246,7 +246,9 @@ def get_run_dir(args: DictConfig) -> str:
     run_name = "".join(
         [k + "-" + str(v) + "_" for k, v in sorted(collapse_nest(args.eval).items())]
     )
-    run_dir = os.path.join("runs", args.dataset.lower(), args.train_name, run_name)
+    run_dir = os.path.join(
+        "runs", args.dataset.lower(), f"{args.train_name}_{run_name}"
+    )
     assert os.path.exists(run_dir), "run_dir doesn't exist."
 
     return run_dir
