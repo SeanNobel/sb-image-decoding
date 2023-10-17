@@ -46,6 +46,10 @@ pip install -e .
 
 ### UHD
 
+- (10/17)
+  - [Apollo-5] `Unet3DEncoder(d_drop=0.3)`, `ViViTReduceTime`ともに学習ストップ．`Unet3DEncoder(d_drop=0.3)`で推論し，prior/decoder用のデータセットを作成，ms4-5に移動．さらに，Unet3DEncoderのd_drop=0.1, 0.2を別プロセスで開始．
+  - [ms4-5] `Unet3DEncoder(d_drop=0.3)`で作ったlatentsでpriorを訓練，終了．さらに，decoderの訓練を開始．
+
 - (10/10) 現在decoderの学習に使用しているCLIP embeddingsがどの学習済みモデルからのものなのか定かでなくなった＆ちゃんとサーチで性能比較をしていなかったので，CLIPの学習をやりなおす．Unet3DEncoderとViViTReduceTimeともにd_drop={0.3, 0.2, 0.4}でsweepを開始．
   - Preprocessedデータのface.h5をchunkingした．
 
@@ -166,7 +170,6 @@ nohup python brain2face/train_clip.py config_path={path to config}.yaml sweep=Tr
 
 ```bash
 python brain2face/eval_clip.py config_path={path to config}.yaml
-# For distributed DALLE-2 training, set for_webdataset=True in the config file. (<- not working now)
 ```
 
 <br>
