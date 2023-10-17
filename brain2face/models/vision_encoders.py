@@ -135,7 +135,9 @@ class ViT(nn.Module):
 
         self.to_patch_embedding = nn.Sequential(
             Rearrange(
-                "b c (h p1) (w p2) -> b (h w) (p1 p2 c)", p1=patch_height, p2=patch_width
+                "b c (h p1) (w p2) -> b (h w) (p1 p2 c)",
+                p1=patch_height,
+                p2=patch_width,
             ),
             nn.LayerNorm(patch_dim),
             nn.Linear(patch_dim, dim),
@@ -152,7 +154,9 @@ class ViT(nn.Module):
         self.to_latent = nn.Identity()
 
         if num_classes is not None:
-            self.mlp_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, num_classes))
+            self.mlp_head = nn.Sequential(
+                nn.LayerNorm(dim), nn.Linear(dim, num_classes)
+            )
         else:
             self.mlp_head = None
 
@@ -205,7 +209,9 @@ class ViViT(nn.Module):
         patch_dim = in_channels * patch_size**2
         self.to_patch_embedding = nn.Sequential(
             Rearrange(
-                "b t c (h p1) (w p2) -> b t (h w) (p1 p2 c)", p1=patch_size, p2=patch_size
+                "b c t (h p1) (w p2) -> b t (h w) (p1 p2 c)",
+                p1=patch_size,
+                p2=patch_size,
             ),
             nn.Linear(patch_dim, dim),
         )
@@ -340,16 +346,12 @@ class Unet3DEncoder(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        """TODO: I've been working with video dims ( b, t, c, h, w ) but ( b, c, t, h, w ) fits
-        better in many cases like Conv3d. Probably I should change preprocessing to handle videos
-        in ( b, c, t, h, w ).
+        """
         Args:
-            x ( b, t, c, h, w ): Videos.
+            x ( b, c, t, h, w ): Videos.
         Returns:
             x: _description_
         """
-        x = x.permute(0, 2, 1, 3, 4)
-
         for down in self.downs:
             x = down(x)
 

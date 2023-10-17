@@ -37,17 +37,18 @@ def train():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    run_name = args.train_name
+
     if sweep:
         wandb.init(config=None)
 
-        run_name = "".join([k + "-" + str(v) + "_" for k, v in wandb.config.items()])
+        run_name += "_" + "".join(
+            [k + "-" + str(v) + "_" for k, v in wandb.config.items()]
+        )
 
         wandb.run.name = run_name
         args.__dict__.update(wandb.config)
         cprint(wandb.config, "cyan")
-
-    else:
-        run_name = args.train_name
 
     run_dir = os.path.join("runs", args.dataset.lower(), run_name)
     os.makedirs(run_dir, exist_ok=True)
