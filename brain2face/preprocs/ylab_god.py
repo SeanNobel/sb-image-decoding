@@ -39,7 +39,9 @@ def get_stim_fnames(ecog: h5py._hl.files.File) -> list:
     
     return np.array(Y)
 
-def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, List[int]]:
+def get_segmented_ecog(
+    args, ecog: h5py._hl.files.File
+) -> Tuple[np.ndarray, List[int]]:
     """
     Returns:
         X: ( frames, channels, timesteps )
@@ -49,7 +51,12 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
     orig_sfreq = int(ecog["data_st"]["sampling_rate"][()][0][0]) # 10000Hz
     
     signals = brain_preproc(
-        args, signals, orig_sfreq=orig_sfreq, segment=False, resample=False
+        args,
+        signals,
+        orig_sfreq=orig_sfreq,
+        segment=False,
+        resample=False,
+        notch=[60, 120, 180, 240],
     )
     
     onsets = ecog["trigger_info"]["stim_onset"][()].squeeze()
@@ -59,6 +66,7 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
     print(f"Number of onsets: {len(onsets)}")
     
     X = []
+    baseline = []
     dropped_idxs = []
     for i, (onset, offset) in enumerate(zip(onsets, offsets)):
         
@@ -72,45 +80,99 @@ def get_segmented_ecog(args, ecog: h5py._hl.files.File) -> Tuple[np.ndarray, Lis
         chunk = mne.filter.resample(chunk, down=orig_sfreq/args.brain_resample_sfreq)
         
         X.append(chunk)
+        
+        if args.baseline_ratio < 0:
+            baseline.append(
+                signals[:, onset - int(orig_sfreq * (-args.baseline_ratio) * args.max_seq_len):onset]
+            )
                 
     X = np.stack(X) # ( segments, channels, segment_len=250 )
     
-    X = baseline_correction(
-        X,
-        int(args.max_seq_len * args.baseline_ratio * args.brain_resample_sfreq)
-    )
+    if len(baseline) > 0:
+        X = baseline_correction(X, baseline=np.stack(baseline))
+    else:
+        X = baseline_correction(
+            X,
+            baseline_len_samp=int(args.max_seq_len * args.baseline_ratio * args.brain_resample_sfreq)
+        )
     
     return X, dropped_idxs
 
-def preproc(args, subject_name: str, fnames: List[str]) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+def rename_channels(ch_names: List[str]) -> List[str]:
+    """
+    Rename channels to match the ECoG data.
+    e.g.) 'A1-2' -> 'A2', 'A45-7' -> 'A51'
+    """
+    ch_names_new = []
+    for name in ch_names:
+        prefix, number = name[0], name[1:]
+        block, number = number.split('-')
+        number = str(int(block) + int(number) - 1)
+        
+        ch_names_new.append(prefix + number)
+        
+    return ch_names_new
+
+def rearrange_montage(
+    montage: np.ndarray,
+    chnames_montage: List[str],
+    ecog: h5py._hl.files.File
+) -> Tuple[List]:
+    """
+    montage ( n_channels, 3 )
+    """
+    chnames_ecog = ["".join([chr(c) for c in ecog[ecog["data_st"]["channel_names"][i, 0]][()].squeeze()]) for i in range(len(ecog["data_st"]["channel_names"]))]
+    
+    montage_new = []
+    exist = []
+    for name in chnames_ecog:
+        try:
+            montage_new.append(montage[chnames_montage.index(name)])
+            exist.append(True)
+            
+        except ValueError:
+            exist.append(False)
+            continue
+        
+    return montage_new, exist
+
+def preproc(
+    args, subject_name: str, fname: str
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     try:
-        montage = load_god_montage(subject_name, args.freesurfer_dir)
+        montage, ch_names = load_god_montage(subject_name, args.freesurfer_dir, return_chnames=True)
     except FileNotFoundError:
         cprint(f"Subject {subject_name} was dropped, as its montage was not found.", "yellow")
-        return None, None
+        return None
+
+    ch_names = rename_channels(ch_names)
+    if len(set(ch_names)) != len(ch_names):
+        cprint(f"Subject {subject_name} was dropped, as its montage had duplicated channels.", "yellow")
+        return None
     
-    X = []
-    Y = []
-    for fname in fnames:        
-        ecog = h5py.File(fname, "r")
+    ecog = h5py.File(fname, "r")
+    
+    montage, exist = rearrange_montage(montage, ch_names, ecog)
+    
+    if len(montage) < 10:
+        cprint(f"Subject {subject_name} was dropped, as the number of channels found was less than 10. ({len(montage)})", "yellow")
+        return None
+    
+    montage = np.stack(montage)
+            
+    X, dropped_idxs = get_segmented_ecog(args, ecog)
+    # ( segments, channels, max_segment_len )
+    
+    X = X[:, exist]
+    assert X.shape[1] == montage.shape[0]
+    
+    # NOTE: hold images as paths
+    Y = get_stim_fnames(ecog)
+    Y = np.delete(Y, dropped_idxs, axis=0)
+    
+    assert X.shape[0] == Y.shape[0]
         
-        _X, dropped_idxs = get_segmented_ecog(args, ecog)
-        # ( segments, channels, max_segment_len )
-        
-        if _X.shape[1] != montage.shape[0]:
-            cprint(f"Subject {subject_name} was dropped, as the number of channels didn't match to its montage.", "yellow")
-            return None, None
-        
-        # NOTE: hold images as paths
-        _Y = get_stim_fnames(ecog)
-        _Y = np.delete(_Y, dropped_idxs, axis=0)
-        
-        assert _X.shape[0] == _Y.shape[0]
-        
-        X.append(_X)
-        Y.append(_Y)
-        
-    return np.concatenate(X), np.concatenate(Y)
+    return X, Y, montage
 
 
 @hydra.main(version_base=None, config_path="../../configs/ylab/god", config_name="clip")
@@ -120,28 +182,44 @@ def main(args: DictConfig) -> None:
         
     for ecog_dir in glob.glob(f"{args.data_root}continuous_10k/*/"):
         subject_name = ecog_dir.split('/')[-2]
-        cprint(f"Processing subject {subject_name}.", "cyan")
+        data_dir = os.path.join(args.root_dir, "data/preprocessed/ylab/god", args.preproc_name, subject_name)
         
-        fnames_train = natsorted(glob.glob(f"{ecog_dir}*Trn*.mat"))
-        X_train, Y_train = preproc(args, subject_name, fnames_train)
-        
-        if X_train is None:
-            continue
-        
+        fnames_trn = natsorted(glob.glob(f"{ecog_dir}*Trn*.mat"))
         fnames_val = natsorted(glob.glob(f"{ecog_dir}*Val*.mat"))
-        X_val, Y_val = preproc(args, subject_name, fnames_val)
+        fnames = fnames_trn + fnames_val
+        cprint(f"Processing subject {subject_name}. ({len(fnames_trn)} train sessions, {len(fnames_val)} validation sessions)", "cyan")
         
-        if X_val is None:
+        montages = [] # For asserting montage consistency
+        for fname in fnames:
+            preprocessed = preproc(args, subject_name, fname)
+            if preprocessed is None:
+                continue
+            
+            X, Y, montage = preprocessed
+            montages.append(montage)
+            
+            # NOTE: Create here to skip empty subjects.
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir, exist_ok=True)
+            
+            postfix = os.path.splitext(os.path.basename(fname))[0].lower()
+            np.save(os.path.join(data_dir, f"brain_{postfix}.npy"), X)
+            np.savetxt(os.path.join(data_dir, f"image_{postfix}.txt"), Y, delimiter=",", fmt="%s")
+            
+        if len(montages) == 0:
             continue
             
-        cprint(f"Subject {subject_name} has {len(fnames_train)} train sessions and {len(fnames_val)} validation sessions \nECoG: train {X_train.shape}, val {X_val.shape} \nImage: train {Y_train.shape}, val {Y_val.shape}", "cyan")
+        assert np.diff(np.stack(montages), axis=0).sum() == 0, "Montage inconsistency detected."
+        np.save(os.path.join(data_dir, "montage.npy"), montages[0])
         
-        data_dir = os.path.join(args.root_dir, "data/preprocessed/ylab/god", args.preproc_name, subject_name)
-        os.makedirs(data_dir, exist_ok=True)
-        np.save(os.path.join(data_dir, "brain_train.npy"), X_train)
-        np.save(os.path.join(data_dir, "brain_test.npy"), X_val)
-        np.savetxt(os.path.join(data_dir, "image_train.txt"), Y_train, delimiter=",", fmt="%s")
-        np.savetxt(os.path.join(data_dir, "image_test.txt"), Y_val, delimiter=",", fmt="%s")
+        # fnames_val = natsorted(glob.glob(f"{ecog_dir}*Val*.mat"))
+        # X_val, Y_val = preproc(args, subject_name, fnames_val)
+        
+        # if X_val is None:
+        #     continue
+            
+        # cprint(f"Subject {subject_name} has {len(fnames_train)} train sessions and {len(fnames_val)} validation sessions \nECoG: train {X_train.shape}, val {X_val.shape} \nImage: train {Y_train.shape}, val {Y_val.shape}", "cyan")
+
         
 if __name__ == "__main__":
     main()
