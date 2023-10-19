@@ -235,7 +235,13 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
                 self._mixed_loader, args, train=train, _loader=self._loader
             )
         elif args.split == "mixed_shallow":
-            loader = partial(self._mixed_loader, args, train=None, _loader=self._loader)
+            loader = partial(
+                self._mixed_loader, args, train=None, _loader=self._loader
+            )
+        elif args.split == "rep_or_part":
+            loader = partial(
+                self._rep_loader, args, train=train, _loader=self._loader
+            )
         else:
             loader = partial(self._loader, args=args, train=train)
 
@@ -272,22 +278,67 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             Y.append(_Y)
 
         return torch.cat(X), torch.cat(Y)
+    
+    @staticmethod
+    def _rep_loader(
+        args, subject_path: str, train: bool, _loader: Callable, 
+    ) -> Tuple[torch.Tensor]:
+        """
+        Loads rep1 or part1 for train and rep2 or part2 for test.
+        Returns:
+            X: ( samples, channels, timesteps )
+            Y: ( samples, 3, image_size, image_size )
+        """        
+        # NOTE: Using only Trn, as Val sessions are done only once.
+        image_fname_filepaths = natsorted(
+            glob.glob(os.path.join(subject_path, "image_*_trn_*.txt"))
+        )
+        
+        if train:
+            image_fname_filepaths = image_fname_filepaths[:-1]
+        else:
+            image_fname_filepaths = image_fname_filepaths[-1:]
+            
+        cprint(f"{'Train' if train else 'Test'} sessions for subject {subject_path.split('/')[-2]}: {len(image_fname_filepaths)}", "cyan") # fmt: skip
+            
+        X, Y = [], []
+        for fpath in image_fname_filepaths:
+            _X, _Y = _loader(
+                args, subject_path=None, train=True, image_fname_filepath=fpath
+            )
+            
+            X.append(_X)
+            Y.append(_Y)
+            
+            cprint(f"{os.path.basename(fpath)} X: {_X.shape} | Y: {_Y.shape}", "cyan")
+
+        return torch.cat(X), torch.cat(Y)
 
     @staticmethod
     def _loader(
-        args, subject_path: str, train: bool
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        args,
+        subject_path: Optional[str],
+        train: bool,
+        image_fname_filepath: Optional[str] = None
+    ) -> Tuple[torch.Tensor]:
         """
         Returns:
             X: ( samples, channels, timesteps )
             Y: ( samples, 3, image_size, image_size )
         """
-        cprint(f"Preprocessing subject {subject_path.split('/')[-2]}", "cyan")
+        # -----------
+        #   Images
+        # -----------
+        if image_fname_filepath is None:
+            assert subject_path is not None, "subject_path must be given when image_fname_filepath is None."  # fmt: skip
+            cprint(f"Preprocessing subject {subject_path.split('/')[-2]}", "cyan")
+            
+            image_fname_filepath = os.path.join(
+                subject_path, f"image_{'train' if train else 'test'}.txt"
+            )
 
         image_fnames = np.loadtxt(
-            os.path.join(subject_path, f"image_{'train' if train else 'test'}.txt"),
-            delimiter=",",
-            dtype=str,
+            image_fname_filepath, delimiter=",", dtype=str
         )
 
         images_dir = os.path.join(args.data_root, f"images_{'trn' if train else 'val'}")
@@ -311,9 +362,11 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         if not args.vision.pretrained:
             Y = Y.permute(0, 3, 1, 2).to(torch.float32) / 255.0
 
-        X = np.load(
-            os.path.join(subject_path, f"brain_{'train' if train else 'test'}.npy")
-        )
+        # -----------
+        #    ECoG
+        # -----------
+        ecog_filepath = image_fname_filepath.replace("image", "brain").replace(".txt", ".npy")
+        X = np.load(ecog_filepath)
         X = torch.from_numpy(np.delete(X, dropped_idxs, axis=0).astype(np.float32))
         X = X[:, :, int(args.seq_onset * args.brain_resample_sfreq) : int((args.seq_onset + args.seq_len) * args.brain_resample_sfreq)]  # fmt: skip
 
