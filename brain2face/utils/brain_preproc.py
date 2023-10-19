@@ -4,7 +4,7 @@ import mne
 from sklearn.preprocessing import RobustScaler
 from tqdm import tqdm
 from termcolor import cprint
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List
 
 from brain2face.utils.preproc_utils import crop_and_segment
 
@@ -24,24 +24,30 @@ def scale_and_clamp(X: np.ndarray, clamp_lim, clamp=True) -> np.ndarray:
     return X.T
 
 
-def baseline_correction(X: np.ndarray, baseline_len_samp: int) -> np.ndarray:
+def baseline_correction(
+    X: np.ndarray,
+    baseline_len_samp: Optional[int] = None,
+    baseline: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """Channel-wise baseline-correction.
     Args:
-        X: ( segments, channels, segment_len )
+        X ( segments, channels, segment_len ): data
+        baseline ( segments, channels, baseline_len ): Precomputed baselines for those starting before onsets.
     Returns:
         X ( segments, channels, segment_len )
     """
-    X = X.transpose(1, 0, 2)  # ( C, segments, T )
+    assert baseline_len_samp is not None or baseline is not None, "Must provide either baseline_len_samp or baseline."  # fmt: skip
     
-    # NOTE: this could be zero with very short seq_len.
-    baseline_len_samp = max(baseline_len_samp, 1)
-
-    for chunk_id in range(X.shape[1]):
-        baseline = X[:, chunk_id, :baseline_len_samp].mean(axis=1)
-
-        X[:, chunk_id, :] -= baseline.reshape(-1, 1)
-
-    return X.transpose(1, 0, 2)  # Back to ( segments, C, T )
+    if baseline is None:
+        # NOTE: this could be zero with very short seq_len.
+        baseline_len_samp = max(baseline_len_samp, 1)
+            
+        baseline = X[:, :, :baseline_len_samp].mean(axis=-1, keepdims=True)
+        # ( segments, channels )
+    else:
+        baseline = baseline.mean(axis=-1, keepdims=True)
+    
+    return X - baseline
 
 
 def segment_with_times(
@@ -97,6 +103,7 @@ def brain_preproc(
     shift: Optional[float] = None,
     resample: bool = True,
     orig_sfreq: Optional[int] = None,
+    notch: Optional[List[float]] = None,
 ) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
     """
     Args:
@@ -112,13 +119,21 @@ def brain_preproc(
     if orig_sfreq is None:
         orig_sfreq = args.brain_orig_sfreq
 
-    """ Filtering """
+    """ Bandpass Filtering """
     brain = mne.filter.filter_data(
         brain,
         sfreq=orig_sfreq,
         l_freq=args.brain_filter_low,
         h_freq=args.brain_filter_high,
     )
+    
+    """ Notch Filtering """
+    if notch is not None:
+        brain = mne.filter.notch_filter(
+            brain,
+            Fs=orig_sfreq,
+            freqs=notch,
+        )
 
     """ Resampling """
     if resample:
