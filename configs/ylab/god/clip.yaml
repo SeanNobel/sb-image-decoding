@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: bugfixing
+preproc_name: chnames-corresp
 
 data_root: /storage/dataset/ECoG/internal/GODv2-4/
 freesurfer_dir: /storage/data/freesurfer/Subject_ECoG/
@@ -12,12 +12,12 @@ brain_filter_low: 0.1 # Hz
 brain_filter_high: 250 # Hz
 brain_resample_sfreq: 500 # Hz
 clamp_lim: 20
-baseline_ratio: 0.2 # ratio compared to max_seq_len
+baseline_ratio: -0.1 # Ratio compared to max_seq_len. Negative value means to take signals before stimulus onset.
 
 
 # ==== Training ==== #
-project_name: neuro-diffusion_god
-train_name: test
+project_name: nd_god_clip
+train_name: rep-split
 debug: False
 
 seq_onset: 0.0
@@ -67,7 +67,7 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-split: mixed_shallow # none or mixed_deep or mixed_shallow
+split: rep_or_part # none or mixed_deep or mixed_shallow or rep_or_part
 # Split is predefined as different sessions for ECoG GOD dataset, but
 # mixed_deep first mixes train and val, then splits them deeply.
 train_ratio: 0.8
@@ -92,23 +92,23 @@ seed: 1234
 
 cuda_id: 0
 
-sweep_count: 9
+sweep_count: 2
 sweep_config:
   method: grid
   metric:
     name: test_top10_acc
     goal: maximize
   parameters:
-    split:
-      values: [mixed_shallow, mixed_deep]
+    # split:
+    #   values: [mixed_shallow, mixed_deep]
     # ksizes.conv_block:
     #   values: [3, 5, 7]
     # d_drop:
     #   values: [0.1, 0.2, 0.3]
     # seq_onset:
     #   values: [0.0, 0.5, 1.0, 1.5]
-    # seq_len:
-    #   values: [2.0, 1.5, 1.0]
+    seq_len:
+      values: [0.5, 0.3, 0.1]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
     # biases.conv_block:
@@ -120,7 +120,7 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  split: mixed_shallow
+  seq_len: 0.5
 
 as_h5: True
 for_webdataset: False
