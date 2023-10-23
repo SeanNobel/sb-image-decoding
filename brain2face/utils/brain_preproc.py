@@ -9,7 +9,7 @@ from typing import Optional, Tuple, Union, List
 from brain2face.utils.preproc_utils import crop_and_segment
 
 
-def scale_and_clamp(X: np.ndarray, clamp_lim, clamp=True) -> np.ndarray:
+def scale_clamp(X: np.ndarray, clamp_lim, clamp=True) -> np.ndarray:
     """
     Args:
         X: ( channels, timesteps )
@@ -102,6 +102,7 @@ def brain_preproc(
     face_times: Optional[np.ndarray] = None,
     shift: Optional[float] = None,
     resample: bool = True,
+    clamp: bool = True,
     orig_sfreq: Optional[int] = None,
     notch: Optional[List[float]] = None,
 ) -> Union[np.ndarray, Tuple[np.ndarray, int, int]]:
@@ -143,7 +144,7 @@ def brain_preproc(
         )
 
     """ Scaling & clamping """
-    brain = scale_and_clamp(brain, clamp_lim=args.clamp_lim)
+    brain = scale_clamp(brain, args.clamp_lim, clamp)
 
     if not segment:
         return brain
