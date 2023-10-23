@@ -56,6 +56,7 @@ def get_segmented_ecog(
         orig_sfreq=orig_sfreq,
         segment=False,
         resample=False,
+        clamp=False,
         notch=[60, 120, 180, 240],
     )
     
@@ -68,14 +69,20 @@ def get_segmented_ecog(
     X = []
     baseline = []
     dropped_idxs = []
+    dropped_idxs_clamp = []
     for i, (onset, offset) in enumerate(zip(onsets, offsets)):
         
         if onset == -1: # or offset == -1:
-            cprint("Dropped: onset was NaN", "yellow") # or offset was NaN", "yellow")
+            cprint("Segment dropped: onset was NaN", "yellow") # or offset was NaN", "yellow")
             dropped_idxs.append(i)
             continue
         
         chunk = signals[:, onset:onset + int(orig_sfreq * args.max_seq_len)]
+        
+        if np.abs(chunk).max() > args.clamp_lim:
+            cprint(f"Segment dropped: max value was {np.abs(chunk).max()}", "yellow")
+            dropped_idxs_clamp.append(i)
+            continue
         
         chunk = mne.filter.resample(chunk, down=orig_sfreq/args.brain_resample_sfreq)
         
@@ -85,6 +92,8 @@ def get_segmented_ecog(
             baseline.append(
                 signals[:, onset - int(orig_sfreq * (-args.baseline_ratio) * args.max_seq_len):onset]
             )
+            
+    cprint(f"{len(dropped_idxs_clamp)} / {i} segments were dropped due to exceeding the clamp limit.", "yellow") # fmt: skip
                 
     X = np.stack(X) # ( segments, channels, segment_len=250 )
     
@@ -95,6 +104,9 @@ def get_segmented_ecog(
             X,
             baseline_len_samp=int(args.max_seq_len * args.baseline_ratio * args.brain_resample_sfreq)
         )
+        
+    dropped_idxs += dropped_idxs_clamp
+    dropped_idxs.sort()
     
     return X, dropped_idxs
 
