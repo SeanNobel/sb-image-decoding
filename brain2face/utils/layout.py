@@ -6,7 +6,7 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from glob import glob
 from natsort import natsorted
-from typing import Union, List
+from typing import Union, List, Tuple, Optional
 
 from brain2face.utils.gTecUtils.gTecUtils import loadMontage
 
@@ -15,7 +15,10 @@ class DynamicChanLoc2d:
     def __init__(self, args, subject_names: List[str]) -> None:
         if args.dataset == "YLabGOD":
             locations = [
-                load_god_montage(subject, args.freesurfer_dir) for subject in subject_names
+                np.load(
+                    os.path.join("data/preprocessed/ylab/god", args.preproc_name, subject, "montage.npy")
+                )
+                for subject in subject_names
             ]
             
             if args.loc_random:
@@ -98,13 +101,23 @@ def min_max_norm(loc: np.ndarray) -> np.ndarray:
     return loc
 
 
-def load_god_montage(subject: str, freesurfer_dir: str) -> np.ndarray:
+def load_god_montage(
+    subject: str,
+    freesurfer_dir: str,
+    return_chnames: bool = False
+) -> Tuple[np.ndarray, Optional[List[str]]]:
+    
     path = os.path.join(freesurfer_dir, subject, "elec_recon", f"{subject}.DURAL")
-        
     montage = np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode").astype(float)
     montage = np.stack(montage) # ( n_channels, 3 )
+    
+    if not return_chnames:
+        return montage
+    
+    path = os.path.join(freesurfer_dir, subject, "elec_recon", f"{subject}.electrodeNames")
+    ch_names = [name[0] for name in np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode")]
 
-    return montage
+    return montage, ch_names
 
 
 def load_uhd_montage(elec_filename):

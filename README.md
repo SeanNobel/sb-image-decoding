@@ -25,6 +25,10 @@ pip install -e .
 
 ### YLab GOD
 
+- (10/23)
+  - RobustScaling後±4を超えるセグメントを除去する前処理を実装 (drop-epilepsy)
+  - 両エンコーダの出力をPCA, t-SNE(perplexity=2,10,40,100)でプロットしながらやる訓練を実装．d_drop=0.4で実行．
+
 - (9/19) 100エポックでもGTに近い画像は生成されなかった．
   - Decoderだけの評価としてimage_emedsから直接生成してみたところ，少しGTに似た画像が生成された．
   - Decoderを800エポックで再訓練．
@@ -81,32 +85,20 @@ pip install -e .
 
 ## TODOs
 
-Aug
+- YLab GOD
+  - [x] てんかん放電（スケール後±4を超える）の起こる頻度を調査。該当するセグメントを除外する。
+  - [x] Brain Encoderの出力の学習遷移をPCAなどでプロット（Image Encoderは固定？）
+    - 画像のクラスで色付け
+  - [ ] Brain Encoderの事前学習としてVector Quantizedな潜在空間を使った再構成タスクをやる
+    - CLIP学習にも正則化に対応するロスを取り入れる？
+  - [ ] priorを訓練して本物のimage imbとの相関を取る
 
-- [x] dalle2_videoのサンプリングメソッドたちを動画に対応させる．
+- UHD
+  - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
 
-Jul
-
-- [x] 他のconfigファイルの内容をimage.yamlに合わせる
-- [x] Preprocessingのfaceの出力を.npyから.h5にする
-- [x] args.face.encoded=Trueでも元の画像を保存できるようにする
-  - [x] この過程でargs.face.pretrainedに変わったので，YLabGOD以外も対応させる
-  - [x] train_clip.pyも今動かない状態
 - [ ] Uknown subjectのとき全subject layersの出力の平均を取るようにしているが，これで良いのか考える
   - Known subjectでのactivationとの類似度とかを取ってそれで重みづけするとか
 - [ ] 毎回のsweepで一つchance modelが走るようにする
-- [x] YLabGOD以外も`y_reformer`を`loader`にする
-- YLab
-  - [x] チャネル空間座標の導入
-  - [x] 実時間を3秒からハイパラにする
-    - [x] Segmentingしないpreprocessingの追加
-    - [x] Datasetsに内部でsegmentingするモードを追加
-  - [ ] priorを訓練して本物のimage imbとの相関を取る
-  - [x] AU_rだけを使う
-- UHD
-  - [ ] 負のシフトを受け付ける（録画がEEG記録の前に始まってしまった？セッション）
-- Decoder training
-  - [x] `NeuroDiffusionCLIPEmbVideoDataset`のメモリー問題を解決
 
 <br>
 
