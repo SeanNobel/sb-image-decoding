@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
-from typing import Optional, Union, Callable, List
+from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
@@ -279,7 +279,7 @@ class SubjectBlockSA(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, k: int, D1: int, D2: int, ksize: int = 3):
+    def __init__(self, k: int, D1: int, D2: int, ksize: int = 3) -> None:
         super(ConvBlock, self).__init__()
 
         self.k = k
@@ -391,6 +391,110 @@ class BrainEncoder(nn.Module):
         X = F.gelu(self.conv_final1(X))
         X = F.gelu(self.conv_final2(X))
         return X
+    
+    
+class VectorQuantizer(nn.Module):
+    def __init__(self, num_embeds: int, embed_dim: int, beta: float) -> None:
+        """
+        Parameters
+        ----------
+        num_embeds : int
+            Codebook vectors (embedding space)の数．図中のK.
+        embed_dim : int
+            Codebook vectorsの長さ（embedding spaceの次元数）．
+        beta : float
+            エンコーダの正則化項の係数．目的関数のbeta.
+        """
+        super().__init__()
+
+        self.num_embeds = num_embeds
+        self.embed_dim = embed_dim
+        self.beta = beta
+
+        self.embedding = nn.Embedding(self.num_embeds, self.embed_dim)
+        self.embedding.weight.data.uniform_(-1 / self.num_embeds, 1 / self.num_embeds)
+
+    def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
+        """
+        Args:
+            z_e ( b, embed_dim, t' ): 
+        Returns:
+            loss : torch.Tensor (, )
+                目的関数の再構成誤差以外の部分．
+            z_q : torch.Tensor ( b, embed_dim, h', w' )
+                離散化された潜在変数．
+        """
+        z_e = z_e.permute(0, 2, 1).contiguous() # ( b, t', embed_dim )
+        z_e_shape = z_e.shape
+
+        z_e_flat = z_e.view(-1, self.embed_dim) # ( b * t', embed_dim )
+
+        # L2 distances
+        distances = (
+            torch.sum(z_e_flat**2, dim=1, keepdim=True)
+            + torch.sum(self.embedding.weight**2, dim=1)
+            - 2 * torch.matmul(z_e_flat, self.embedding.weight.T)
+        )
+        # ( b * t', num_embeds )
+
+        # 最も距離の近いembedding vectorのインデックス
+        encoding_indices = torch.argmin(distances, dim=1)
+        # ( b * t', )
+
+        encodings = F.one_hot(encoding_indices, num_classes=self.num_embeds).to(torch.float32)
+        # ( b * t', num_embeds )
+
+        z_q = torch.matmul(encodings, self.embedding.weight)
+        # ( b * t', embed_dim )
+        z_q = z_q.view(z_e_shape) # ( b, t', embed_dim )
+
+        e_latent_loss = F.mse_loss(z_q.detach(), z_e)
+        q_latent_loss = F.mse_loss(z_q, z_e.detach())
+        # Regularization loss
+        reg_loss = q_latent_loss + self.beta * e_latent_loss
+
+        # Straight-through estimator
+        z_q = z_e + (z_q - z_e).detach()
+
+        z_q = z_q.permute(0, 2, 1).contiguous() # ( b, embed_dim, t' )
+
+        avg_probs = torch.mean(encodings, dim=0)
+        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+
+        return z_q, reg_loss, perplexity
+    
+    
+class BrainEncoderVQ(nn.Module):
+    def __init__(
+        self,
+        args,
+        subject_names: List[str] = None,
+        layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
+        unknown_subject: bool = False,
+    ) -> None:
+        super().__init__()
+        
+        self.brain_encoder = BrainEncoder(
+            args,
+            subject_names=subject_names,
+            layout=layout,
+            unknown_subject=unknown_subject,
+        )
+        
+        self.vector_quantizer = VectorQuantizer(
+            num_embeds=args.vq.num_embeds,
+            embed_dim=args.F,
+            beta=args.vq.beta,
+        )
+        
+    def forward(
+        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+    ) -> torch.Tensor:
+        X = self.brain_encoder(X, subject_idxs) # ( b, F, t' )
+        
+        X_q, reg_loss, perplexity = self.vector_quantizer(X) # ( b, F, t' )
+        
+        return X_q, reg_loss, perplexity
 
 
 class BrainEncoderReduceTime(nn.Module):
@@ -399,6 +503,7 @@ class BrainEncoderReduceTime(nn.Module):
         args,
         subject_names: List[str] = None,
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
+        vq: bool = False,
         unknown_subject: bool = False,
         time_multiplier: int = 1,
     ) -> None:
@@ -407,13 +512,22 @@ class BrainEncoderReduceTime(nn.Module):
             time_multiplier:
         """
         super(BrainEncoderReduceTime, self).__init__()
-
-        self.brain_encoder = BrainEncoder(
-            args,
-            subject_names=subject_names,
-            layout=layout,
-            unknown_subject=unknown_subject,
-        )
+        
+        self.vq = vq
+        if vq:
+            self.brain_encoder = BrainEncoderVQ(
+                args,
+                subject_names=subject_names,
+                layout=layout,
+                unknown_subject=unknown_subject,
+            )
+        else:
+            self.brain_encoder = BrainEncoder(
+                args,
+                subject_names=subject_names,
+                layout=layout,
+                unknown_subject=unknown_subject,
+            )
 
         self.conv1 = nn.Conv1d(
             in_channels=args.F,
@@ -447,7 +561,10 @@ class BrainEncoderReduceTime(nn.Module):
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
     ) -> torch.Tensor:
-        X = self.brain_encoder(X, subject_idxs)
+        if self.vq:
+            X, reg_loss, perplexity = self.brain_encoder(X, subject_idxs)
+        else:
+            X = self.brain_encoder(X, subject_idxs)
 
         X = self.conv1(X)
         X = self.conv2(X)
@@ -456,4 +573,7 @@ class BrainEncoderReduceTime(nn.Module):
         if self.activation:
             X = F.gelu(X)
 
-        return X
+        if self.vq and self.training:
+            return X, reg_loss, perplexity
+        else:
+            return X
