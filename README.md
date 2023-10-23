@@ -28,6 +28,8 @@ pip install -e .
 - (10/23)
   - RobustScaling後±4を超えるセグメントを除去する前処理を実装 (drop-epilepsy)
   - 両エンコーダの出力をPCA, t-SNE(perplexity=2,10,40,100)でプロットしながらやる訓練を実装．d_drop=0.4で実行．
+  - BrainEncoderVQを実装，d_drop=0.3で実行．
+    - [ ] test_vq_lossも表示できるようにする．
 
 - (9/19) 100エポックでもGTに近い画像は生成されなかった．
   - Decoderだけの評価としてimage_emedsから直接生成してみたところ，少しGTに似た画像が生成された．
