@@ -19,7 +19,11 @@ from brain2face.datasets import (
     StyleGANCLIPDataset,
     CollateFunctionForVideoHDF5,
 )
-from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
+from brain2face.models.brain_encoder import (
+    BrainEncoder,
+    BrainEncoderReduceTime,
+    BrainEncoderVQ,
+)
 from brain2face.models.vision_encoders import (
     ViT,
     ViViT,
@@ -134,6 +138,7 @@ def train():
             args,
             subject_names=subject_names,
             layout=eval(args.layout),
+            vq=args.vq_brain,
             time_multiplier=args.time_multiplier,
         ).to(device)
 
@@ -173,13 +178,15 @@ def train():
     min_test_loss = float("inf")
 
     for epoch in range(args.epochs):
-        train_losses = []
-        test_losses = []
+        train_clip_losses = []
+        train_vq_losses = []
+        test_clip_losses = []
+        test_vq_losses = []
         train_top10_accs = []
         train_top1_accs = []
         test_top10_accs = []
         test_top1_accs = []
-        inference_times = []
+        perplexities = [] # train
         
         train_Y_list = []
         train_Z_list = []
@@ -200,19 +207,29 @@ def train():
 
             X, Y = X.to(device), Y.to(device)
 
-            Z = brain_encoder(X, subject_idxs)
-
             if args.vision.pretrained:
                 Y = vision_encoder.encode_image(Y).float()
             else:
                 Y = vision_encoder(Y)
-
-            loss = loss_func(Y, Z)
+                
+            if args.vq_brain:
+                Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
+                clip_loss = loss_func(Y, Z)
+                
+                loss = clip_loss + vq_loss
+            else:
+                Z = brain_encoder(X, subject_idxs)
+                vq_loss, perplexity = None, None
+                
+                loss = clip_loss = loss_func(Y, Z)
 
             with torch.no_grad():
                 train_top1_acc, train_top10_acc, _ = classifier(Z, Y)
 
-            train_losses.append(loss.item())
+            train_clip_losses.append(clip_loss.item())
+            if args.vq_brain:
+                train_vq_losses.append(vq_loss.item())
+                perplexities.append(perplexity.item())
             train_top10_accs.append(train_top10_acc)
             train_top1_accs.append(train_top1_acc)
 
@@ -246,10 +263,7 @@ def train():
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
-                stime = time()
-
                 # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
-
                 Z = sequential_apply(
                     X,
                     brain_encoder,
@@ -270,63 +284,69 @@ def train():
                         Y, vision_encoder, args.batch_size, desc="VisionEncoder"
                     )
 
-                inference_times.append(time() - stime)
-
-                loss = loss_func(Y, Z)
+                clip_loss = loss_func(Y, Z)
 
                 test_top1_acc, test_top10_acc, _ = classifier(
                     Z, Y, sequential=args.test_with_whole
                 )
 
-            test_losses.append(loss.item())
+            test_clip_losses.append(clip_loss.item())
             test_top10_accs.append(test_top10_acc)
             test_top1_accs.append(test_top1_acc)
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
-            f"avg train loss: {np.mean(train_losses):.3f} | ",
-            f"avg test loss: {np.mean(test_losses):.3f} | ",
+            f"avg train CLIP loss: {np.mean(train_clip_losses):.3f} | ",
+            f"avg test CLIP loss: {np.mean(test_clip_losses):.3f} | ",
             f"lr: {optimizer.param_groups[0]['lr']:.5f}",
         )
 
         if sweep:
             performance_now = {
                 "epoch": epoch,
-                "train_loss": np.mean(train_losses),
-                "test_loss": np.mean(test_losses),
+                "train_clip_loss": np.mean(train_clip_losses),
+                "test_clip_loss": np.mean(test_clip_losses),
                 "train_top10_acc": np.mean(train_top10_accs),
                 "train_top1_acc": np.mean(train_top1_accs),
                 "test_top10_acc": np.mean(test_top10_accs),
                 "test_top1_acc": np.mean(test_top1_accs),
                 "lrate": optimizer.param_groups[0]["lr"],
                 "temp": loss_func.temp.item(),
-                "VisionEncoder avg inference time": np.mean(inference_times),
             }
+            if args.vq_brain:
+                performance_now.update(
+                    {
+                        "train_vq_loss": np.mean(train_vq_losses),
+                        "train_perplexity": np.mean(perplexities),
+                    }
+                )
             wandb.log(performance_now)
 
         scheduler.step()
 
         trained_models.save(run_dir)
 
-        if np.mean(test_losses) < min_test_loss:
+        if np.mean(test_clip_losses) < min_test_loss:
             cprint(f"New best. Saving models to {run_dir}", color="cyan")
             trained_models.save(run_dir, best=True)
 
-            min_test_loss = np.mean(test_losses)
+            min_test_loss = np.mean(test_clip_losses)
             
-        if classes is not None and epoch % 50 == 0:
-            plot_latents_2d(
-                np.concatenate(train_Y_list),
-                np.concatenate(train_classes_list),
-                epoch=epoch,
-                save_dir=os.path.join(run_dir, "plots/image_latents"),
-            )
-            plot_latents_2d(
-                np.concatenate(train_Z_list),
-                np.concatenate(train_classes_list),
-                epoch=epoch,
-                save_dir=os.path.join(run_dir, "plots/ecog_latents"),
-            )
+        if classes is not None:
+            if epoch == 0:
+                plot_latents_2d(
+                    np.concatenate(train_Y_list),
+                    np.concatenate(train_classes_list),
+                    epoch=epoch,
+                    save_dir=os.path.join(run_dir, "plots/image_latents"),
+                )
+            if epoch % 50 == 0:
+                plot_latents_2d(
+                    np.concatenate(train_Z_list),
+                    np.concatenate(train_classes_list),
+                    epoch=epoch,
+                    save_dir=os.path.join(run_dir, "plots/ecog_latents"),
+                )
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
