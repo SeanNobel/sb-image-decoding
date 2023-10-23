@@ -326,7 +326,6 @@ def train():
                 epoch=epoch,
                 save_dir=os.path.join(run_dir, "plots/ecog_latents"),
             )
-        sys.exit()
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
