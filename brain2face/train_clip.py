@@ -31,6 +31,7 @@ from brain2face.models.classifier import Classifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply
+from brain2face.utils.plots import plot_latents_2d
 
 
 def train():
@@ -178,12 +179,21 @@ def train():
         test_top10_accs = []
         test_top1_accs = []
         inference_times = []
+        
+        train_Y_list = []
+        train_Z_list = []
+        train_classes_list = []
 
         trained_models.train()
         if args.accum_grad:
             optimizer.zero_grad()
 
-        for X, Y, subject_idxs in tqdm(train_loader, desc="Train"):
+        for batch in tqdm(train_loader, desc="Train"):
+            if len(batch) == 4:
+                X, Y, subject_idxs, classes = batch
+            else:
+                X, Y, subject_idxs, classes = *batch, None
+                
             if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
@@ -211,6 +221,11 @@ def train():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                
+            if classes is not None:
+                train_Y_list.append(Y.detach().cpu().numpy())
+                train_Z_list.append(Z.detach().cpu().numpy())
+                train_classes_list.append(classes.numpy())
 
         if args.accum_grad:
             optimizer.step()
@@ -218,7 +233,12 @@ def train():
         _ = trained_models.params_updated()
 
         trained_models.eval()
-        for X, Y, subject_idxs in tqdm(test_loader, desc="Test"):
+        for batch in tqdm(test_loader, desc="Test"):
+            if len(batch) == 4:
+                X, Y, subject_idxs, classes = batch
+            else:
+                X, Y, subject_idxs, classes = *batch, None
+                
             if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
@@ -292,6 +312,21 @@ def train():
             trained_models.save(run_dir, best=True)
 
             min_test_loss = np.mean(test_losses)
+            
+        if classes is not None and epoch % 50 == 0:
+            plot_latents_2d(
+                np.concatenate(train_Y_list),
+                np.concatenate(train_classes_list),
+                epoch=epoch,
+                save_dir=os.path.join(run_dir, "plots/image_latents"),
+            )
+            plot_latents_2d(
+                np.concatenate(train_Z_list),
+                np.concatenate(train_classes_list),
+                epoch=epoch,
+                save_dir=os.path.join(run_dir, "plots/ecog_latents"),
+            )
+        sys.exit()
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
