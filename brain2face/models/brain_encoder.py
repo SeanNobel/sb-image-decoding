@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops.layers.torch import Rearrange
 from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
@@ -15,7 +16,7 @@ class SpatialAttention(nn.Module):
     """Same as SpatialAttentionVer2, but a little more concise"""
 
     def __init__(self, args, loc: np.ndarray):
-        super(SpatialAttention, self).__init__()
+        super().__init__()
 
         # vectorize of k's and l's
         a = []
@@ -67,7 +68,7 @@ class SpatialDropout(nn.Module):
     """Using same drop center for all samples in batch"""
 
     def __init__(self, loc, d_drop):
-        super(SpatialDropout, self).__init__()
+        super().__init__()
         self.loc = loc  # ( num_channels, 2 )
         self.d_drop = d_drop
         self.num_channels = loc.shape[0]
@@ -88,7 +89,7 @@ class SpatialDropout(nn.Module):
 
 class SubjectSpatialAttention(nn.Module):
     def __init__(self, args, loc: np.ndarray):
-        super(SubjectSpatialAttention, self).__init__()
+        super().__init__()
 
         self.num_channels = loc.shape[0]
 
@@ -101,9 +102,6 @@ class SubjectSpatialAttention(nn.Module):
             stride=1,
             bias=args.biases.conv_subj_sa,
         )
-        # self.conv2 = nn.Conv1d(
-        #     in_channels=args.D1, out_channels=args.D1, kernel_size=1, stride=1, bias=False
-        # )
 
     def forward(self, X):
         """
@@ -125,7 +123,7 @@ class SubjectSpatialAttention(nn.Module):
 
 class SubjectBlock(nn.Module):
     def __init__(self, args, num_subjects: int, loc: np.ndarray):
-        super(SubjectBlock, self).__init__()
+        super().__init__()
 
         self.num_subjects = num_subjects
         self.D1 = args.D1
@@ -173,7 +171,7 @@ class SubjectBlock(nn.Module):
 
 class SubjectBlockConvDynamic(nn.Module):
     def __init__(self, args, num_subjects: int, layouts: DynamicChanLoc2d) -> None:
-        super(SubjectBlockConvDynamic, self).__init__()
+        super().__init__()
 
         self.num_subjects = num_subjects
         self.num_channels = [
@@ -205,7 +203,7 @@ class SubjectBlockConvDynamic(nn.Module):
                 )
                 for i, x in zip(subject_idxs, X)
             ]
-        )  # ( B, 270, 256 )
+        )
 
         return X
 
@@ -214,7 +212,7 @@ class SubjectBlockSA(nn.Module):
     """Applies Spatial Attention to each subject separately"""
 
     def __init__(self, args, num_subjects: int, layouts: DynamicChanLoc2d) -> None:
-        super(SubjectBlockSA, self).__init__()
+        super().__init__()
 
         self.layouts = layouts
         self.num_subjects = num_subjects
@@ -271,7 +269,7 @@ class SubjectBlockSA(nn.Module):
                     self.subject_layer[i](x.unsqueeze(dim=0))
                     for i, x in zip(subject_idxs, X)
                 ]
-            )  # ( B, 270, 256 )
+            )
 
         X = self.conv(X)
 
@@ -280,7 +278,7 @@ class SubjectBlockSA(nn.Module):
 
 class ConvBlock(nn.Module):
     def __init__(self, k: int, D1: int, D2: int, ksize: int = 3) -> None:
-        super(ConvBlock, self).__init__()
+        super().__init__()
 
         self.k = k
         self.D2 = D2
@@ -324,7 +322,21 @@ class ConvBlock(nn.Module):
         X = self.conv2(X)
         X = F.glu(X, dim=-2)
 
-        return X  # ( B, 320, 256 )
+        return X
+
+
+class Downsample1D(nn.Module):
+    def __init__(self, D2: int) -> None:
+        super().__init__()
+        
+        self.rearrange = Rearrange("b c (t s) -> b (c s) t", s=2)
+        self.conv = nn.Conv1d(D2 * 2, D2, 1)
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        if X.shape[-1] % 2 != 0:
+            X = F.pad(X, (0, 1), "constant", 0)
+            
+        return self.conv(self.rearrange(X))
 
 
 class BrainEncoder(nn.Module):
@@ -333,14 +345,18 @@ class BrainEncoder(nn.Module):
         args,
         subject_names: List[str],
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
+        num_conv_blocks: int = 5,
+        downsample: Optional[List[bool]] = None,
         unknown_subject: bool = False,
     ) -> None:
-        super(BrainEncoder, self).__init__()
+        super().__init__()
 
         self.D1 = args.D1
         self.D2 = args.D2
         self.F = args.F
-        self.K = args.K
+        
+        if downsample is None:
+            downsample = [False] * num_conv_blocks
 
         self.unknown_subject = unknown_subject
 
@@ -361,10 +377,14 @@ class BrainEncoder(nn.Module):
             raise TypeError
 
         self.conv_blocks = nn.Sequential()
-        for k in range(5):
+        for k in range(num_conv_blocks):
             self.conv_blocks.add_module(
                 f"conv{k}", ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
             )
+            if downsample[k]:
+                self.conv_blocks.add_module(
+                    f"downsample{k}", Downsample1D(self.D2)
+                )
 
         self.conv_final1 = nn.Conv1d(
             in_channels=self.D2,
@@ -382,12 +402,12 @@ class BrainEncoder(nn.Module):
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
     ) -> torch.Tensor:
-        assert (
-            self.unknown_subject or subject_idxs is not None
-        ), "You need to provide subject_idxs when it's not unknown subject."
+        assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject." # fmt: skip
 
         X = self.subject_block(X, subject_idxs)
+        
         X = self.conv_blocks(X)
+        
         X = F.gelu(self.conv_final1(X))
         X = F.gelu(self.conv_final2(X))
         return X
@@ -470,6 +490,8 @@ class BrainEncoderVQ(nn.Module):
         args,
         subject_names: List[str] = None,
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
+        num_conv_blocks: int = 5,
+        downsample: Optional[List[bool]] = None,
         unknown_subject: bool = False,
     ) -> None:
         super().__init__()
@@ -478,6 +500,8 @@ class BrainEncoderVQ(nn.Module):
             args,
             subject_names=subject_names,
             layout=layout,
+            num_conv_blocks=num_conv_blocks,
+            downsample=downsample,
             unknown_subject=unknown_subject,
         )
         
@@ -492,6 +516,9 @@ class BrainEncoderVQ(nn.Module):
     ) -> torch.Tensor:
         X = self.brain_encoder(X, subject_idxs) # ( b, F, t' )
         
+        print(X.shape)
+        sys.exit()
+        
         X_q, reg_loss, perplexity = self.vector_quantizer(X) # ( b, F, t' )
         
         return X_q, reg_loss, perplexity
@@ -504,6 +531,8 @@ class BrainEncoderReduceTime(nn.Module):
         subject_names: List[str] = None,
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         vq: bool = False,
+        num_conv_blocks: int = 5,
+        downsample: Optional[List[bool]] = None,
         unknown_subject: bool = False,
         time_multiplier: int = 1,
     ) -> None:
@@ -511,7 +540,7 @@ class BrainEncoderReduceTime(nn.Module):
         Args:
             time_multiplier:
         """
-        super(BrainEncoderReduceTime, self).__init__()
+        super().__init__()
         
         self.vq = vq
         if vq:
@@ -519,6 +548,8 @@ class BrainEncoderReduceTime(nn.Module):
                 args,
                 subject_names=subject_names,
                 layout=layout,
+                num_conv_blocks=num_conv_blocks,
+                downsample=downsample,
                 unknown_subject=unknown_subject,
             )
         else:
@@ -526,6 +557,8 @@ class BrainEncoderReduceTime(nn.Module):
                 args,
                 subject_names=subject_names,
                 layout=layout,
+                num_conv_blocks=num_conv_blocks,
+                downsample=downsample,
                 unknown_subject=unknown_subject,
             )
 
