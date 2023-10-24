@@ -516,9 +516,6 @@ class BrainEncoderVQ(nn.Module):
     ) -> torch.Tensor:
         X = self.brain_encoder(X, subject_idxs) # ( b, F, t' )
         
-        print(X.shape)
-        sys.exit()
-        
         X_q, reg_loss, perplexity = self.vector_quantizer(X) # ( b, F, t' )
         
         return X_q, reg_loss, perplexity
@@ -562,18 +559,18 @@ class BrainEncoderReduceTime(nn.Module):
                 unknown_subject=unknown_subject,
             )
 
-        self.conv1 = nn.Conv1d(
-            in_channels=args.F,
-            out_channels=args.F,
-            kernel_size=args.final_ksize,
-            stride=args.final_stride,
-        )
-        self.conv2 = nn.Conv1d(
-            in_channels=args.F,
-            out_channels=args.F,
-            kernel_size=args.final_ksize,
-            stride=args.final_stride,
-        )
+        # self.conv1 = nn.Conv1d(
+        #     in_channels=args.F,
+        #     out_channels=args.F,
+        #     kernel_size=args.final_ksize,
+        #     stride=args.final_stride,
+        # )
+        # self.conv2 = nn.Conv1d(
+        #     in_channels=args.F,
+        #     out_channels=args.F,
+        #     kernel_size=args.final_ksize,
+        #     stride=args.final_stride,
+        # )
 
         self.flatten = nn.Flatten()
         self.linear = nn.Linear(
@@ -583,7 +580,8 @@ class BrainEncoderReduceTime(nn.Module):
                     int(args.seq_len * args.brain_resample_sfreq),
                     ksize=args.final_ksize,
                     stride=args.final_stride,
-                    repetition=4,
+                    repetition=2,
+                    downsample=sum(args.downsample),
                 )
             ),
             out_features=args.F * time_multiplier,
@@ -599,14 +597,14 @@ class BrainEncoderReduceTime(nn.Module):
         else:
             X = self.brain_encoder(X, subject_idxs)
 
-        X = self.conv1(X)
-        X = self.conv2(X)
+        # X = self.conv1(X)
+        # X = self.conv2(X)
         X = self.linear(self.flatten(X))
 
         if self.activation:
             X = F.gelu(X)
 
-        if self.vq and self.training:
+        if self.vq:
             return X, reg_loss, perplexity
         else:
             return X
