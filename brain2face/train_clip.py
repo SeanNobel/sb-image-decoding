@@ -281,7 +281,8 @@ def train():
                     )
                     
                 if args.vq_brain:
-                    # NOTE: vq doesn't support test_with_whole for now.
+                    assert not args.test_with_whole, "vq doesn't support test_with_whole for now"
+                    
                     Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
                     
                 else:
