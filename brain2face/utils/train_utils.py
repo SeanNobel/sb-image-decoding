@@ -142,8 +142,7 @@ def sequential_apply(
 
     # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
     if batch_size == X.shape[0]:
-        assert isinstance(X, torch.Tensor) and isinstance(model, nn.Module)
-
+        # assert isinstance(X, torch.Tensor) and isinstance(model, nn.Module)
         if subject_idxs is None:
             return model(X.to(device)).to(orig_device)
         else:
@@ -171,7 +170,16 @@ def sequential_apply(
         )
 
 
-def conv_output_size(input_size: int, ksize: int, stride: int, repetition: int):
+def conv_output_size(
+    input_size: int,
+    ksize: int,
+    stride: int,
+    repetition: int,
+    downsample: int,
+) -> int:
+    for _ in range(downsample):
+        input_size = (input_size - 1) // 2 + 1
+    
     for _ in range(repetition):
         input_size = (input_size - ksize) // stride + 1
 
