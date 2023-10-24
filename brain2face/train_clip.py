@@ -131,6 +131,8 @@ def train():
             args,
             subject_names=subject_names,
             layout=eval(args.layout),
+            num_conv_blocks=args.num_conv_blocks,
+            downsample=args.downsample,
         ).to(device)
 
     else:
@@ -139,6 +141,8 @@ def train():
             subject_names=subject_names,
             layout=eval(args.layout),
             vq=args.vq_brain,
+            num_conv_blocks=args.num_conv_blocks,
+            downsample=args.downsample,
             time_multiplier=args.time_multiplier,
         ).to(device)
 
@@ -186,7 +190,8 @@ def train():
         train_top1_accs = []
         test_top10_accs = []
         test_top1_accs = []
-        perplexities = [] # train
+        train_perplexities = []
+        test_perplexities = []
         
         train_Y_list = []
         train_Z_list = []
@@ -227,11 +232,11 @@ def train():
                 train_top1_acc, train_top10_acc, _ = classifier(Z, Y)
 
             train_clip_losses.append(clip_loss.item())
-            if args.vq_brain:
-                train_vq_losses.append(vq_loss.item())
-                perplexities.append(perplexity.item())
             train_top10_accs.append(train_top10_acc)
             train_top1_accs.append(train_top1_acc)
+            if args.vq_brain:
+                train_vq_losses.append(vq_loss.item())
+                train_perplexities.append(perplexity.item())
 
             if args.accum_grad:
                 loss.backward()
@@ -263,15 +268,6 @@ def train():
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
-                # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
-                Z = sequential_apply(
-                    X,
-                    brain_encoder,
-                    args.batch_size,
-                    subject_idxs=subject_idxs,
-                    desc="BrainEncoder",
-                )
-
                 if args.vision.pretrained:
                     Y = sequential_apply(
                         Y,
@@ -283,6 +279,20 @@ def train():
                     Y = sequential_apply(
                         Y, vision_encoder, args.batch_size, desc="VisionEncoder"
                     )
+                    
+                if args.vq_brain:
+                    # NOTE: vq doesn't support test_with_whole for now.
+                    Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
+                    
+                else:
+                    # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
+                    Z = sequential_apply(
+                        X,
+                        brain_encoder,
+                        args.batch_size,
+                        subject_idxs=subject_idxs,
+                        desc="BrainEncoder",
+                    )
 
                 clip_loss = loss_func(Y, Z)
 
@@ -293,6 +303,9 @@ def train():
             test_clip_losses.append(clip_loss.item())
             test_top10_accs.append(test_top10_acc)
             test_top1_accs.append(test_top1_acc)
+            if args.vq_brain:
+                test_vq_losses.append(vq_loss.item())
+                test_perplexities.append(perplexity.item())
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
@@ -317,7 +330,9 @@ def train():
                 performance_now.update(
                     {
                         "train_vq_loss": np.mean(train_vq_losses),
-                        "train_perplexity": np.mean(perplexities),
+                        "test_vq_loss": np.mean(test_vq_losses),
+                        "train_perplexity": np.mean(train_perplexities),
+                        "test_perplexity": np.mean(test_perplexities),
                     }
                 )
             wandb.log(performance_now)
