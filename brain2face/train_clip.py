@@ -19,11 +19,7 @@ from brain2face.datasets import (
     StyleGANCLIPDataset,
     CollateFunctionForVideoHDF5,
 )
-from brain2face.models.brain_encoder import (
-    BrainEncoder,
-    BrainEncoderReduceTime,
-    BrainEncoderVQ,
-)
+from brain2face.models.brain_encoder import BrainEncoder
 from brain2face.models.vision_encoders import (
     ViT,
     ViViT,
@@ -34,7 +30,7 @@ from brain2face.models.vision_encoders import (
 from brain2face.models.classifier import Classifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
-from brain2face.utils.train_utils import Models, sequential_apply
+from brain2face.utils.train_utils import Models, sequential_apply, count_parameters
 from brain2face.utils.plots import plot_latents_2d
 
 
@@ -126,25 +122,15 @@ def train():
     # ---------------------
     #        Models
     # ---------------------
-    if not args.reduce_time:
-        brain_encoder = BrainEncoder(
-            args,
-            subject_names=subject_names,
-            layout=eval(args.layout),
-            num_conv_blocks=args.num_conv_blocks,
-            downsample=args.downsample,
-        ).to(device)
-
-    else:
-        brain_encoder = BrainEncoderReduceTime(
-            args,
-            subject_names=subject_names,
-            layout=eval(args.layout),
-            vq=args.vq_brain,
-            num_conv_blocks=args.num_conv_blocks,
-            downsample=args.downsample,
-            time_multiplier=args.time_multiplier,
-        ).to(device)
+    brain_encoder = BrainEncoder(
+        args,
+        subject_names=subject_names,
+        layout=eval(args.layout),
+        vq=args.vq_brain,
+        num_conv_blocks=args.num_conv_blocks,
+        downsample=args.downsample,
+        reduce_time=args.reduce_time,
+    ).to(device)
 
     if args.vision.pretrained:
         vision_encoder, preprocess = clip.load(
@@ -158,6 +144,9 @@ def train():
     trained_models = Models(
         brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
     )
+    
+    if sweep:
+        wandb.config.update({"brain_encoder_params": count_parameters(brain_encoder)})
 
     # ---------------------
     #      Optimizers
@@ -252,6 +241,8 @@ def train():
 
         if args.accum_grad:
             optimizer.step()
+            
+        loss_func.temp.data.clamp_(min=args.clip_temp.min, max=args.clip_temp.max)
 
         _ = trained_models.params_updated()
 
