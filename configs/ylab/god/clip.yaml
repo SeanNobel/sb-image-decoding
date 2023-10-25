@@ -86,6 +86,7 @@ lr_step_gamma: 0.5
 epochs: 2000
 reduction: mean
 init_temperature: 5.0
+learn_temperature: True
 
 accum_grad: False
 
@@ -99,7 +100,7 @@ seed: 1234
 
 cuda_id: 0
 
-sweep_count: 3
+sweep_count: 1
 sweep_config:
   method: grid
   metric:
@@ -118,8 +119,12 @@ sweep_config:
     #   values: [0.5, 0.3, 0.1]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
-    vq.num_embeds:
-      values: [64, 256, 16]
+    # vq_brain:
+    #   values: [False]
+    # vq.num_embeds:
+    #   values: [64, 256, 16]
+    learn_temperature:
+      values: [False]
     # biases.conv_block:
     #   values: [True, False]
     # biases.conv_subj_sa:
