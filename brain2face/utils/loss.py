@@ -30,7 +30,10 @@ class CLIPLoss(nn.Module):
         super().__init__()
         self.compute_similarity = nn.CosineSimilarity(dim=-1)
         self._criterion = nn.CrossEntropyLoss(reduction=args.reduction)
+        
         self.temp = nn.Parameter(torch.tensor([float(args.init_temperature)]))
+        if not args.learn_temperature:
+            self.temp.requires_grad = False
 
     def forward(self, x, y, fast=True, return_logits=False):
         batch_size = x.size(0)
