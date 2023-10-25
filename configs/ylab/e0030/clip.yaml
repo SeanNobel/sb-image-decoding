@@ -65,7 +65,6 @@ d_drop: 0.3 # Channel distance for spatial dropout
 # NOTE: setting these 2 is the key that BrainEncoder downsamples EEG from 120Hz to 30Hz
 final_ksize_stride: 2
 head_activation: True
-time_multiplier: 1
 
 split: deep # shallow / deep / subject_random / subject_each
 train_ratio: 0.8

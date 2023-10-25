@@ -71,7 +71,6 @@ d_drop: 0.3 # Channel distance for spatial dropout
 final_ksize: 2
 final_stride: 2
 head_activation: True
-time_multiplier: 1
 ksizes:
   conv_block: 3
 biases:

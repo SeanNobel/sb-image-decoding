@@ -57,11 +57,10 @@ D2: 320
 K: 32
 d_drop: 0.3
 num_conv_blocks: 5
-downsample: [True, True, True, True, True] # Length must be num_conv_blocks.
+downsample: [False, False, False, False, False] # Length must be num_conv_blocks.
 final_ksize: 1
 final_stride: 1
 head_activation: True
-time_multiplier: 1
 ksizes:
   conv_block: 3
 biases:
