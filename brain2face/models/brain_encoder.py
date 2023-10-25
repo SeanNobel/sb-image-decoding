@@ -339,80 +339,6 @@ class Downsample1D(nn.Module):
         return self.conv(self.rearrange(X))
 
 
-class BrainEncoder(nn.Module):
-    def __init__(
-        self,
-        args,
-        subject_names: List[str],
-        layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
-        num_conv_blocks: int = 5,
-        downsample: Optional[List[bool]] = None,
-        unknown_subject: bool = False,
-    ) -> None:
-        super().__init__()
-
-        self.D1 = args.D1
-        self.D2 = args.D2
-        self.F = args.F
-        
-        if downsample is None:
-            downsample = [False] * num_conv_blocks
-
-        self.unknown_subject = unknown_subject
-
-        if layout == ch_locations_2d:
-            self.subject_block = SubjectBlock(args, len(subject_names), layout(args))
-
-        elif layout == DynamicChanLoc2d:
-            if args.spatial_attention:
-                self.subject_block = SubjectBlockSA(
-                    args, len(subject_names), layout(args, subject_names)
-                )
-            else:
-                self.subject_block = SubjectBlockConvDynamic(
-                    args, len(subject_names), layout(args, subject_names)
-                )
-
-        else:
-            raise TypeError
-
-        self.conv_blocks = nn.Sequential()
-        for k in range(num_conv_blocks):
-            self.conv_blocks.add_module(
-                f"conv{k}", ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
-            )
-            if downsample[k]:
-                self.conv_blocks.add_module(
-                    f"downsample{k}", Downsample1D(self.D2)
-                )
-
-        self.conv_final1 = nn.Conv1d(
-            in_channels=self.D2,
-            out_channels=2 * self.D2,
-            kernel_size=args.final_ksize,
-            stride=args.final_stride,
-        )
-        self.conv_final2 = nn.Conv1d(
-            in_channels=2 * self.D2,
-            out_channels=self.F,
-            kernel_size=args.final_ksize,
-            stride=args.final_stride,
-        )
-
-    def forward(
-        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
-    ) -> torch.Tensor:
-        assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject." # fmt: skip
-
-        X = self.subject_block(X, subject_idxs)
-        
-        X = self.conv_blocks(X)
-        
-        X = F.gelu(self.conv_final1(X))
-        X = F.gelu(self.conv_final2(X))
-        return X
-    
-    
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeds: int, embed_dim: int, beta: float) -> None:
         """
@@ -484,127 +410,240 @@ class VectorQuantizer(nn.Module):
         return z_q, reg_loss, perplexity
     
     
-class BrainEncoderVQ(nn.Module):
-    def __init__(
-        self,
-        args,
-        subject_names: List[str] = None,
-        layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
-        num_conv_blocks: int = 5,
-        downsample: Optional[List[bool]] = None,
-        unknown_subject: bool = False,
-    ) -> None:
+class TemporalAggregation(nn.Module):
+    """ Modified from: https://ai.meta.com/static-resource/image-decoding """
+    def __init__(self, args) -> None:
         super().__init__()
         
-        self.brain_encoder = BrainEncoder(
-            args,
-            subject_names=subject_names,
-            layout=layout,
-            num_conv_blocks=num_conv_blocks,
-            downsample=downsample,
-            unknown_subject=unknown_subject,
+        self.linear_projection = nn.Conv1d(
+            in_channels=args.F,
+            out_channels=args.F * 4,
+            kernel_size=1,
+        )
+        self.temporal_aggregation = nn.AdaptiveAvgPool1d(1)
+        self.mlp_projector = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(args.F * 4, args.F * 2),
+            nn.GELU(),
+            nn.Linear(args.F * 2, args.F),
+            nn.GELU(),
         )
         
-        self.vector_quantizer = VectorQuantizer(
-            num_embeds=args.vq.num_embeds,
-            embed_dim=args.F,
-            beta=args.vq.beta,
-        )
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        X = self.linear_projection(X)
+        X = self.temporal_aggregation(X)
+        X = self.mlp_projector(X)
         
-    def forward(
-        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
-    ) -> torch.Tensor:
-        X = self.brain_encoder(X, subject_idxs) # ( b, F, t' )
-        
-        X_q, reg_loss, perplexity = self.vector_quantizer(X) # ( b, F, t' )
-        
-        return X_q, reg_loss, perplexity
+        return X
+    
 
-
-class BrainEncoderReduceTime(nn.Module):
+class BrainEncoder(nn.Module):
     def __init__(
         self,
         args,
-        subject_names: List[str] = None,
+        subject_names: List[str],
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         vq: bool = False,
         num_conv_blocks: int = 5,
         downsample: Optional[List[bool]] = None,
+        reduce_time: bool = True,
         unknown_subject: bool = False,
-        time_multiplier: int = 1,
     ) -> None:
-        """
-        Args:
-            time_multiplier:
-        """
         super().__init__()
+
+        self.D1 = args.D1
+        self.D2 = args.D2
+        self.F = args.F
         
+        if downsample is None:
+            downsample = [False] * num_conv_blocks
+
         self.vq = vq
-        if vq:
-            self.brain_encoder = BrainEncoderVQ(
-                args,
-                subject_names=subject_names,
-                layout=layout,
-                num_conv_blocks=num_conv_blocks,
-                downsample=downsample,
-                unknown_subject=unknown_subject,
-            )
-        else:
-            self.brain_encoder = BrainEncoder(
-                args,
-                subject_names=subject_names,
-                layout=layout,
-                num_conv_blocks=num_conv_blocks,
-                downsample=downsample,
-                unknown_subject=unknown_subject,
-            )
+        self.reduce_time = reduce_time
+        self.unknown_subject = unknown_subject
 
-        # self.conv1 = nn.Conv1d(
-        #     in_channels=args.F,
-        #     out_channels=args.F,
-        #     kernel_size=args.final_ksize,
-        #     stride=args.final_stride,
-        # )
-        # self.conv2 = nn.Conv1d(
-        #     in_channels=args.F,
-        #     out_channels=args.F,
-        #     kernel_size=args.final_ksize,
-        #     stride=args.final_stride,
-        # )
+        if layout == ch_locations_2d:
+            self.subject_block = SubjectBlock(args, len(subject_names), layout(args))
 
-        self.flatten = nn.Flatten()
-        self.linear = nn.Linear(
-            in_features=args.F
-            * (
-                conv_output_size(
-                    int(args.seq_len * args.brain_resample_sfreq),
-                    ksize=args.final_ksize,
-                    stride=args.final_stride,
-                    repetition=2,
-                    downsample=sum(args.downsample),
+        elif layout == DynamicChanLoc2d:
+            if args.spatial_attention:
+                self.subject_block = SubjectBlockSA(
+                    args, len(subject_names), layout(args, subject_names)
                 )
-            ),
-            out_features=args.F * time_multiplier,
-            bias=args.biases.linear_reduc_time,
+            else:
+                self.subject_block = SubjectBlockConvDynamic(
+                    args, len(subject_names), layout(args, subject_names)
+                )
+
+        else:
+            raise TypeError
+
+        self.conv_blocks = nn.Sequential()
+        for k in range(num_conv_blocks):
+            self.conv_blocks.add_module(
+                f"conv{k}", ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
+            )
+            if downsample[k]:
+                self.conv_blocks.add_module(
+                    f"downsample{k}", Downsample1D(self.D2)
+                )
+
+        self.conv_final1 = nn.Conv1d(
+            in_channels=self.D2,
+            out_channels=2 * self.D2,
+            kernel_size=args.final_ksize,
+            stride=args.final_stride,
         )
-        self.activation = args.head_activation
+        self.conv_final2 = nn.Conv1d(
+            in_channels=2 * self.D2,
+            out_channels=self.F,
+            kernel_size=args.final_ksize,
+            stride=args.final_stride,
+        )
+        
+        if vq:
+            self.vector_quantizer = VectorQuantizer(
+                num_embeds=args.vq.num_embeds,
+                embed_dim=args.F,
+                beta=args.vq.beta,
+            )
+        
+        if reduce_time:
+            self.temporal_aggregation = TemporalAggregation(args)
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
     ) -> torch.Tensor:
+        assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject." # fmt: skip
+
+        X = self.subject_block(X, subject_idxs)
+        
+        X = self.conv_blocks(X)
+        
+        X = F.gelu(self.conv_final1(X))
+        X = F.gelu(self.conv_final2(X))
+        
         if self.vq:
-            X, reg_loss, perplexity = self.brain_encoder(X, subject_idxs)
-        else:
-            X = self.brain_encoder(X, subject_idxs)
-
-        # X = self.conv1(X)
-        # X = self.conv2(X)
-        X = self.linear(self.flatten(X))
-
-        if self.activation:
-            X = F.gelu(X)
-
+            X, reg_loss, perplexity = self.vector_quantizer(X)
+        
+        if self.reduce_time:
+            X = self.temporal_aggregation(X)
+            
         if self.vq:
             return X, reg_loss, perplexity
         else:
             return X
+    
+    
+# class BrainEncoderVQ(nn.Module):
+#     def __init__(
+#         self,
+#         args,
+#         subject_names: List[str] = None,
+#         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
+#         num_conv_blocks: int = 5,
+#         downsample: Optional[List[bool]] = None,
+#         unknown_subject: bool = False,
+#     ) -> None:
+#         super().__init__()
+        
+#         self.brain_encoder = BrainEncoder(
+#             args,
+#             subject_names=subject_names,
+#             layout=layout,
+#             num_conv_blocks=num_conv_blocks,
+#             downsample=downsample,
+#             unknown_subject=unknown_subject,
+#         )
+        
+#         self.vector_quantizer = VectorQuantizer(
+#             num_embeds=args.vq.num_embeds,
+#             embed_dim=args.F,
+#             beta=args.vq.beta,
+#         )
+        
+#     def forward(
+#         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+#     ) -> torch.Tensor:
+#         X = self.brain_encoder(X, subject_idxs) # ( b, F, t' )
+        
+#         X_q, reg_loss, perplexity = self.vector_quantizer(X) # ( b, F, t' )
+        
+#         return X_q, reg_loss, perplexity
+
+
+# class BrainEncoderReduceTime(nn.Module):
+#     def __init__(
+#         self,
+#         args,
+#         subject_names: List[str] = None,
+#         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
+#         vq: bool = False,
+#         num_conv_blocks: int = 5,
+#         downsample: Optional[List[bool]] = None,
+#         unknown_subject: bool = False,
+#         time_multiplier: int = 1,
+#     ) -> None:
+#         """
+#         Args:
+#             time_multiplier:
+#         """
+#         super().__init__()
+        
+#         self.vq = vq
+#         if vq:
+#             self.brain_encoder = BrainEncoderVQ(
+#                 args,
+#                 subject_names=subject_names,
+#                 layout=layout,
+#                 num_conv_blocks=num_conv_blocks,
+#                 downsample=downsample,
+#                 unknown_subject=unknown_subject,
+#             )
+#         else:
+#             self.brain_encoder = BrainEncoder(
+#                 args,
+#                 subject_names=subject_names,
+#                 layout=layout,
+#                 num_conv_blocks=num_conv_blocks,
+#                 downsample=downsample,
+#                 unknown_subject=unknown_subject,
+#             )
+#         # ( b, F, t' )
+
+#         self.flatten = nn.Flatten()
+#         self.linear = nn.Linear(
+#             in_features=args.F
+#             * (
+#                 conv_output_size(
+#                     int(args.seq_len * args.brain_resample_sfreq),
+#                     ksize=args.final_ksize,
+#                     stride=args.final_stride,
+#                     repetition=2,
+#                     downsample=sum(args.downsample),
+#                 )
+#             ),
+#             out_features=args.F * time_multiplier,
+#             bias=args.biases.linear_reduc_time,
+#         )
+#         self.activation = args.head_activation
+
+#     def forward(
+#         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+#     ) -> torch.Tensor:
+#         if self.vq:
+#             X, reg_loss, perplexity = self.brain_encoder(X, subject_idxs)
+#         else:
+#             X = self.brain_encoder(X, subject_idxs)
+
+#         # X = self.conv1(X)
+#         # X = self.conv2(X)
+#         X = self.linear(self.flatten(X))
+
+#         if self.activation:
+#             X = F.gelu(X)
+
+#         if self.vq:
+#             return X, reg_loss, perplexity
+#         else:
+#             return X
