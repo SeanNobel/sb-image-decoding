@@ -129,7 +129,7 @@ def train():
         vq=args.vq_brain,
         num_conv_blocks=args.num_conv_blocks,
         downsample=args.downsample,
-        reduce_time=args.reduce_time,
+        temporal_aggregation=args.temporal_aggregation,
     ).to(device)
 
     if args.vision.pretrained:

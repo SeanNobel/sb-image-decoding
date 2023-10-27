@@ -17,7 +17,7 @@ baseline_ratio: -0.1 # Ratio compared to max_seq_len. Negative value means to ta
 
 # ==== Training ==== #
 project_name: nd_god_clip
-train_name: vq
+train_name: temporal-aggregation
 debug: False
 
 seq_onset: 0.0
@@ -60,6 +60,7 @@ num_conv_blocks: 5
 downsample: [False, False, False, False, False] # Length must be num_conv_blocks.
 final_ksize: 1
 final_stride: 1
+temporal_aggregation: original # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
 head_activation: True
 ksizes:
   conv_block: 3
@@ -109,6 +110,8 @@ sweep_config:
     name: test_top10_acc
     goal: maximize
   parameters:
+    vq_brain:
+      values: [False]
     # split:
     #   values: [mixed_shallow, mixed_deep]
     # ksizes.conv_block:
@@ -121,8 +124,6 @@ sweep_config:
     #   values: [0.5, 0.3, 0.1]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
-    vq_brain:
-      values: [False]
     # vq.num_embeds:
     #   values: [64, 256, 16]
     # learn_temperature:
