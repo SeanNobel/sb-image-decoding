@@ -114,7 +114,7 @@ sweep_config:
     goal: maximize
   parameters:
     d_drop:
-      values: [0.1]
+      values: [0.5]
 
 # ==== Evaluation ==== #
 eval:

@@ -57,6 +57,8 @@ pip install -e .
 
 ### UHD
 
+- (10/23) Unet3DEncoderのd_drop=0.1, 0.2は0.3よりもtest accが下がった．d_drop=0.4, 0.5を試す．
+
 - (10/17)
   - [Apollo-5] `Unet3DEncoder(d_drop=0.3)`, `ViViTReduceTime`ともに学習ストップ．`Unet3DEncoder(d_drop=0.3)`で推論し，prior/decoder用のデータセットを作成，ms4-5に移動．さらに，Unet3DEncoderのd_drop=0.1, 0.2を別プロセスで開始．
   - [ms4-5] `Unet3DEncoder(d_drop=0.3)`で作ったlatentsでpriorを訓練，終了．さらに，decoderの訓練を開始．
