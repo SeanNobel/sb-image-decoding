@@ -411,44 +411,82 @@ class VectorQuantizer(nn.Module):
     
     
 class TemporalAggregation(nn.Module):
-    """ Modified from: https://ai.meta.com/static-resource/image-decoding """
     def __init__(self, args, type: str = "affine") -> None:
         super().__init__()
         
-        self.linear_projection = nn.Conv1d(
-            in_channels=args.F,
-            out_channels=args.F * 4,
-            kernel_size=1,
+        if type == "original":
+            conv_repetition = 4 # NOTE: 2 layers are added later
+        else:
+            conv_repetition = 2
+            
+        temporal_dim = conv_output_size(
+            int(args.seq_len * args.brain_resample_sfreq),
+            ksize=args.final_ksize,
+            stride=args.final_stride,
+            repetition=conv_repetition,
+            downsample=sum(args.downsample),
         )
-        if type == "affine":
-            temporal_dim = conv_output_size(
-                int(args.seq_len * args.brain_resample_sfreq),
-                ksize=args.final_ksize,
-                stride=args.final_stride,
-                repetition=2,
-                downsample=sum(args.downsample),
+                
+        if type == "original":
+            self.layers = nn.Sequential(
+                [
+                    nn.Conv1d(
+                        in_channels=args.F,
+                        out_channels=args.F,
+                        kernel_size=args.final_ksize,
+                        stride=args.final_stride,
+                    ),
+                    nn.Conv1d(
+                        in_channels=args.F,
+                        out_channels=args.F,
+                        kernel_size=args.final_ksize,
+                        stride=args.final_stride,
+                    ),
+                    nn.Flatten(),
+                    nn.Linear(
+                        args.F * temporal_dim,
+                        args.F,
+                        bias=args.biases.linear_reduc_time
+                    ),
+                ]
+            )
+        else:
+            """ Modified from: https://ai.meta.com/static-resource/image-decoding """
+            self.layers = nn.Sequential()
+            
+            self.layers.add_module(
+                "linear_projection",
+                nn.Conv1d(
+                    in_channels=args.F,
+                    out_channels=args.F * 4,
+                    kernel_size=1,
+                )
             )
             
-            self.temporal_aggregation = nn.Linear(temporal_dim, 1)
-        elif type == "pool":
-            self.temporal_aggregation = nn.AdaptiveAvgPool1d(1)
-        else:
-            raise NotImplementedError()
+            if type == "affine":                
+                self.layers.add_module(
+                    "temporal_aggregation", nn.Linear(temporal_dim, 1)
+                )
+            elif type == "pool":
+                self.layers.add_module(
+                    "temporal_aggregation", nn.AdaptiveAvgPool1d(1)
+                )
+            else:
+                raise NotImplementedError()
+            
+            self.layers.add_module(
+                "mlp_projector",
+                nn.Sequential(
+                    nn.Flatten(),
+                    nn.Linear(args.F * 4, args.F * 2),
+                    nn.GELU(),
+                    nn.Linear(args.F * 2, args.F),
+                    nn.GELU(),
+                )
+            )
         
-        self.mlp_projector = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(args.F * 4, args.F * 2),
-            nn.GELU(),
-            nn.Linear(args.F * 2, args.F),
-            nn.GELU(),
-        )
-        
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
-        X = self.linear_projection(X)
-        X = self.temporal_aggregation(X)
-        X = self.mlp_projector(X)
-        
-        return X
+    def forward(self, X: torch.Tensor) -> torch.Tensor:        
+        return self.layers(X)
     
 
 class BrainEncoder(nn.Module):
@@ -460,7 +498,7 @@ class BrainEncoder(nn.Module):
         vq: bool = False,
         num_conv_blocks: int = 5,
         downsample: Optional[List[bool]] = None,
-        reduce_time: bool = True,
+        temporal_aggregation: Optional[str] = None,
         unknown_subject: bool = False,
     ) -> None:
         super().__init__()
@@ -473,7 +511,6 @@ class BrainEncoder(nn.Module):
             downsample = [False] * num_conv_blocks
 
         self.vq = vq
-        self.reduce_time = reduce_time
         self.unknown_subject = unknown_subject
 
         if layout == ch_locations_2d:
@@ -522,8 +559,10 @@ class BrainEncoder(nn.Module):
                 beta=args.vq.beta,
             )
         
-        if reduce_time:
+        if temporal_aggregation is not None:
             self.temporal_aggregation = TemporalAggregation(args)
+        else:
+            self.temporal_aggregation = None
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
@@ -540,7 +579,7 @@ class BrainEncoder(nn.Module):
         if self.vq:
             X, reg_loss, perplexity = self.vector_quantizer(X)
         
-        if self.reduce_time:
+        if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
             
         if self.vq:
