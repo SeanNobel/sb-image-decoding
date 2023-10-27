@@ -25,9 +25,16 @@ pip install -e .
 
 ### YLab GOD
 
+- (10/24)
+  - [x] Encoderの出力ベクトル数を，写真を言語で説明するのに最小限必要な要素の数に合わせる（num codebook vectorsは逆に増やす）
+    - [x] BrainEncoderにdownsample層を導入するということ．
+    - Encoderの出力ベクトル数は8にした．
+
 - (10/23)
   - RobustScaling後±4を超えるセグメントを除去する前処理を実装 (drop-epilepsy)
   - 両エンコーダの出力をPCA, t-SNE(perplexity=2,10,40,100)でプロットしながらやる訓練を実装．d_drop=0.4で実行．
+  - BrainEncoderVQを実装，d_drop=0.3で実行．
+    - [x] test_vq_lossも表示できるようにする．
 
 - (9/19) 100エポックでもGTに近い画像は生成されなかった．
   - Decoderだけの評価としてimage_emedsから直接生成してみたところ，少しGTに似た画像が生成された．
@@ -76,7 +83,6 @@ pip install -e .
 - (8/9) dalle2_videoのサンプリングに関するメソッドが動画に対応したので，パイプライン走らせられる状態になった．依然時間次元30HzのCLIP学習待ち．
   - 学習済みCLIPモデル：`runs/uhd/video/d_drop-0.3_/`
 
-
 - (8/8) Diffusion priorの訓練でロスがnanになったが，元々はならず大きな変更も加えていない．パイプライン全体の訓練を最初からやってみる．今は30Hzのまま時間次元ありCLIPを学習中．
 
 - (8/8) Downsamplingスクリプトがおわったが，CLIP embeddingが時間次元を持ったままのパイプラインを作ることにした．時間次元をバッチ次元とflattenしてのprior trainingを走らせている．Video decoderの訓練はすでに前やってある（分散を学習しないことで学習を安定させたやつ）．
@@ -86,11 +92,7 @@ pip install -e .
 ## TODOs
 
 - YLab GOD
-  - [x] てんかん放電（スケール後±4を超える）の起こる頻度を調査。該当するセグメントを除外する。
-  - [x] Brain Encoderの出力の学習遷移をPCAなどでプロット（Image Encoderは固定？）
-    - 画像のクラスで色付け
-  - [ ] Brain Encoderの事前学習としてVector Quantizedな潜在空間を使った再構成タスクをやる
-    - CLIP学習にも正則化に対応するロスを取り入れる？
+  - Brain Encoderの事前学習としてVector Quantizedな潜在空間を使った再構成タスクをやる？（CLIP学習にも正則化に対応するロスを取り入れる？）
   - [ ] priorを訓練して本物のimage imbとの相関を取る
 
 - UHD
