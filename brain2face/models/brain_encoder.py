@@ -412,7 +412,7 @@ class VectorQuantizer(nn.Module):
     
 class TemporalAggregation(nn.Module):
     """ Modified from: https://ai.meta.com/static-resource/image-decoding """
-    def __init__(self, args) -> None:
+    def __init__(self, args, type: str = "affine") -> None:
         super().__init__()
         
         self.linear_projection = nn.Conv1d(
@@ -420,7 +420,21 @@ class TemporalAggregation(nn.Module):
             out_channels=args.F * 4,
             kernel_size=1,
         )
-        self.temporal_aggregation = nn.AdaptiveAvgPool1d(1)
+        if type == "affine":
+            temporal_dim = conv_output_size(
+                int(args.seq_len * args.brain_resample_sfreq),
+                ksize=args.final_ksize,
+                stride=args.final_stride,
+                repetition=2,
+                downsample=sum(args.downsample),
+            )
+            
+            self.temporal_aggregation = nn.Linear(temporal_dim, 1)
+        elif type == "pool":
+            self.temporal_aggregation = nn.AdaptiveAvgPool1d(1)
+        else:
+            raise NotImplementedError()
+        
         self.mlp_projector = nn.Sequential(
             nn.Flatten(),
             nn.Linear(args.F * 4, args.F * 2),
