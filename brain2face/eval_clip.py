@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 
 import clip
 
-from brain2face.datasets import (
+from brain2face.datasets.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
     UHDCLIPDataset,

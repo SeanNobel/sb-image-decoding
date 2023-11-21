@@ -15,7 +15,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 
-from brain2face.datasets import NeuroDiffusionCLIPEmbImageDataset
+from brain2face.datasets.datasets import NeuroDiffusionCLIPEmbImageDataset
 
 @torch.no_grad()
 @hydra.main(version_base=None, config_path="../configs", config_name="default")

@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from dalle2_pytorch import DALLE2, DiffusionPriorNetwork, DiffusionPrior, Unet, Decoder
 
-from brain2face.datasets import UHDPipelineDataset, YLabGODPipelineDataset
+from brain2face.datasets.datasets import UHDPipelineDataset, YLabGODPipelineDataset
 from brain2face.models.brain_encoder import BrainEncoderReduceTime
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.train_utils import sequential_apply
@@ -21,28 +21,28 @@ from brain2face.utils.eval_utils import update_with_eval, get_run_dir
 def pipeline(_args: DictConfig) -> None:
     args_clip = OmegaConf.load(os.path.join("configs", _args.config_path))
     args_clip = update_with_eval(args_clip)
-    
+
     args_prior, args_decoder = (
         OmegaConf.load(
             os.path.join(
-                "configs",
-                "/".join(_args.config_path.split("/")[:-1]),
-                f"{model}.yaml"
+                "configs", "/".join(_args.config_path.split("/")[:-1]), f"{model}.yaml"
             )
         )
         for model in ["prior", "decoder"]
     )
 
     run_dir_clip = get_run_dir(args_clip)
-    
-    gen_dir = os.path.join("generated", args_clip.dataset.lower(), args_decoder.train_name)
+
+    gen_dir = os.path.join(
+        "generated", args_clip.dataset.lower(), args_decoder.train_name
+    )
     os.makedirs(gen_dir, exist_ok=True)
 
     # NOTE: devices need to be hard-coded, as I cannot figure out how the device
     #       that pytorch-dalle2 uses
     device_clip = "cuda:1"
     device_dalle2 = "cuda:0"
-    
+
     batch_size = 32
 
     # ----------------
@@ -160,14 +160,10 @@ def pipeline(_args: DictConfig) -> None:
 
         # images = (images.permute(0, 2, 3, 1).cpu().numpy() * 255).astype(np.uint8)
         # ( samples, 256, 256, 3 )
-                
+
         for j, (image, image_gt) in enumerate(zip(images, Y.numpy())):
-            image.save(
-                os.path.join(gen_dir, f"{i * batch_size + j}.jpg")
-            )            
-            cv2.imwrite(
-                os.path.join(gen_dir, f"{i * batch_size + j}_gt.jpg"), image_gt
-            )
+            image.save(os.path.join(gen_dir, f"{i * batch_size + j}.jpg"))
+            cv2.imwrite(os.path.join(gen_dir, f"{i * batch_size + j}_gt.jpg"), image_gt)
 
 
 if __name__ == "__main__":

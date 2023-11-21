@@ -12,13 +12,14 @@ from omegaconf import DictConfig, OmegaConf
 
 import clip
 
-from brain2face.datasets import (
+from brain2face.datasets.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
     UHDCLIPDataset,
     StyleGANCLIPDataset,
     CollateFunctionForVideoHDF5,
 )
+from brain2face.datasets.things_meg import ThingsMEGCLIPDataset
 from brain2face.models.brain_encoder import BrainEncoder
 from brain2face.models.vision_encoders import (
     ViT,
@@ -144,7 +145,7 @@ def train():
     trained_models = Models(
         brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
     )
-    
+
     if sweep:
         wandb.config.update({"brain_encoder_params": count_parameters(brain_encoder)})
 
@@ -181,7 +182,7 @@ def train():
         test_top1_accs = []
         train_perplexities = []
         test_perplexities = []
-        
+
         train_Y_list = []
         train_Z_list = []
         train_classes_list = []
@@ -195,7 +196,7 @@ def train():
                 X, Y, subject_idxs, classes = batch
             else:
                 X, Y, subject_idxs, classes = *batch, None
-                
+
             if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
@@ -205,16 +206,16 @@ def train():
                 Y = vision_encoder.encode_image(Y).float()
             else:
                 Y = vision_encoder(Y)
-                
+
             if args.vq_brain:
                 Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
                 clip_loss = loss_func(Y, Z)
-                
+
                 loss = clip_loss + vq_loss
             else:
                 Z = brain_encoder(X, subject_idxs)
                 vq_loss, perplexity = None, None
-                
+
                 loss = clip_loss = loss_func(Y, Z)
 
             with torch.no_grad():
@@ -233,7 +234,7 @@ def train():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                
+
             if classes is not None:
                 train_Y_list.append(Y.detach().cpu().numpy())
                 train_Z_list.append(Z.detach().cpu().numpy())
@@ -241,7 +242,7 @@ def train():
 
         if args.accum_grad:
             optimizer.step()
-            
+
         loss_func.temp.data.clamp_(min=args.clip_temp.min, max=args.clip_temp.max)
 
         _ = trained_models.params_updated()
@@ -252,7 +253,7 @@ def train():
                 X, Y, subject_idxs, classes = batch
             else:
                 X, Y, subject_idxs, classes = *batch, None
-                
+
             if args.vision.pretrained:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
@@ -270,12 +271,14 @@ def train():
                     Y = sequential_apply(
                         Y, vision_encoder, args.batch_size, desc="VisionEncoder"
                     )
-                    
+
                 if args.vq_brain:
-                    assert not args.test_with_whole, "vq doesn't support test_with_whole for now"
-                    
+                    assert (
+                        not args.test_with_whole
+                    ), "vq doesn't support test_with_whole for now"
+
                     Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
-                    
+
                 else:
                     # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
                     Z = sequential_apply(
@@ -338,7 +341,7 @@ def train():
             trained_models.save(run_dir, best=True)
 
             min_test_loss = np.mean(test_clip_losses)
-            
+
         if classes is not None:
             if epoch == 0:
                 plot_latents_2d(

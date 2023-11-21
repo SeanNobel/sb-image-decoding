@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior, DiffusionPriorTrainer
 
-from brain2face.datasets import NeuroDiffusionCLIPEmbDataset
+from brain2face.datasets.datasets import NeuroDiffusionCLIPEmbDataset
 
 
 def train(args: DictConfig) -> None:
