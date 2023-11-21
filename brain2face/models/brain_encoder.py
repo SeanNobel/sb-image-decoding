@@ -340,7 +340,7 @@ class Downsample1D(nn.Module):
 
 
 class VectorQuantizer(nn.Module):
-    def __init__(self, num_embeds: int, embed_dim: int, beta: float) -> None:
+    def __init__(self, num_embeds: int, embed_dim: int, beta: float = 0.25) -> None:
         """
         Parameters
         ----------
@@ -410,46 +410,47 @@ class VectorQuantizer(nn.Module):
         return z_q, reg_loss, perplexity
     
     
-class TemporalAggregation(nn.Module):
-    def __init__(self, args, type: str = "affine") -> None:
+class OriginalAggregator(nn.Module):
+    """ Original temporal aggregation module """
+    def __init__(
+        self,
+        args,
+        temporal_dim: int,
+        temporal_multiplier: int = 1
+    ) -> None:
         super().__init__()
         
-        if type == "original":
-            conv_repetition = 4 # NOTE: 2 layers are added later
-        else:
-            conv_repetition = 2
-            
-        temporal_dim = conv_output_size(
-            int(args.seq_len * args.brain_resample_sfreq),
-            ksize=args.final_ksize,
-            stride=args.final_stride,
-            repetition=conv_repetition,
-            downsample=sum(args.downsample),
+        self.layers = nn.Sequential(
+            nn.Conv1d(
+                in_channels=args.F,
+                out_channels=args.F,
+                kernel_size=args.final_ksize,
+                stride=args.final_stride,
+            ),
+            nn.Conv1d(
+                in_channels=args.F,
+                out_channels=args.F,
+                kernel_size=args.final_ksize,
+                stride=args.final_stride,
+            ),
+            nn.Flatten(),
+            nn.Linear(
+                args.F * temporal_dim,
+                args.F * temporal_multiplier,
+                bias=args.biases.linear_reduc_time
+            ),
         )
+        
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        return self.layers(X)
+    
+    
+class TemporalAggregation(nn.Module):
+    def __init__(self, args, temporal_dim: int) -> None:
+        super().__init__()
                 
-        if type == "original":
-            self.layers = nn.Sequential(
-                [
-                    nn.Conv1d(
-                        in_channels=args.F,
-                        out_channels=args.F,
-                        kernel_size=args.final_ksize,
-                        stride=args.final_stride,
-                    ),
-                    nn.Conv1d(
-                        in_channels=args.F,
-                        out_channels=args.F,
-                        kernel_size=args.final_ksize,
-                        stride=args.final_stride,
-                    ),
-                    nn.Flatten(),
-                    nn.Linear(
-                        args.F * temporal_dim,
-                        args.F,
-                        bias=args.biases.linear_reduc_time
-                    ),
-                ]
-            )
+        if args.temporal_aggregation == "original":
+            self.layers = OriginalAggregator(args, temporal_dim)
         else:
             """ Modified from: https://ai.meta.com/static-resource/image-decoding """
             self.layers = nn.Sequential()
@@ -463,11 +464,11 @@ class TemporalAggregation(nn.Module):
                 )
             )
             
-            if type == "affine":                
+            if args.temporal_aggregation == "affine":                
                 self.layers.add_module(
                     "temporal_aggregation", nn.Linear(temporal_dim, 1)
                 )
-            elif type == "pool":
+            elif args.temporal_aggregation == "pool":
                 self.layers.add_module(
                     "temporal_aggregation", nn.AdaptiveAvgPool1d(1)
                 )
@@ -488,6 +489,43 @@ class TemporalAggregation(nn.Module):
     def forward(self, X: torch.Tensor) -> torch.Tensor:        
         return self.layers(X)
     
+    
+class AggregatedVectorQuantizer(nn.Module):
+    def __init__(
+        self,
+        args,
+        num_concepts: int,
+        num_embeds: int,
+        embed_dim: int,
+        temporal_dim: int,
+        beta: float = 0.25,
+    ) -> None:
+        super().__init__()
+        
+        self.aggregator = nn.Sequential(
+            OriginalAggregator(
+                args, temporal_dim, temporal_multiplier=num_concepts
+            ),
+            nn.Unflatten(dim=1, unflattened_size=(embed_dim, num_concepts)),
+        )
+        
+        self.vector_quantizer = VectorQuantizer(num_embeds, embed_dim, beta)
+        
+        self.mlp_projector = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(embed_dim * num_concepts, embed_dim),
+            nn.GELU(),
+        )
+        
+    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
+        X = self.aggregator(X)
+        
+        X, reg_loss, perplexity = self.vector_quantizer(X)
+        
+        X = self.mlp_projector(X)
+        
+        return X, reg_loss, perplexity
+    
 
 class BrainEncoder(nn.Module):
     def __init__(
@@ -497,7 +535,7 @@ class BrainEncoder(nn.Module):
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         vq: bool = False,
         num_conv_blocks: int = 5,
-        downsample: Optional[List[bool]] = None,
+        downsample: Union[bool, List[bool]] = False,
         temporal_aggregation: Optional[str] = None,
         unknown_subject: bool = False,
     ) -> None:
@@ -507,8 +545,10 @@ class BrainEncoder(nn.Module):
         self.D2 = args.D2
         self.F = args.F
         
-        if downsample is None:
-            downsample = [False] * num_conv_blocks
+        if isinstance(downsample, bool):
+            downsample = [downsample] * num_conv_blocks
+        else:
+            assert len(downsample) == num_conv_blocks, "downsample and num_conv_blocks should have the same length."
 
         self.vq = vq
         self.unknown_subject = unknown_subject
@@ -552,17 +592,39 @@ class BrainEncoder(nn.Module):
             stride=args.final_stride,
         )
         
-        if vq:
-            self.vector_quantizer = VectorQuantizer(
+        temporal_dim = conv_output_size(
+            int(args.seq_len * args.brain_resample_sfreq),
+            ksize=args.final_ksize,
+            stride=args.final_stride,
+            repetition=4 if args.temporal_aggregation == "original" else 2,
+            downsample=sum(downsample),
+        )
+        
+        if vq and args.vq.type == "aggregated":
+            assert args.temporal_aggregation == "original", "Aggregated VQ only supports original temporal aggregation for now."
+            
+            self.vector_quantizer = AggregatedVectorQuantizer(
+                args,
+                num_concepts=args.vq.num_concepts,
                 num_embeds=args.vq.num_embeds,
                 embed_dim=args.F,
+                temporal_dim=temporal_dim,
                 beta=args.vq.beta,
             )
-        
-        if temporal_aggregation is not None:
-            self.temporal_aggregation = TemporalAggregation(args)
-        else:
+            
             self.temporal_aggregation = None
+        else:
+            if vq:
+                self.vector_quantizer = VectorQuantizer(
+                    num_embeds=args.vq.num_embeds,
+                    embed_dim=args.F,
+                    beta=args.vq.beta,
+                )
+            
+            if temporal_aggregation is not None:
+                self.temporal_aggregation = TemporalAggregation(args, temporal_dim)
+            else:
+                self.temporal_aggregation = None
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
