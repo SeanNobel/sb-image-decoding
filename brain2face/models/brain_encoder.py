@@ -30,11 +30,15 @@ class SpatialAttention(nn.Module):
         x, y = loc[:, 0], loc[:, 1]
 
         # make a complex-valued parameter, reshape k,l into one dimension
-        self.z = nn.Parameter(torch.rand(size=(args.D1, args.K**2), dtype=torch.cfloat))
+        self.z = nn.Parameter(
+            torch.rand(size=(args.D1, args.K**2), dtype=torch.cfloat)
+        )
 
         # NOTE: pre-compute the values of cos and sin (they depend on k, l, x and y which repeat)
         phi = (
-            2 * torch.pi * (torch.einsum("k,x->kx", k, x) + torch.einsum("l,y->ly", l, y))
+            2
+            * torch.pi
+            * (torch.einsum("k,x->kx", k, x) + torch.einsum("l,y->ly", l, y))
         )  # torch.Size([1024, 60]))
         self.register_buffer("cos", torch.cos(phi))
         self.register_buffer("sin", torch.sin(phi))
@@ -46,7 +50,9 @@ class SpatialAttention(nn.Module):
         """X: (batch_size, num_channels, T)"""
 
         # NOTE: do hadamard product and and sum over l and m (i.e. m, which is l X m)
-        re = torch.einsum("jm, me -> je", self.z.real, self.cos)  # torch.Size([270, 60])
+        re = torch.einsum(
+            "jm, me -> je", self.z.real, self.cos
+        )  # torch.Size([270, 60])
         im = torch.einsum("jm, me -> je", self.z.imag, self.sin)
         a = re + im
         # essentially (unnormalized) weights with which to mix input channels into ouput channels
@@ -328,19 +334,21 @@ class ConvBlock(nn.Module):
 class Downsample1D(nn.Module):
     def __init__(self, D2: int) -> None:
         super().__init__()
-        
+
         self.rearrange = Rearrange("b c (t s) -> b (c s) t", s=2)
         self.conv = nn.Conv1d(D2 * 2, D2, 1)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         if X.shape[-1] % 2 != 0:
             X = F.pad(X, (0, 1), "constant", 0)
-            
+
         return self.conv(self.rearrange(X))
 
 
 class VectorQuantizer(nn.Module):
-    def __init__(self, num_embeds: int, embed_dim: int, beta: float = 0.25) -> None:
+    def __init__(
+        self, num_embeds: int, embed_dim: int, alpha: float = 1.0, beta: float = 0.25
+    ) -> None:
         """
         Parameters
         ----------
@@ -355,6 +363,7 @@ class VectorQuantizer(nn.Module):
 
         self.num_embeds = num_embeds
         self.embed_dim = embed_dim
+        self.alpha = alpha
         self.beta = beta
 
         self.embedding = nn.Embedding(self.num_embeds, self.embed_dim)
@@ -363,17 +372,17 @@ class VectorQuantizer(nn.Module):
     def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
         """
         Args:
-            z_e ( b, embed_dim, t' ): 
+            z_e ( b, embed_dim, t' ):
         Returns:
             loss : torch.Tensor (, )
                 目的関数の再構成誤差以外の部分．
             z_q : torch.Tensor ( b, embed_dim, h', w' )
                 離散化された潜在変数．
         """
-        z_e = z_e.permute(0, 2, 1).contiguous() # ( b, t', embed_dim )
+        z_e = z_e.permute(0, 2, 1).contiguous()  # ( b, t', embed_dim )
         z_e_shape = z_e.shape
 
-        z_e_flat = z_e.view(-1, self.embed_dim) # ( b * t', embed_dim )
+        z_e_flat = z_e.view(-1, self.embed_dim)  # ( b * t', embed_dim )
 
         # L2 distances
         distances = (
@@ -387,39 +396,37 @@ class VectorQuantizer(nn.Module):
         encoding_indices = torch.argmin(distances, dim=1)
         # ( b * t', )
 
-        encodings = F.one_hot(encoding_indices, num_classes=self.num_embeds).to(torch.float32)
+        encodings = F.one_hot(encoding_indices, num_classes=self.num_embeds).to(
+            torch.float32
+        )
         # ( b * t', num_embeds )
 
         z_q = torch.matmul(encodings, self.embedding.weight)
         # ( b * t', embed_dim )
-        z_q = z_q.view(z_e_shape) # ( b, t', embed_dim )
+        z_q = z_q.view(z_e_shape)  # ( b, t', embed_dim )
 
         e_latent_loss = F.mse_loss(z_q.detach(), z_e)
         q_latent_loss = F.mse_loss(z_q, z_e.detach())
         # Regularization loss
-        reg_loss = q_latent_loss + self.beta * e_latent_loss
+        reg_loss = self.alpha * (q_latent_loss + self.beta * e_latent_loss)
 
         # Straight-through estimator
         z_q = z_e + (z_q - z_e).detach()
 
-        z_q = z_q.permute(0, 2, 1).contiguous() # ( b, embed_dim, t' )
+        z_q = z_q.permute(0, 2, 1).contiguous()  # ( b, embed_dim, t' )
 
         avg_probs = torch.mean(encodings, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
         return z_q, reg_loss, perplexity
-    
-    
+
+
 class OriginalAggregator(nn.Module):
-    """ Original temporal aggregation module """
-    def __init__(
-        self,
-        args,
-        temporal_dim: int,
-        temporal_multiplier: int = 1
-    ) -> None:
+    """Original temporal aggregation module"""
+
+    def __init__(self, args, temporal_dim: int, temporal_multiplier: int = 1) -> None:
         super().__init__()
-        
+
         self.layers = nn.Sequential(
             nn.Conv1d(
                 in_channels=args.F,
@@ -437,44 +444,42 @@ class OriginalAggregator(nn.Module):
             nn.Linear(
                 args.F * temporal_dim,
                 args.F * temporal_multiplier,
-                bias=args.biases.linear_reduc_time
+                bias=args.biases.linear_reduc_time,
             ),
         )
-        
+
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         return self.layers(X)
-    
-    
+
+
 class TemporalAggregation(nn.Module):
     def __init__(self, args, temporal_dim: int) -> None:
         super().__init__()
-                
+
         if args.temporal_aggregation == "original":
             self.layers = OriginalAggregator(args, temporal_dim)
         else:
-            """ Modified from: https://ai.meta.com/static-resource/image-decoding """
+            """Modified from: https://ai.meta.com/static-resource/image-decoding"""
             self.layers = nn.Sequential()
-            
+
             self.layers.add_module(
                 "linear_projection",
                 nn.Conv1d(
                     in_channels=args.F,
                     out_channels=args.F * 4,
                     kernel_size=1,
-                )
+                ),
             )
-            
-            if args.temporal_aggregation == "affine":                
+
+            if args.temporal_aggregation == "affine":
                 self.layers.add_module(
                     "temporal_aggregation", nn.Linear(temporal_dim, 1)
                 )
             elif args.temporal_aggregation == "pool":
-                self.layers.add_module(
-                    "temporal_aggregation", nn.AdaptiveAvgPool1d(1)
-                )
+                self.layers.add_module("temporal_aggregation", nn.AdaptiveAvgPool1d(1))
             else:
                 raise NotImplementedError()
-            
+
             self.layers.add_module(
                 "mlp_projector",
                 nn.Sequential(
@@ -483,13 +488,13 @@ class TemporalAggregation(nn.Module):
                     nn.GELU(),
                     nn.Linear(args.F * 2, args.F),
                     nn.GELU(),
-                )
+                ),
             )
-        
-    def forward(self, X: torch.Tensor) -> torch.Tensor:        
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
         return self.layers(X)
-    
-    
+
+
 class AggregatedVectorQuantizer(nn.Module):
     def __init__(
         self,
@@ -498,34 +503,33 @@ class AggregatedVectorQuantizer(nn.Module):
         num_embeds: int,
         embed_dim: int,
         temporal_dim: int,
+        alpha: float = 1.0,
         beta: float = 0.25,
     ) -> None:
         super().__init__()
-        
+
         self.aggregator = nn.Sequential(
-            OriginalAggregator(
-                args, temporal_dim, temporal_multiplier=num_concepts
-            ),
+            OriginalAggregator(args, temporal_dim, temporal_multiplier=num_concepts),
             nn.Unflatten(dim=1, unflattened_size=(embed_dim, num_concepts)),
         )
-        
-        self.vector_quantizer = VectorQuantizer(num_embeds, embed_dim, beta)
-        
+
+        self.vector_quantizer = VectorQuantizer(num_embeds, embed_dim, alpha, beta)
+
         self.mlp_projector = nn.Sequential(
             nn.Flatten(),
             nn.Linear(embed_dim * num_concepts, embed_dim),
             nn.GELU(),
         )
-        
+
     def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
         X = self.aggregator(X)
-        
+
         X, reg_loss, perplexity = self.vector_quantizer(X)
-        
+
         X = self.mlp_projector(X)
-        
+
         return X, reg_loss, perplexity
-    
+
 
 class BrainEncoder(nn.Module):
     def __init__(
@@ -544,11 +548,13 @@ class BrainEncoder(nn.Module):
         self.D1 = args.D1
         self.D2 = args.D2
         self.F = args.F
-        
+
         if isinstance(downsample, bool):
             downsample = [downsample] * num_conv_blocks
         else:
-            assert len(downsample) == num_conv_blocks, "downsample and num_conv_blocks should have the same length."
+            assert (
+                len(downsample) == num_conv_blocks
+            ), "downsample and num_conv_blocks should have the same length."
 
         self.vq = vq
         self.unknown_subject = unknown_subject
@@ -575,9 +581,7 @@ class BrainEncoder(nn.Module):
                 f"conv{k}", ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
             )
             if downsample[k]:
-                self.conv_blocks.add_module(
-                    f"downsample{k}", Downsample1D(self.D2)
-                )
+                self.conv_blocks.add_module(f"downsample{k}", Downsample1D(self.D2))
 
         self.conv_final1 = nn.Conv1d(
             in_channels=self.D2,
@@ -591,7 +595,7 @@ class BrainEncoder(nn.Module):
             kernel_size=args.final_ksize,
             stride=args.final_stride,
         )
-        
+
         temporal_dim = conv_output_size(
             int(args.seq_len * args.brain_resample_sfreq),
             ksize=args.final_ksize,
@@ -599,28 +603,32 @@ class BrainEncoder(nn.Module):
             repetition=4 if args.temporal_aggregation == "original" else 2,
             downsample=sum(downsample),
         )
-        
+
         if vq and args.vq.type == "aggregated":
-            assert args.temporal_aggregation == "original", "Aggregated VQ only supports original temporal aggregation for now."
-            
+            assert (
+                args.temporal_aggregation == "original"
+            ), "Aggregated VQ only supports original temporal aggregation for now."
+
             self.vector_quantizer = AggregatedVectorQuantizer(
                 args,
                 num_concepts=args.vq.num_concepts,
                 num_embeds=args.vq.num_embeds,
                 embed_dim=args.F,
                 temporal_dim=temporal_dim,
+                alpha=args.vq.alpha,
                 beta=args.vq.beta,
             )
-            
+
             self.temporal_aggregation = None
         else:
             if vq:
                 self.vector_quantizer = VectorQuantizer(
                     num_embeds=args.vq.num_embeds,
                     embed_dim=args.F,
+                    alpha=args.vq.alpha,
                     beta=args.vq.beta,
                 )
-            
+
             if temporal_aggregation is not None:
                 self.temporal_aggregation = TemporalAggregation(args, temporal_dim)
             else:
@@ -629,136 +637,22 @@ class BrainEncoder(nn.Module):
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
     ) -> torch.Tensor:
-        assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject." # fmt: skip
+        assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject."  # fmt: skip
 
         X = self.subject_block(X, subject_idxs)
-        
+
         X = self.conv_blocks(X)
-        
+
         X = F.gelu(self.conv_final1(X))
         X = F.gelu(self.conv_final2(X))
-        
+
         if self.vq:
             X, reg_loss, perplexity = self.vector_quantizer(X)
-        
+
         if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
-            
+
         if self.vq:
             return X, reg_loss, perplexity
         else:
             return X
-    
-    
-# class BrainEncoderVQ(nn.Module):
-#     def __init__(
-#         self,
-#         args,
-#         subject_names: List[str] = None,
-#         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
-#         num_conv_blocks: int = 5,
-#         downsample: Optional[List[bool]] = None,
-#         unknown_subject: bool = False,
-#     ) -> None:
-#         super().__init__()
-        
-#         self.brain_encoder = BrainEncoder(
-#             args,
-#             subject_names=subject_names,
-#             layout=layout,
-#             num_conv_blocks=num_conv_blocks,
-#             downsample=downsample,
-#             unknown_subject=unknown_subject,
-#         )
-        
-#         self.vector_quantizer = VectorQuantizer(
-#             num_embeds=args.vq.num_embeds,
-#             embed_dim=args.F,
-#             beta=args.vq.beta,
-#         )
-        
-#     def forward(
-#         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
-#     ) -> torch.Tensor:
-#         X = self.brain_encoder(X, subject_idxs) # ( b, F, t' )
-        
-#         X_q, reg_loss, perplexity = self.vector_quantizer(X) # ( b, F, t' )
-        
-#         return X_q, reg_loss, perplexity
-
-
-# class BrainEncoderReduceTime(nn.Module):
-#     def __init__(
-#         self,
-#         args,
-#         subject_names: List[str] = None,
-#         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
-#         vq: bool = False,
-#         num_conv_blocks: int = 5,
-#         downsample: Optional[List[bool]] = None,
-#         unknown_subject: bool = False,
-#         time_multiplier: int = 1,
-#     ) -> None:
-#         """
-#         Args:
-#             time_multiplier:
-#         """
-#         super().__init__()
-        
-#         self.vq = vq
-#         if vq:
-#             self.brain_encoder = BrainEncoderVQ(
-#                 args,
-#                 subject_names=subject_names,
-#                 layout=layout,
-#                 num_conv_blocks=num_conv_blocks,
-#                 downsample=downsample,
-#                 unknown_subject=unknown_subject,
-#             )
-#         else:
-#             self.brain_encoder = BrainEncoder(
-#                 args,
-#                 subject_names=subject_names,
-#                 layout=layout,
-#                 num_conv_blocks=num_conv_blocks,
-#                 downsample=downsample,
-#                 unknown_subject=unknown_subject,
-#             )
-#         # ( b, F, t' )
-
-#         self.flatten = nn.Flatten()
-#         self.linear = nn.Linear(
-#             in_features=args.F
-#             * (
-#                 conv_output_size(
-#                     int(args.seq_len * args.brain_resample_sfreq),
-#                     ksize=args.final_ksize,
-#                     stride=args.final_stride,
-#                     repetition=2,
-#                     downsample=sum(args.downsample),
-#                 )
-#             ),
-#             out_features=args.F * time_multiplier,
-#             bias=args.biases.linear_reduc_time,
-#         )
-#         self.activation = args.head_activation
-
-#     def forward(
-#         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
-#     ) -> torch.Tensor:
-#         if self.vq:
-#             X, reg_loss, perplexity = self.brain_encoder(X, subject_idxs)
-#         else:
-#             X = self.brain_encoder(X, subject_idxs)
-
-#         # X = self.conv1(X)
-#         # X = self.conv2(X)
-#         X = self.linear(self.flatten(X))
-
-#         if self.activation:
-#             X = F.gelu(X)
-
-#         if self.vq:
-#             return X, reg_loss, perplexity
-#         else:
-#             return X
