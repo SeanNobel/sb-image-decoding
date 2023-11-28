@@ -283,7 +283,9 @@ class SubjectBlockSA(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, k: int, D1: int, D2: int, ksize: int = 3) -> None:
+    def __init__(
+        self, k: int, D1: int, D2: int, ksize: int = 3, p_drop: float = 0.1
+    ) -> None:
         super().__init__()
 
         self.k = k
@@ -313,6 +315,7 @@ class ConvBlock(nn.Module):
             padding="same",
             dilation=2,  # NOTE: The text doesn't say this, but the picture shows dilation=2
         )
+        self.dropout = nn.Dropout(p=p_drop)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         if self.k == 0:
@@ -328,7 +331,7 @@ class ConvBlock(nn.Module):
         X = self.conv2(X)
         X = F.glu(X, dim=-2)
 
-        return X
+        return self.dropout(X)
 
 
 class Downsample1D(nn.Module):
@@ -578,7 +581,8 @@ class BrainEncoder(nn.Module):
         self.conv_blocks = nn.Sequential()
         for k in range(num_conv_blocks):
             self.conv_blocks.add_module(
-                f"conv{k}", ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block)
+                f"conv{k}",
+                ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block, args.p_drop),
             )
             if downsample[k]:
                 self.conv_blocks.add_module(f"downsample{k}", Downsample1D(self.D2))
