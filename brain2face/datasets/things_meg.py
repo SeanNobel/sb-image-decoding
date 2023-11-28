@@ -15,6 +15,8 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
     def __init__(self, args) -> None:
         super().__init__()
 
+        self.large_test_set = args.large_test_set
+
         categories = np.loadtxt(
             os.path.join(args.metadata_dir, "Concept-specific/unique_id.csv"),
             dtype=str,
@@ -36,6 +38,8 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         X_list = []
         self.y_list = []
         subject_idxs_list = []
+        categories_list = []
+        y_idxs_list = []
         train_idxs_list = []
         test_idxs_list = []
         for subject_id, (meg_path, sample_attrs_path) in enumerate(
@@ -48,6 +52,9 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             sample_attrs = np.loadtxt(
                 sample_attrs_path, dtype=str, delimiter=",", skiprows=1
             )  # ( 27048, 18 )
+
+            categories_list.append(torch.from_numpy(sample_attrs[:, 2].astype(int)))
+            y_idxs_list.append(torch.from_numpy(sample_attrs[:, 1].astype(int)))
 
             self.y_list += [
                 os.path.join(args.images_dir, "/".join(path.split("/")[1:]))
@@ -66,11 +73,14 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
 
             # Split
             train_idxs, test_idxs = self.make_split(
-                sample_attrs, refined=args.refined_split
+                sample_attrs, large_test_set=self.large_test_set
             )
             idx_offset = len(sample_attrs) * subject_id
             train_idxs_list.append(train_idxs + idx_offset)
             test_idxs_list.append(test_idxs + idx_offset)
+
+        self.categories = torch.cat(categories_list)
+        self.y_idxs = torch.cat(y_idxs_list)
 
         self.X = torch.cat(X_list, dim=0)
         self.subject_idxs = torch.cat(subject_idxs_list, dim=0)
@@ -81,7 +91,8 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         cprint(f"X: {self.X.shape} | y (paths): {len(self.y_list)} | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
 
         if args.vision.pretrained:
-            _, self.preprocess = clip.load(args.vision.pretrained_model)
+            self.clip_model, self.preprocess = clip.load(args.vision.pretrained_model)
+            self.clip_model = self.clip_model.eval().to(f"cuda:{args.cuda_id}")
         else:
             self.preprocess = None
 
@@ -98,12 +109,15 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         else:
             raise NotImplementedError
 
-        return self.X[i], Y, self.subject_idxs[i]
+        if self.large_test_set:
+            return self.X[i], Y, self.subject_idxs[i]
+        else:
+            return self.X[i], Y, self.subject_idxs[i], self.categories[i], self.y_idxs[i]  # fmt: skip
 
     @staticmethod
     def make_split(
         sample_attrs: np.ndarray,
-        refined: bool = True,
+        large_test_set: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
@@ -115,10 +129,12 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         """
         trial_types = sample_attrs[:, 0]  # ( 27048, )
 
-        if not refined:
+        if not large_test_set:
+            # Small test set
             train_trial_idxs = np.where(trial_types == "exp")[0]  # ( 22248, )
             test_trial_idxs = np.where(trial_types == "test")[0]  # ( 2400, )
 
+            assert len(train_trial_idxs) == 22248 and len(test_trial_idxs) == 2400
         else:
             category_idxs = sample_attrs[:, 2].astype(int)  # ( 27048, )
 
@@ -126,7 +142,13 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             test_category_idxs = np.unique(np.take(category_idxs, test_trial_idxs))
             # ( 200, )
 
-            test_trial_idxs = np.where(np.isin(category_idxs, test_category_idxs))[0]
+            test_trial_idxs = np.where(
+                np.logical_and(
+                    np.isin(category_idxs, test_category_idxs),
+                    np.logical_not(trial_types == "test"),
+                )
+            )[0]
+            # ( 2400, )
 
             train_trial_idxs = np.where(
                 np.logical_and(
@@ -134,6 +156,9 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
                     np.logical_not(np.isin(category_idxs, test_category_idxs)),
                 )
             )[0]
+            # ( 19848, )
+
+            assert len(train_trial_idxs) == 19848 and len(test_trial_idxs) == 2400
 
         return torch.from_numpy(train_trial_idxs), torch.from_numpy(test_trial_idxs)
 
