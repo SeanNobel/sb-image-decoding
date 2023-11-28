@@ -18,6 +18,7 @@ from brain2face.datasets.datasets import (
     UHDCLIPDataset,
     StyleGANCLIPDataset,
     CollateFunctionForVideoHDF5,
+    NeuroDiffusionCLIPDatasetBase,
 )
 from brain2face.datasets.things_meg import ThingsMEGCLIPDataset
 from brain2face.models.brain_encoder import BrainEncoder
@@ -28,7 +29,7 @@ from brain2face.models.vision_encoders import (
     Unet3DEncoder,
     OpenFaceMapper,
 )
-from brain2face.models.classifier import Classifier
+from brain2face.models.classifier import DiagonalClassifier, LabelClassifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply, count_parameters
@@ -60,43 +61,39 @@ def train():
     # -----------------------
     #       Dataloader
     # -----------------------
-    if args.split in ["shallow", "mixed_shallow"]:
-        dataset = eval(f"{args.dataset}CLIPDataset")(args)
+    dataset = eval(f"{args.dataset}CLIPDataset")(args)
 
-        train_size = int(len(dataset.X) * args.train_ratio)
-        test_size = len(dataset.X) - train_size
-        train_set, test_set = torch.utils.data.random_split(
-            dataset,
-            lengths=[train_size, test_size],
-            generator=torch.Generator().manual_seed(args.seed),
-        )
+    if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
+        if args.split in ["shallow", "mixed_shallow"]:
+            train_size = int(len(dataset.X) * args.train_ratio)
+            test_size = len(dataset.X) - train_size
+            train_set, test_set = torch.utils.data.random_split(
+                dataset,
+                lengths=[train_size, test_size],
+                generator=torch.Generator().manual_seed(args.seed),
+            )
 
-        Y_ref = dataset.Y_ref
+        # NOTE: If not shallow, split is done inside dataset class
+        else:
+            train_set = dataset
+            test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
 
-        subject_names = dataset.subject_names
+            assert len(dataset.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
 
-    # NOTE: If not shallow, split is done inside dataset class
+        if len(dataset.Y_ref) > 0:
+            collate_fn = CollateFunctionForVideoHDF5(
+                dataset.Y_ref,
+                # NOTE: Resampling in collate function is too costly.
+                # resample_nsamples=args.vision.resample_nsamples,
+                frame_size=args.vision_encoder.image_size,
+            )
+        else:
+            collate_fn = None
+
     else:
-        train_set = eval(f"{args.dataset}CLIPDataset")(args)
-        test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
+        train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+        test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
 
-        test_size = len(test_set.X)
-
-        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
-        Y_ref = train_set.Y_ref
-
-        subject_names = train_set.subject_names
-
-    cprint(f"Test size: {test_size}", "cyan")
-
-    if len(Y_ref) > 0:
-        collate_fn = CollateFunctionForVideoHDF5(
-            Y_ref,
-            # NOTE: Resampling in collate function is too costly.
-            # resample_nsamples=args.vision.resample_nsamples,
-            frame_size=args.vision_encoder.image_size,
-        )
-    else:
         collate_fn = None
 
     loader_args = {
@@ -110,7 +107,7 @@ def train():
     )
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
-        batch_size=test_size if args.test_with_whole else args.batch_size,
+        batch_size=len(test_set) if args.test_with_whole else args.batch_size,
         shuffle=False,
         **loader_args,
     )
@@ -125,7 +122,7 @@ def train():
     # ---------------------
     brain_encoder = BrainEncoder(
         args,
-        subject_names=subject_names,
+        subject_names=dataset.subject_names,
         layout=eval(args.layout),
         vq=args.vq_brain,
         num_conv_blocks=args.num_conv_blocks,
@@ -134,13 +131,10 @@ def train():
     ).to(device)
 
     if args.vision.pretrained:
-        vision_encoder, preprocess = clip.load(
-            args.vision.pretrained_model, device=device
-        )
+        vision_encoder = dataset.clip_model
+        preprocess = dataset.preprocess
     else:
         vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
-
-    classifier = Classifier(args)
 
     trained_models = Models(
         brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
@@ -148,6 +142,20 @@ def train():
 
     if sweep:
         wandb.config.update({"brain_encoder_params": count_parameters(brain_encoder)})
+
+    # ---------------------
+    #    Test Classifier
+    # ---------------------
+    if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
+        classifier = DiagonalClassifier(args.acc_topk)
+
+    elif isinstance(dataset, ThingsMEGCLIPDataset):
+        if args.large_test_set:
+            classifier = DiagonalClassifier(args.acc_topk)
+        else:
+            classifier = LabelClassifier(dataset, args.acc_topk, device)
+    else:
+        raise NotImplementedError
 
     # ---------------------
     #      Optimizers
@@ -176,10 +184,8 @@ def train():
         train_vq_losses = []
         test_clip_losses = []
         test_vq_losses = []
-        train_top10_accs = []
-        train_top1_accs = []
-        test_top10_accs = []
-        test_top1_accs = []
+        train_topk_accs = []
+        test_topk_accs = []
         train_perplexities = []
         test_perplexities = []
 
@@ -192,18 +198,23 @@ def train():
             optimizer.zero_grad()
 
         for batch in tqdm(train_loader, desc="Train"):
-            if len(batch) == 4:
-                X, Y, subject_idxs, classes = batch
+            if len(batch) == 5:
+                X, Y, subject_idxs, classes, y_idxs = batch
+            elif len(batch) == 4:
+                X, Y, subject_idxs, classes, y_idxs = *batch, None
             else:
-                X, Y, subject_idxs, classes = *batch, None
+                X, Y, subject_idxs, classes, y_idxs = *batch, None, None
 
-            if args.vision.pretrained:
+            if args.vision.pretrained and isinstance(
+                dataset, NeuroDiffusionCLIPDatasetBase
+            ):
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
             if args.vision.pretrained:
-                Y = vision_encoder.encode_image(Y).float()
+                with torch.no_grad():
+                    Y = vision_encoder.encode_image(Y).float()
             else:
                 Y = vision_encoder(Y)
 
@@ -219,11 +230,10 @@ def train():
                 loss = clip_loss = loss_func(Y, Z)
 
             with torch.no_grad():
-                train_top1_acc, train_top10_acc, _ = classifier(Z, Y)
+                topk_accs, _ = classifier(Z, Y)
 
             train_clip_losses.append(clip_loss.item())
-            train_top10_accs.append(train_top10_acc)
-            train_top1_accs.append(train_top1_acc)
+            train_topk_accs.append(topk_accs)
             if args.vq_brain:
                 train_vq_losses.append(vq_loss.item())
                 train_perplexities.append(perplexity.item())
@@ -249,12 +259,16 @@ def train():
 
         trained_models.eval()
         for batch in tqdm(test_loader, desc="Test"):
-            if len(batch) == 4:
-                X, Y, subject_idxs, classes = batch
+            if len(batch) == 5:
+                X, Y, subject_idxs, classes, y_idxs = batch
+            elif len(batch) == 4:
+                X, Y, subject_idxs, classes, y_idxs = *batch, None
             else:
-                X, Y, subject_idxs, classes = *batch, None
+                X, Y, subject_idxs, classes, y_idxs = *batch, None, None
 
-            if args.vision.pretrained:
+            if args.vision.pretrained and isinstance(
+                dataset, NeuroDiffusionCLIPDatasetBase
+            ):
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
@@ -273,12 +287,9 @@ def train():
                     )
 
                 if args.vq_brain:
-                    assert (
-                        not args.test_with_whole
-                    ), "vq doesn't support test_with_whole for now"
+                    assert (not args.test_with_whole), "vq doesn't support test_with_whole for now"  # fmt: skip
 
                     Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
-
                 else:
                     # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
                     Z = sequential_apply(
@@ -291,16 +302,16 @@ def train():
 
                 clip_loss = loss_func(Y, Z)
 
-                test_top1_acc, test_top10_acc, _ = classifier(
-                    Z, Y, sequential=args.test_with_whole
-                )
+                topk_accs, _ = classifier(Z, Y, sequential=args.test_with_whole)
 
             test_clip_losses.append(clip_loss.item())
-            test_top10_accs.append(test_top10_acc)
-            test_top1_accs.append(test_top1_acc)
+            test_topk_accs.append(topk_accs)
             if args.vq_brain:
                 test_vq_losses.append(vq_loss.item())
                 test_perplexities.append(perplexity.item())
+
+        train_topk_accs = np.stack(train_topk_accs)
+        test_topk_accs = np.stack(test_topk_accs)
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
@@ -314,13 +325,23 @@ def train():
                 "epoch": epoch,
                 "train_clip_loss": np.mean(train_clip_losses),
                 "test_clip_loss": np.mean(test_clip_losses),
-                "train_top10_acc": np.mean(train_top10_accs),
-                "train_top1_acc": np.mean(train_top1_accs),
-                "test_top10_acc": np.mean(test_top10_accs),
-                "test_top1_acc": np.mean(test_top1_accs),
                 "lrate": optimizer.param_groups[0]["lr"],
                 "temp": loss_func.temp.item(),
             }
+
+            performance_now.update(
+                {
+                    f"train_top{k}_acc": np.mean(train_topk_accs[:, i])
+                    for i, k in enumerate(args.acc_topk)
+                }
+            )
+            performance_now.update(
+                {
+                    f"test_top{k}_acc": np.mean(test_topk_accs[:, i])
+                    for i, k in enumerate(args.acc_topk)
+                }
+            )
+
             if args.vq_brain:
                 performance_now.update(
                     {
@@ -330,6 +351,7 @@ def train():
                         "test_perplexity": np.mean(test_perplexities),
                     }
                 )
+
             wandb.log(performance_now)
 
         scheduler.step()
