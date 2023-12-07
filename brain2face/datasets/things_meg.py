@@ -7,6 +7,7 @@ from termcolor import cprint
 from glob import glob
 from natsort import natsorted
 from typing import Tuple
+import gc
 
 import clip
 
@@ -98,6 +99,12 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
 
         self.subject_names = [f"s0{i+1}" for i in range(4)]
 
+        if args.chance:
+            self.X = self.X[torch.randperm(len(self.X))]
+
+        del X_list, categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
+        gc.collect()
+
     def __len__(self) -> int:
         return len(self.y)
 
@@ -109,10 +116,10 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         else:
             raise NotImplementedError
 
-        if self.large_test_set:
-            return self.X[i], Y, self.subject_idxs[i]
-        else:
-            return self.X[i], Y, self.subject_idxs[i], self.categories[i], self.y_idxs[i]  # fmt: skip
+        # if self.large_test_set:
+        #     return self.X[i], Y, self.subject_idxs[i]
+        # else:
+        return self.X[i], Y, self.subject_idxs[i], self.categories[i], self.y_idxs[i]  # fmt: skip
 
     @staticmethod
     def make_split(
