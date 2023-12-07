@@ -22,6 +22,7 @@ from brain2face.datasets.datasets import (
 )
 from brain2face.datasets.things_meg import ThingsMEGCLIPDataset
 from brain2face.models.brain_encoder import BrainEncoder
+from brain2face.models.eeg_net import EEGNetDeep
 from brain2face.models.vision_encoders import (
     ViT,
     ViViT,
@@ -120,15 +121,19 @@ def train():
     # ---------------------
     #        Models
     # ---------------------
-    brain_encoder = BrainEncoder(
-        args,
-        subject_names=dataset.subject_names,
-        layout=eval(args.layout),
-        vq=args.vq_brain,
-        num_conv_blocks=args.num_conv_blocks,
-        downsample=args.downsample,
-        temporal_aggregation=args.temporal_aggregation,
-    ).to(device)
+    if args.brain_encoder == "brain_encoder":
+        brain_encoder = BrainEncoder(
+            args,
+            subject_names=dataset.subject_names,
+            layout=eval(args.layout),
+            vq=args.vq_brain,
+            num_conv_blocks=args.num_conv_blocks,
+            downsample=args.downsample,
+            temporal_aggregation=args.temporal_aggregation,
+        ).to(device)
+
+    elif args.brain_encoder == "eegnet":
+        brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
 
     if args.vision.pretrained:
         vision_encoder = dataset.clip_model
@@ -144,16 +149,19 @@ def train():
         wandb.config.update({"brain_encoder_params": count_parameters(brain_encoder)})
 
     # ---------------------
-    #    Test Classifier
+    #      Classifier
     # ---------------------
     if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
-        classifier = DiagonalClassifier(args.acc_topk)
+        train_classifier = test_classifier = DiagonalClassifier(args.acc_topk)
 
     elif isinstance(dataset, ThingsMEGCLIPDataset):
-        if args.large_test_set:
-            classifier = DiagonalClassifier(args.acc_topk)
-        else:
-            classifier = LabelClassifier(dataset, args.acc_topk, device)
+        # if args.large_test_set:
+        #     classifier = DiagonalClassifier(args.acc_topk)
+        # else:
+        #     assert not args.test_with_whole, "No need to test with whole for ThingsMEG small test set."  # fmt: skip
+
+        train_classifier = DiagonalClassifier(args.acc_topk)
+        test_classifier = LabelClassifier(dataset, args.acc_topk, device)
     else:
         raise NotImplementedError
 
@@ -189,6 +197,7 @@ def train():
         train_perplexities = []
         test_perplexities = []
 
+        # For plotting latents
         train_Y_list = []
         train_Z_list = []
         train_classes_list = []
@@ -219,18 +228,31 @@ def train():
                 Y = vision_encoder(Y)
 
             if args.vq_brain:
+                assert isinstance(brain_encoder, BrainEncoder), "Please set vq_brain=False when it's not BrainEncoder."  # fmt: skip
+
                 Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
                 clip_loss = loss_func(Y, Z)
 
                 loss = clip_loss + vq_loss
             else:
-                Z = brain_encoder(X, subject_idxs)
+                if isinstance(brain_encoder, BrainEncoder):
+                    Z = brain_encoder(X, subject_idxs)
+                elif isinstance(brain_encoder, EEGNetDeep):
+                    Z = brain_encoder(X)
+                else:
+                    raise NotImplementedError
+
                 vq_loss, perplexity = None, None
 
                 loss = clip_loss = loss_func(Y, Z)
 
             with torch.no_grad():
-                topk_accs, _ = classifier(Z, Y)
+                if isinstance(train_classifier, DiagonalClassifier):
+                    topk_accs, _ = train_classifier(Z, Y)
+                elif isinstance(train_classifier, LabelClassifier):
+                    topk_accs = train_classifier(Z, y_idxs.to(device))
+                else:
+                    raise NotImplementedError
 
             train_clip_losses.append(clip_loss.item())
             train_topk_accs.append(topk_accs)
@@ -245,7 +267,7 @@ def train():
                 loss.backward()
                 optimizer.step()
 
-            if classes is not None:
+            if classes is not None and args.plot_latents:
                 train_Y_list.append(Y.detach().cpu().numpy())
                 train_Z_list.append(Z.detach().cpu().numpy())
                 train_classes_list.append(classes.numpy())
@@ -253,7 +275,7 @@ def train():
         if args.accum_grad:
             optimizer.step()
 
-        loss_func.temp.data.clamp_(min=args.clip_temp.min, max=args.clip_temp.max)
+        loss_func.temp.data.clamp_(min=args.clip_temp_min, max=args.clip_temp_max)
 
         _ = trained_models.params_updated()
 
@@ -266,9 +288,7 @@ def train():
             else:
                 X, Y, subject_idxs, classes, y_idxs = *batch, None, None
 
-            if args.vision.pretrained and isinstance(
-                dataset, NeuroDiffusionCLIPDatasetBase
-            ):
+            if args.vision.pretrained and isinstance(dataset, NeuroDiffusionCLIPDatasetBase):  # fmt: skip
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
@@ -291,6 +311,9 @@ def train():
 
                     Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
                 else:
+                    if not isinstance(brain_encoder, BrainEncoder):
+                        subject_idxs = None
+
                     # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
                     Z = sequential_apply(
                         X,
@@ -302,7 +325,16 @@ def train():
 
                 clip_loss = loss_func(Y, Z)
 
-                topk_accs, _ = classifier(Z, Y, sequential=args.test_with_whole)
+                if isinstance(test_classifier, DiagonalClassifier):
+                    topk_accs, _ = test_classifier(
+                        Z, Y, sequential=args.test_with_whole
+                    )
+                elif isinstance(test_classifier, LabelClassifier):
+                    topk_accs = test_classifier(
+                        Z, y_idxs.to(device), sequential=args.test_with_whole
+                    )
+                else:
+                    raise NotImplementedError
 
             test_clip_losses.append(clip_loss.item())
             test_topk_accs.append(topk_accs)
@@ -364,7 +396,7 @@ def train():
 
             min_test_loss = np.mean(test_clip_losses)
 
-        if classes is not None:
+        if len(train_classes_list) > 0:
             if epoch == 0:
                 plot_latents_2d(
                     np.concatenate(train_Y_list),
