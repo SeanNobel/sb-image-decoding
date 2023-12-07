@@ -8,8 +8,65 @@ from tqdm import tqdm
 from einops import rearrange
 from termcolor import cprint
 from typing import List
+import gc
 
 from brain2face.utils.train_utils import sequential_apply
+
+
+def calc_similarity(Z: torch.Tensor, Y: torch.Tensor, sequential: bool) -> torch.Tensor:
+    batch_size, _size = len(Z), len(Y)
+
+    Z = Z.contiguous().view(batch_size, -1)
+    Y = Y.contiguous().view(_size, -1)
+
+    Z = Z / Z.norm(dim=-1, keepdim=True)
+    Y = Y / Y.norm(dim=-1, keepdim=True)
+
+    # NOTE: avoid CUDA out of memory like this
+    if sequential:
+        similarity = torch.empty(batch_size, _size).to(device=Z.device)
+
+        pbar = tqdm(total=batch_size, desc="Similarity matrix of test size")
+
+        for i in range(batch_size):
+            # similarity[i] = (Z[i] @ Y.T) / torch.clamp((Z[i].norm() * Y.norm(dim=1)), min=1e-8)
+            similarity[i] = Z[i] @ Y.T
+
+            pbar.update(1)
+
+        # similarity = similarity.T
+    else:
+        Z = rearrange(Z, "b f -> b 1 f")
+        Y = rearrange(Y, "b f -> 1 b f")
+        similarity = F.cosine_similarity(Y, Z, dim=-1)
+
+    torch.cuda.empty_cache()
+
+    return similarity
+
+
+def top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
+    """_summary_
+
+    Args:
+        k (int): _description_
+        similarity ( b, 2400 ): _description_
+        labels ( b, ): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    # if k == 1:
+    #     return (similarity.argmax(axis=1) == diags).to(torch.float).mean().item()  # fmt: skip
+    # else:
+    return np.mean(
+        [
+            label in row
+            for row, label in zip(
+                torch.topk(similarity, k, dim=1, largest=True)[1], labels
+            )
+        ]
+    )
 
 
 class DiagonalClassifier(nn.Module):
@@ -29,43 +86,14 @@ class DiagonalClassifier(nn.Module):
 
         diags = torch.arange(batch_size).to(device=Z.device)
 
-        Z = Z.contiguous().view(batch_size, -1)
-        Y = Y.contiguous().view(batch_size, -1)
+        similarity = calc_similarity(Z, Y, sequential)  # ( b, b )
 
-        Z = Z / Z.norm(dim=-1, keepdim=True)
-        Y = Y / Y.norm(dim=-1, keepdim=True)
-
-        # NOTE: avoid CUDA out of memory like this
-        if sequential:
-            similarity = torch.empty(batch_size, batch_size).to(device=Z.device)
-
-            pbar = tqdm(total=batch_size, desc="Similarity matrix of test size")
-
-            for i in range(batch_size):
-                # similarity[i] = (Z[i] @ Y.T) / torch.clamp(
-                #     (Z[i].norm() * Y.norm(dim=1)), min=1e-8
-                # )
-                similarity[i] = Z[i] @ Y.T
-
-                pbar.update(1)
-
-            similarity = similarity.T
-
-            torch.cuda.empty_cache()
-        else:
-            Z = rearrange(Z, "b f -> 1 b f")
-            Y = rearrange(Y, "b f -> b 1 f")
-            similarity = F.cosine_similarity(Z, Y, dim=-1)  # ( B, B )
-
-        topk_accs = np.array(
-            [self.top_k_accuracy(k, similarity, diags) for k in self.topk]
-        )
+        topk_accs = np.array([top_k_accuracy(k, similarity, diags) for k in self.topk])
 
         # NOTE: max similarity of speech and M/EEG representations is expected for corresponding windows
         # _top1accuracy = (
         #     (similarity.argmax(axis=1) == diags).to(torch.float).mean().item()
         # )
-        # cprint(f"{topk_accs[0]}, {_top1accuracy}", "cyan")
 
         if return_pred:
             cprint(similarity.argmax(axis=1).shape, "cyan")
@@ -75,67 +103,72 @@ class DiagonalClassifier(nn.Module):
         else:
             return topk_accs, similarity
 
-    @staticmethod
-    def top_k_accuracy(k: int, similarity: torch.Tensor, diags: torch.Tensor):
-        # if k == 1:
-        #     return (similarity.argmax(axis=1) == diags).to(torch.float).mean().item()  # fmt: skip
-        # else:
-        return np.mean(
-            [
-                label in row
-                for row, label in zip(
-                    torch.topk(similarity, k, dim=1, largest=True)[1], diags
-                )
-            ]
-        )
 
-
-# WIP
 class LabelClassifier(nn.Module):
+    @torch.no_grad()
     def __init__(self, dataset, topk: List[int] = [1, 5], device="cuda"):
         super().__init__()
 
         self.topk = topk
 
         test_y_idxs = dataset.y_idxs[dataset.test_idxs].numpy()
+        # ( 9600, )
         test_y_idxs, arg_unique = np.unique(test_y_idxs, return_index=True)
+        # ( 2400, )
+        self.test_y_idxs = torch.from_numpy(test_y_idxs).to(device)
 
         test_y_list = np.take(dataset.y_list, dataset.test_idxs).take(arg_unique)
-
-        Y = [
-            Image.open(y).convert("RGB")
-            for y in tqdm(test_y_list, desc="Loading test images for classification.")
-        ]
+        # ( 2400, )
         Y = torch.stack(
             [
-                dataset.preprocess(y)
-                for y in tqdm(Y, desc="Preprocessing test images for classification.")
+                dataset.preprocess(Image.open(y).convert("RGB"))
+                for y in tqdm(test_y_list, desc="Preprocessing test images for classification.")  # fmt: skip
             ]
-        )
-        Y = sequential_apply(
+        ).to(device)
+
+        self.Y = sequential_apply(
             Y,
             dataset.clip_model.encode_image,
             batch_size=32,
             device=device,
             desc="Encoding test images for classification.",
-        )
+        ).float()
 
-        self.Y = Y / Y.norm(dim=-1, keepdim=True)
-        print(self.Y.shape)
+        # self.Y = Y / Y.norm(dim=-1, keepdim=True)  # ( 2400, F=768 )
+
+        del Y
+        gc.collect()
 
     @torch.no_grad()
-    def forward(self, Z: torch.Tensor) -> torch.Tensor:
-        batch_size = Z.size(0)
+    def forward(
+        self, Z: torch.Tensor, y_idxs: torch.Tensor, sequential: bool = False
+    ) -> np.ndarray:
+        """_summary_
 
-        Z = Z.contiguous().view(batch_size, -1)
+        Args:
+            Z ( b=9600, F ): _description_
+            y_idxs ( b=9600, ): _description_
 
-        Z = Z / Z.norm(dim=-1, keepdim=True)
+        Returns:
+            torch.Tensor: _description_
+        """
+        # Z = Z.contiguous().view(batch_size, -1)
+        # Z = Z / Z.norm(dim=-1, keepdim=True)
 
-        similarity = Z @ self.Y.T
+        similarity = calc_similarity(Z, self.Y, sequential)  # ( 2400, b )
+        # print(similarity.shape)
 
-        print(similarity.shape)
-        sys.exit()
+        # cprint(y_idxs, "cyan")
+        # cprint(self.test_y_idxs, "yellow")
 
-        topk_accs = np.array([self.top_k_accuracy(k, similarity, Y) for k in self.topk])
+        labels = y_idxs == self.test_y_idxs.unsqueeze(1)  # ( 2400, b )
+        # cprint(labels.sum(dim=0), "yellow")
+        # print(labels.shape)
+        assert torch.all(labels.sum(dim=0) == 1)
+        labels = labels.to(int).argmax(dim=0)  # ( b, )
+        # print(labels)
+        # print(labels.shape)
+
+        topk_accs = np.array([top_k_accuracy(k, similarity, labels) for k in self.topk])
 
         return topk_accs
