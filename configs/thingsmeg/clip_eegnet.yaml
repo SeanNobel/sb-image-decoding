@@ -22,7 +22,7 @@ brain_resample_sfreq: 120 # Hz
 
 # ==== Training ==== #
 project_name: nd_things_clip
-train_name: small_test
+train_name: eegnet_large-test
 # debug: False
 
 # seq_onset: 0.0
@@ -31,10 +31,10 @@ seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
 dataset: ThingsMEG
 # image_size: 256
 
-montage_path: brain2face/utils/montages/things_meg.npy
-layout: ch_locations_2d # DynamicChanLoc2d
+# montage_path: brain2face/utils/montages/things_meg.npy
+# layout: ch_locations_2d # DynamicChanLoc2d
 
-spatial_attention: True
+# spatial_attention: True
 
 F: 768 # CLIP embedding dimension
 
@@ -56,24 +56,32 @@ vision_encoder:
   dropout: 0.1
   emb_dropout: 0.1
 
-brain_encoder: brain_encoder
+brain_encoder: eegnet
 
-D1: 270
-D2: 320
-K: 32
-d_drop: 0.3 # Dropout rate for spatial-attention
-p_drop: 0.1 # Dropout rate for conv blocks
-num_conv_blocks: 2
-downsample: False # Can be a list of bools with length num_conv_blocks
+num_channels: 271
+n_mel: ${F} # 512
+t_mel: 300
+k1: 60 # 960
+k2: 6 # 96
+F1: 32
+F2: 64 
+D: 2
+p1: 2 # 40
+p2: 5 # 80
+dr1: 0.60
+dr2: 0.30
+num_channels_per_patch: 16
+use_dilation: true
+stride1: 2
+stride2: 2
+num_conv_time_layers: 3
+num_conv_emb_layers: 3
+k_div: 2
+
+temporal_aggregation: original # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
 final_ksize: 1
 final_stride: 1
-temporal_aggregation: affine # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
-head_activation: True
-ksizes:
-  conv_block: 3
 biases:
-  conv_block: True
-  conv_subj_sa: True
   linear_reduc_time: True
 
 vq_brain: False
@@ -84,20 +92,19 @@ vq:
   alpha: 1.0 # How much to weight regularization terms against CLIP loss.
   beta: 0.25 # How much to weight encoder regularization term against codebook loss.
 
-large_test_set: False
+large_test_set: True
 
 batch_size: 128
 lr: 0.005
 lr_scheduler: cosine # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
-epochs: 300 # 500
+epochs: 150 # 500
 reduction: mean
-clip_temp:
-  init: 5.0
-  learn: True
-  min: 0.1
-  max: 10.0
+clip_temp_init: 5.0
+clip_temp_learn: True
+clip_temp_min: 0.1
+clip_temp_max: 10.0
 
 acc_topk: [1, 5]
 
@@ -105,21 +112,31 @@ accum_grad: False
 
 chance: False
 
-test_with_whole: False
+test_with_whole: True
+
+plot_latents: False
 
 num_workers: 8
-
 seed: 1234
+cuda_id: 1
 
-cuda_id: 2
-
-sweep_count: 3
+sweep_count: 4
 sweep_config:
   method: grid
   metric:
-    name: test_top10_acc
+    name: test_top5_acc
     goal: maximize
   parameters:
+    clip_temp_init:
+      value: 4.3
+    clip_temp_learn:
+      value: False
+    t_mel:
+      values: [100, 200]
+    dr1:
+      values: [0.6, 0.2]
+    # chance:
+    #   value: True
     # temporal_aggregation:
     #   values: [original]
     # downsample:
@@ -130,14 +147,8 @@ sweep_config:
     #   values: [3, 5, 7]
     # d_drop:
     #   values: [0.4]
-    # seq_onset:
-    #   values: [0.0, 0.5, 1.0, 1.5]
-    # seq_len:
-    #   values: [0.5, 0.3, 0.1]
-    # layout:
-    #   values: [DynamicChanLoc2d, ch_locations_2d]
-    p_drop:
-      values: [0.1, 0.2, 0.3]
+    # p_drop:
+    #   values: [0.1, 0.2, 0.3]
     # vq_brain:
     #   values: [False, True]
     # vq.type:
@@ -148,14 +159,6 @@ sweep_config:
     #   values: [0.001, 0.01, 0.1]
     # vq.beta:
     #   values: [0.25, 1.0]
-    # learn_temperature:
-    #   values: [False]
-    # biases.conv_block:
-    #   values: [True, False]
-    # biases.conv_subj_sa:
-    #   values: [True, False]
-    # biases.linear_reduc_time:
-    #   values: [True, False]
 
 # ==== Evaluation ==== #
 eval:
