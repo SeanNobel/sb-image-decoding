@@ -62,7 +62,7 @@ class CLIPLoss(nn.Module):
         logits *= torch.exp(self.temp)
 
         # NOTE: as in https://arxiv.org/abs/2103.00020
-        loss = self._criterion(logits, targets) + self._criterion(logits.t(), targets) / 2  # fmt: skip
+        loss = (self._criterion(logits, targets) + self._criterion(logits.t(), targets)) / 2  # fmt: skip
 
         if return_logits:
             return logits, loss
