@@ -1,15 +1,15 @@
 import os, sys
 import torch
 import numpy as np
+import clip
 import mne
 from PIL import Image
 from termcolor import cprint
 from glob import glob
 from natsort import natsorted
-from typing import Tuple
+from tqdm import tqdm
+from typing import Tuple, List
 import gc
-
-import clip
 
 
 class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
@@ -28,45 +28,39 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         )
         cprint(f"Categories: {categories.shape} | category indices: {category_idxs.shape}", "cyan")  # fmt: skip
 
-        meg_paths = [
-            os.path.join(args.preprocessed_data_dir, f"MEG_P{i+1}.pt") for i in range(4)
-        ]
+        preproc_dir = os.path.join(args.preprocessed_data_dir, args.preproc_name)
+
         sample_attrs_paths = [
             os.path.join(args.thingsmeg_dir, f"sourcedata/sample_attributes_P{i+1}.csv")
             for i in range(4)
         ]
 
         X_list = []
-        self.y_list = []
+        Y_list = []
         subject_idxs_list = []
         categories_list = []
         y_idxs_list = []
         train_idxs_list = []
         test_idxs_list = []
-        for subject_id, (meg_path, sample_attrs_path) in enumerate(
-            zip(meg_paths, sample_attrs_paths)
-        ):
+        for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
             # MEG
-            X_list.append(torch.load(meg_path))  # ( 27048, 271, segment_len )
+            X_list.append(
+                torch.load(os.path.join(preproc_dir, f"MEG_P{subject_id+1}.pt"))
+            )
+            # ( 27048, 271, segment_len )
 
-            # Image (path) and subject index
+            # Images
+            Y_list.append(
+                torch.load(os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt"))
+            )
+
+            # Indexes
             sample_attrs = np.loadtxt(
                 sample_attrs_path, dtype=str, delimiter=",", skiprows=1
             )  # ( 27048, 18 )
 
             categories_list.append(torch.from_numpy(sample_attrs[:, 2].astype(int)))
             y_idxs_list.append(torch.from_numpy(sample_attrs[:, 1].astype(int)))
-
-            self.y_list += [
-                os.path.join(args.images_dir, "/".join(path.split("/")[1:]))
-                if not "images_test" in path
-                else os.path.join(
-                    args.images_dir,
-                    "_".join(os.path.basename(path).split("_")[:-1]),
-                    os.path.basename(path),
-                )
-                for path in sample_attrs[:, 8]
-            ]
 
             subject_idxs_list.append(
                 torch.ones(len(sample_attrs), dtype=int) * subject_id
@@ -80,46 +74,31 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             train_idxs_list.append(train_idxs + idx_offset)
             test_idxs_list.append(test_idxs + idx_offset)
 
+        self.X = torch.cat(X_list, dim=0)
+        self.Y = torch.cat(Y_list, dim=0)
+        self.subject_idxs = torch.cat(subject_idxs_list, dim=0)
+
         self.categories = torch.cat(categories_list)
         self.y_idxs = torch.cat(y_idxs_list)
-
-        self.X = torch.cat(X_list, dim=0)
-        self.subject_idxs = torch.cat(subject_idxs_list, dim=0)
 
         self.train_idxs = torch.cat(train_idxs_list, dim=0)
         self.test_idxs = torch.cat(test_idxs_list, dim=0)
 
-        cprint(f"X: {self.X.shape} | y (paths): {len(self.y_list)} | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
-
-        if args.vision.pretrained:
-            self.clip_model, self.preprocess = clip.load(args.vision.pretrained_model)
-            self.clip_model = self.clip_model.eval().to(f"cuda:{args.cuda_id}")
-        else:
-            self.preprocess = None
+        cprint(f"X: {self.X.shape} | Y: {self.Y.shape} | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
 
         self.subject_names = [f"s0{i+1}" for i in range(4)]
 
         if args.chance:
             self.X = self.X[torch.randperm(len(self.X))]
 
-        del X_list, categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
+        del X_list, Y_list, categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
         gc.collect()
 
     def __len__(self) -> int:
         return len(self.y)
 
     def __getitem__(self, i):
-        Y = Image.open(self.y_list[i]).convert("RGB")
-
-        if self.preprocess is not None:
-            Y = self.preprocess(Y)
-        else:
-            raise NotImplementedError
-
-        # if self.large_test_set:
-        #     return self.X[i], Y, self.subject_idxs[i]
-        # else:
-        return self.X[i], Y, self.subject_idxs[i], self.categories[i], self.y_idxs[i]  # fmt: skip
+        return self.X[i], self.Y[i], self.subject_idxs[i], self.categories[i], self.y_idxs[i]  # fmt: skip
 
     @staticmethod
     def make_split(
