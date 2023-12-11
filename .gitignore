@@ -6,6 +6,7 @@ assets/*
 
 generated/
 
+brain2face/models/_spatial_attn_impls.py
 brain2face/models/lightning/
 
 tmp/

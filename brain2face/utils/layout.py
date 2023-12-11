@@ -16,28 +16,33 @@ class DynamicChanLoc2d:
         if args.dataset == "YLabGOD":
             locations = [
                 np.load(
-                    os.path.join("data/preprocessed/ylab/god", args.preproc_name, subject, "montage.npy")
+                    os.path.join(
+                        "data/preprocessed/ylab/god",
+                        args.preproc_name,
+                        subject,
+                        "montage.npy",
+                    )
                 )
                 for subject in subject_names
             ]
-            
+
             if args.loc_random:
                 self.locations = [np.random.rand(*loc.shape) for loc in locations]
-            
+
             else:
                 num_channels = [loc.shape[0] for loc in locations]
-                
+
                 locations = np.concatenate(locations)
                 locations = TSNE(n_components=2).fit_transform(locations)
-                
+
                 locations = min_max_norm(locations)
-                
+
                 self.locations = np.split(locations, np.cumsum(num_channels)[:-1])
-            
+
         else:
             raise NotImplementedError
-        
-    def get_loc(self, subject_idx: int) -> torch.Tensor:        
+
+    def get_loc(self, subject_idx: int) -> torch.Tensor:
         loc = self.locations[subject_idx]
 
         return torch.from_numpy(loc.astype(np.float32))
@@ -50,7 +55,7 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
             loc = np.stack(loc).reshape(2, -1).T  # ( 70, 2 )
         else:
             loc = np.load(args.montage_path)
-            
+
     elif args.dataset == "YLabGOD":
         assert args.loc_random, "Only implementing static YLabGOD for debug."
         loc = np.random.rand(48, 2)
@@ -68,7 +73,7 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
         # TODO: Implement normalization for 3d
         # NOTE: Projects to xy plane (look at load_montage.ipynb)
         loc = layout.pos[: args.num_channels, :2]
-        
+
     elif args.dataset == "StyleGAN":
         montage = loadMontage(args.montage_path)
         info = mne.create_info(ch_names=montage.ch_names, sfreq=250.0, ch_types="eeg")
@@ -80,6 +85,9 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
         layout = mne.channels.find_layout(info, ch_type="eeg")
 
         loc = layout.pos[:, :2]  # ( 32, 2 )
+
+    elif args.dataset == "ThingsMEG":
+        loc = np.load(args.montage_path)
 
     else:
         raise ValueError()
@@ -97,25 +105,26 @@ def min_max_norm(loc: np.ndarray) -> np.ndarray:
     loc = (loc - loc.min(axis=0)) / (loc.max(axis=0) - loc.min(axis=0))
     # NOTE: "In practice, as a_j is periodic, we scale down (x,y) to keep a margin of 0.1 on each side."
     loc = loc * 0.8 + 0.1
-    
+
     return loc
 
 
 def load_god_montage(
-    subject: str,
-    freesurfer_dir: str,
-    return_chnames: bool = False
+    subject: str, freesurfer_dir: str, return_chnames: bool = False
 ) -> Tuple[np.ndarray, Optional[List[str]]]:
-    
     path = os.path.join(freesurfer_dir, subject, "elec_recon", f"{subject}.DURAL")
     montage = np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode").astype(float)
-    montage = np.stack(montage) # ( n_channels, 3 )
-    
+    montage = np.stack(montage)  # ( n_channels, 3 )
+
     if not return_chnames:
         return montage
-    
-    path = os.path.join(freesurfer_dir, subject, "elec_recon", f"{subject}.electrodeNames")
-    ch_names = [name[0] for name in np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode")]
+
+    path = os.path.join(
+        freesurfer_dir, subject, "elec_recon", f"{subject}.electrodeNames"
+    )
+    ch_names = [
+        name[0] for name in np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode")
+    ]
 
     return montage, ch_names
 

@@ -30,15 +30,15 @@ class CLIPLoss(nn.Module):
         super().__init__()
         self.compute_similarity = nn.CosineSimilarity(dim=-1)
         self._criterion = nn.CrossEntropyLoss(reduction=args.reduction)
-        
-        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp.init)]))
-        if not args.clip_temp.learn:
+
+        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
+        if not args.clip_temp_learn:
             self.temp.requires_grad = False
 
     def forward(self, x, y, fast=True, return_logits=False):
         batch_size = x.size(0)
         assert batch_size > 1, "Batch size must be greater than 1."
-        targets = torch.arange(batch_size, requires_grad=False).long().to(device=x.device)
+        targets = torch.arange(batch_size, requires_grad=False).long().to(device=x.device)  # fmt: skip
 
         if not fast:
             # less efficient way
@@ -62,7 +62,7 @@ class CLIPLoss(nn.Module):
         logits *= torch.exp(self.temp)
 
         # NOTE: as in https://arxiv.org/abs/2103.00020
-        loss = (self._criterion(logits, targets) + self._criterion(logits.t(), targets)) / 2
+        loss = (self._criterion(logits, targets) + self._criterion(logits.t(), targets)) / 2  # fmt: skip
 
         if return_logits:
             return logits, loss

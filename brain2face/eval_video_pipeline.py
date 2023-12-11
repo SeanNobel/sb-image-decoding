@@ -11,7 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior
 from dalle2_video.dalle2_video import DALLE2Video, Unet3D, UnetTemporalConv, VideoDecoder
 
-from brain2face.datasets import UHDPipelineDataset
+from brain2face.datasets.datasets import UHDPipelineDataset
 from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.train_utils import sequential_apply

@@ -12,14 +12,17 @@ from omegaconf import DictConfig, OmegaConf
 
 import clip
 
-from brain2face.datasets import (
+from brain2face.datasets.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
     UHDCLIPDataset,
     StyleGANCLIPDataset,
     CollateFunctionForVideoHDF5,
+    NeuroDiffusionCLIPDatasetBase,
 )
+from brain2face.datasets.things_meg import ThingsMEGCLIPDataset
 from brain2face.models.brain_encoder import BrainEncoder
+from brain2face.models.eeg_net import EEGNetDeep
 from brain2face.models.vision_encoders import (
     ViT,
     ViViT,
@@ -27,7 +30,7 @@ from brain2face.models.vision_encoders import (
     Unet3DEncoder,
     OpenFaceMapper,
 )
-from brain2face.models.classifier import Classifier
+from brain2face.models.classifier import DiagonalClassifier, LabelClassifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.loss import CLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply, count_parameters
@@ -44,7 +47,10 @@ def train():
         wandb.init(config=None)
 
         run_name += "_" + "".join(
-            [k + "-" + str(v) + "_" for k, v in wandb.config.items()]
+            [
+                f"{k}-{v:.2f}_" if isinstance(v, float) else f"{k}-{v}_"
+                for k, v in wandb.config.items()
+            ]
         )
 
         wandb.run.name = run_name
@@ -59,43 +65,39 @@ def train():
     # -----------------------
     #       Dataloader
     # -----------------------
-    if args.split in ["shallow", "mixed_shallow"]:
-        dataset = eval(f"{args.dataset}CLIPDataset")(args)
+    dataset = eval(f"{args.dataset}CLIPDataset")(args)
 
-        train_size = int(len(dataset.X) * args.train_ratio)
-        test_size = len(dataset.X) - train_size
-        train_set, test_set = torch.utils.data.random_split(
-            dataset,
-            lengths=[train_size, test_size],
-            generator=torch.Generator().manual_seed(args.seed),
-        )
+    if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
+        if args.split in ["shallow", "mixed_shallow"]:
+            train_size = int(len(dataset.X) * args.train_ratio)
+            test_size = len(dataset.X) - train_size
+            train_set, test_set = torch.utils.data.random_split(
+                dataset,
+                lengths=[train_size, test_size],
+                generator=torch.Generator().manual_seed(args.seed),
+            )
 
-        Y_ref = dataset.Y_ref
+        # NOTE: If not shallow, split is done inside dataset class
+        else:
+            train_set = dataset
+            test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
 
-        subject_names = dataset.subject_names
+            assert len(dataset.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
 
-    # NOTE: If not shallow, split is done inside dataset class
+        if len(dataset.Y_ref) > 0:
+            collate_fn = CollateFunctionForVideoHDF5(
+                dataset.Y_ref,
+                # NOTE: Resampling in collate function is too costly.
+                # resample_nsamples=args.vision.resample_nsamples,
+                frame_size=args.vision_encoder.image_size,
+            )
+        else:
+            collate_fn = None
+
     else:
-        train_set = eval(f"{args.dataset}CLIPDataset")(args)
-        test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
+        train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+        test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
 
-        test_size = len(test_set.X)
-
-        assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
-        Y_ref = train_set.Y_ref
-
-        subject_names = train_set.subject_names
-
-    cprint(f"Test size: {test_size}", "cyan")
-
-    if len(Y_ref) > 0:
-        collate_fn = CollateFunctionForVideoHDF5(
-            Y_ref,
-            # NOTE: Resampling in collate function is too costly.
-            # resample_nsamples=args.vision.resample_nsamples,
-            frame_size=args.vision_encoder.image_size,
-        )
-    else:
         collate_fn = None
 
     loader_args = {
@@ -109,7 +111,7 @@ def train():
     )
     test_loader = torch.utils.data.DataLoader(
         dataset=test_set,
-        batch_size=test_size if args.test_with_whole else args.batch_size,
+        batch_size=len(test_set) if args.test_with_whole else args.batch_size,
         shuffle=False,
         **loader_args,
     )
@@ -122,31 +124,50 @@ def train():
     # ---------------------
     #        Models
     # ---------------------
-    brain_encoder = BrainEncoder(
-        args,
-        subject_names=subject_names,
-        layout=eval(args.layout),
-        vq=args.vq_brain,
-        num_conv_blocks=args.num_conv_blocks,
-        downsample=args.downsample,
-        temporal_aggregation=args.temporal_aggregation,
-    ).to(device)
+    if args.brain_encoder == "brain_encoder":
+        brain_encoder = BrainEncoder(
+            args,
+            subject_names=dataset.subject_names,
+            layout=eval(args.layout),
+            vq=args.vq_brain,
+            num_conv_blocks=args.num_conv_blocks,
+            downsample=args.downsample,
+            temporal_aggregation=args.temporal_aggregation,
+        ).to(device)
+
+    elif args.brain_encoder == "eegnet":
+        brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
 
     if args.vision.pretrained:
-        vision_encoder, preprocess = clip.load(
-            args.vision.pretrained_model, device=device
-        )
+        if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
+            vision_encoder, preprocess = clip.load(args.vision.pretrained_model)
+            vision_encoder = vision_encoder.eval().to(device)
+        else:
+            vision_encoder = None
+            preprocess = None
     else:
         vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
-
-    classifier = Classifier(args)
+        preprocess = None
 
     trained_models = Models(
         brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
     )
-    
+
     if sweep:
         wandb.config.update({"brain_encoder_params": count_parameters(brain_encoder)})
+
+    # ---------------------
+    #      Classifier
+    # ---------------------
+    train_classifier = DiagonalClassifier(args.acc_topk)
+
+    if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
+        test_classifier = DiagonalClassifier(args.acc_topk)
+
+    elif isinstance(dataset, ThingsMEGCLIPDataset):
+        test_classifier = LabelClassifier(dataset, args.acc_topk, device)
+    else:
+        raise NotImplementedError
 
     # ---------------------
     #      Optimizers
@@ -163,25 +184,26 @@ def train():
             optimizer, milestones=mlstns, gamma=args.lr_step_gamma
         )
     else:
-        raise ValueError()
+        cprint("Using no scheduler.", "yellow")
+        scheduler = None
 
     # -----------------------
     #     Strat training
     # -----------------------
-    min_test_loss = float("inf")
+    max_test_acc = 0.0
+    no_best_counter = 0
 
     for epoch in range(args.epochs):
         train_clip_losses = []
         train_vq_losses = []
         test_clip_losses = []
         test_vq_losses = []
-        train_top10_accs = []
-        train_top1_accs = []
-        test_top10_accs = []
-        test_top1_accs = []
+        train_topk_accs = []
+        test_topk_accs = []
         train_perplexities = []
         test_perplexities = []
-        
+
+        # For plotting latents
         train_Y_list = []
         train_Z_list = []
         train_classes_list = []
@@ -191,38 +213,54 @@ def train():
             optimizer.zero_grad()
 
         for batch in tqdm(train_loader, desc="Train"):
-            if len(batch) == 4:
-                X, Y, subject_idxs, classes = batch
+            if len(batch) == 5:
+                X, Y, subject_idxs, classes, y_idxs = batch
+            elif len(batch) == 4:
+                X, Y, subject_idxs, classes, y_idxs = *batch, None
             else:
-                X, Y, subject_idxs, classes = *batch, None
-                
-            if args.vision.pretrained:
+                X, Y, subject_idxs, classes, y_idxs = *batch, None, None
+
+            if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
-            if args.vision.pretrained:
-                Y = vision_encoder.encode_image(Y).float()
+            if vision_encoder is None:
+                pass
+            elif isinstance(vision_encoder, clip.model.CLIP):
+                with torch.no_grad():
+                    Y = vision_encoder.encode_image(Y).float()
             else:
                 Y = vision_encoder(Y)
-                
+
             if args.vq_brain:
+                assert isinstance(brain_encoder, BrainEncoder), "Please set vq_brain=False when it's not BrainEncoder."  # fmt: skip
+
                 Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
                 clip_loss = loss_func(Y, Z)
-                
+
                 loss = clip_loss + vq_loss
             else:
-                Z = brain_encoder(X, subject_idxs)
+                if isinstance(brain_encoder, BrainEncoder):
+                    Z = brain_encoder(X, subject_idxs)
+                elif isinstance(brain_encoder, EEGNetDeep):
+                    Z = brain_encoder(X)
+                else:
+                    raise NotImplementedError
+
                 vq_loss, perplexity = None, None
-                
                 loss = clip_loss = loss_func(Y, Z)
 
             with torch.no_grad():
-                train_top1_acc, train_top10_acc, _ = classifier(Z, Y)
+                if isinstance(train_classifier, DiagonalClassifier):
+                    topk_accs, _ = train_classifier(Z, Y)
+                elif isinstance(train_classifier, LabelClassifier):
+                    topk_accs = train_classifier(Z, y_idxs.to(device))
+                else:
+                    raise NotImplementedError
 
             train_clip_losses.append(clip_loss.item())
-            train_top10_accs.append(train_top10_acc)
-            train_top1_accs.append(train_top1_acc)
+            train_topk_accs.append(topk_accs)
             if args.vq_brain:
                 train_vq_losses.append(vq_loss.item())
                 train_perplexities.append(perplexity.item())
@@ -233,33 +271,37 @@ def train():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                
-            if classes is not None:
+
+            if classes is not None and args.plot_latents:
                 train_Y_list.append(Y.detach().cpu().numpy())
                 train_Z_list.append(Z.detach().cpu().numpy())
                 train_classes_list.append(classes.numpy())
 
         if args.accum_grad:
             optimizer.step()
-            
-        loss_func.temp.data.clamp_(min=args.clip_temp.min, max=args.clip_temp.max)
+
+        loss_func.temp.data.clamp_(min=args.clip_temp_min, max=args.clip_temp_max)
 
         _ = trained_models.params_updated()
 
         trained_models.eval()
         for batch in tqdm(test_loader, desc="Test"):
-            if len(batch) == 4:
-                X, Y, subject_idxs, classes = batch
+            if len(batch) == 5:
+                X, Y, subject_idxs, classes, y_idxs = batch
+            elif len(batch) == 4:
+                X, Y, subject_idxs, classes, y_idxs = *batch, None
             else:
-                X, Y, subject_idxs, classes = *batch, None
-                
-            if args.vision.pretrained:
+                X, Y, subject_idxs, classes, y_idxs = *batch, None, None
+
+            if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
-                if args.vision.pretrained:
+                if vision_encoder is None:
+                    pass
+                elif isinstance(vision_encoder, clip.model.CLIP):
                     Y = sequential_apply(
                         Y,
                         vision_encoder.encode_image,
@@ -270,13 +312,15 @@ def train():
                     Y = sequential_apply(
                         Y, vision_encoder, args.batch_size, desc="VisionEncoder"
                     )
-                    
+
                 if args.vq_brain:
-                    assert not args.test_with_whole, "vq doesn't support test_with_whole for now"
-                    
+                    assert (not args.test_with_whole), "vq doesn't support test_with_whole for now"  # fmt: skip
+
                     Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
-                    
                 else:
+                    if not isinstance(brain_encoder, BrainEncoder):
+                        subject_idxs = None
+
                     # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
                     Z = sequential_apply(
                         X,
@@ -288,16 +332,25 @@ def train():
 
                 clip_loss = loss_func(Y, Z)
 
-                test_top1_acc, test_top10_acc, _ = classifier(
-                    Z, Y, sequential=args.test_with_whole
-                )
+                if isinstance(test_classifier, DiagonalClassifier):
+                    topk_accs, _ = test_classifier(
+                        Z, Y, sequential=args.test_with_whole
+                    )
+                elif isinstance(test_classifier, LabelClassifier):
+                    topk_accs = test_classifier(
+                        Z, y_idxs.to(device), sequential=args.test_with_whole
+                    )
+                else:
+                    raise NotImplementedError
 
             test_clip_losses.append(clip_loss.item())
-            test_top10_accs.append(test_top10_acc)
-            test_top1_accs.append(test_top1_acc)
+            test_topk_accs.append(topk_accs)
             if args.vq_brain:
                 test_vq_losses.append(vq_loss.item())
                 test_perplexities.append(perplexity.item())
+
+        train_topk_accs = np.stack(train_topk_accs)
+        test_topk_accs = np.stack(test_topk_accs)
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
@@ -311,13 +364,23 @@ def train():
                 "epoch": epoch,
                 "train_clip_loss": np.mean(train_clip_losses),
                 "test_clip_loss": np.mean(test_clip_losses),
-                "train_top10_acc": np.mean(train_top10_accs),
-                "train_top1_acc": np.mean(train_top1_accs),
-                "test_top10_acc": np.mean(test_top10_accs),
-                "test_top1_acc": np.mean(test_top1_accs),
                 "lrate": optimizer.param_groups[0]["lr"],
                 "temp": loss_func.temp.item(),
             }
+
+            performance_now.update(
+                {
+                    f"train_top{k}_acc": np.mean(train_topk_accs[:, i])
+                    for i, k in enumerate(args.acc_topk)
+                }
+            )
+            performance_now.update(
+                {
+                    f"test_top{k}_acc": np.mean(test_topk_accs[:, i])
+                    for i, k in enumerate(args.acc_topk)
+                }
+            )
+
             if args.vq_brain:
                 performance_now.update(
                     {
@@ -327,19 +390,25 @@ def train():
                         "test_perplexity": np.mean(test_perplexities),
                     }
                 )
+
             wandb.log(performance_now)
 
-        scheduler.step()
+        if scheduler is not None:
+            scheduler.step()
 
         trained_models.save(run_dir)
 
-        if np.mean(test_clip_losses) < min_test_loss:
+        # NOTE: This is mean over multiple ks.
+        if np.mean(test_topk_accs) > max_test_acc:
             cprint(f"New best. Saving models to {run_dir}", color="cyan")
             trained_models.save(run_dir, best=True)
 
-            min_test_loss = np.mean(test_clip_losses)
-            
-        if classes is not None:
+            max_test_acc = np.mean(test_topk_accs)
+            no_best_counter = 0
+        else:
+            no_best_counter += 1
+
+        if len(train_classes_list) > 0:
             if epoch == 0:
                 plot_latents_2d(
                     np.concatenate(train_Y_list),
@@ -354,6 +423,10 @@ def train():
                     epoch=epoch,
                     save_dir=os.path.join(run_dir, "plots/ecog_latents"),
                 )
+
+        if no_best_counter > args.patience:
+            cprint(f"Early stopping at epoch {epoch}", color="cyan")
+            break
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
