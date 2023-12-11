@@ -47,7 +47,10 @@ def train():
         wandb.init(config=None)
 
         run_name += "_" + "".join(
-            [k + "-" + str(v) + "_" for k, v in wandb.config.items()]
+            [
+                f"{k}-{v:.2f}_" if isinstance(v, float) else f"{k}-{v}_"
+                for k, v in wandb.config.items()
+            ]
         )
 
         wandb.run.name = run_name
@@ -136,10 +139,15 @@ def train():
         brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
 
     if args.vision.pretrained:
-        vision_encoder = dataset.clip_model
-        preprocess = dataset.preprocess
+        if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
+            vision_encoder, preprocess = clip.load(args.vision.pretrained_model)
+            vision_encoder = vision_encoder.eval().to(device)
+        else:
+            vision_encoder = None
+            preprocess = None
     else:
         vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
+        preprocess = None
 
     trained_models = Models(
         brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
@@ -151,16 +159,12 @@ def train():
     # ---------------------
     #      Classifier
     # ---------------------
+    train_classifier = DiagonalClassifier(args.acc_topk)
+
     if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
-        train_classifier = test_classifier = DiagonalClassifier(args.acc_topk)
+        test_classifier = DiagonalClassifier(args.acc_topk)
 
     elif isinstance(dataset, ThingsMEGCLIPDataset):
-        # if args.large_test_set:
-        #     classifier = DiagonalClassifier(args.acc_topk)
-        # else:
-        #     assert not args.test_with_whole, "No need to test with whole for ThingsMEG small test set."  # fmt: skip
-
-        train_classifier = DiagonalClassifier(args.acc_topk)
         test_classifier = LabelClassifier(dataset, args.acc_topk, device)
     else:
         raise NotImplementedError
@@ -180,12 +184,14 @@ def train():
             optimizer, milestones=mlstns, gamma=args.lr_step_gamma
         )
     else:
-        raise ValueError()
+        cprint("Using no scheduler.", "yellow")
+        scheduler = None
 
     # -----------------------
     #     Strat training
     # -----------------------
-    min_test_loss = float("inf")
+    max_test_acc = 0.0
+    no_best_counter = 0
 
     for epoch in range(args.epochs):
         train_clip_losses = []
@@ -214,14 +220,14 @@ def train():
             else:
                 X, Y, subject_idxs, classes, y_idxs = *batch, None, None
 
-            if args.vision.pretrained and isinstance(
-                dataset, NeuroDiffusionCLIPDatasetBase
-            ):
+            if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
-            if args.vision.pretrained:
+            if vision_encoder is None:
+                pass
+            elif isinstance(vision_encoder, clip.model.CLIP):
                 with torch.no_grad():
                     Y = vision_encoder.encode_image(Y).float()
             else:
@@ -243,7 +249,6 @@ def train():
                     raise NotImplementedError
 
                 vq_loss, perplexity = None, None
-
                 loss = clip_loss = loss_func(Y, Z)
 
             with torch.no_grad():
@@ -288,13 +293,15 @@ def train():
             else:
                 X, Y, subject_idxs, classes, y_idxs = *batch, None, None
 
-            if args.vision.pretrained and isinstance(dataset, NeuroDiffusionCLIPDatasetBase):  # fmt: skip
+            if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
             with torch.no_grad():
-                if args.vision.pretrained:
+                if vision_encoder is None:
+                    pass
+                elif isinstance(vision_encoder, clip.model.CLIP):
                     Y = sequential_apply(
                         Y,
                         vision_encoder.encode_image,
@@ -386,15 +393,20 @@ def train():
 
             wandb.log(performance_now)
 
-        scheduler.step()
+        if scheduler is not None:
+            scheduler.step()
 
         trained_models.save(run_dir)
 
-        if np.mean(test_clip_losses) < min_test_loss:
+        # NOTE: This is mean over multiple ks.
+        if np.mean(test_topk_accs) > max_test_acc:
             cprint(f"New best. Saving models to {run_dir}", color="cyan")
             trained_models.save(run_dir, best=True)
 
-            min_test_loss = np.mean(test_clip_losses)
+            max_test_acc = np.mean(test_topk_accs)
+            no_best_counter = 0
+        else:
+            no_best_counter += 1
 
         if len(train_classes_list) > 0:
             if epoch == 0:
@@ -411,6 +423,10 @@ def train():
                     epoch=epoch,
                     save_dir=os.path.join(run_dir, "plots/ecog_latents"),
                 )
+
+        if no_best_counter > args.patience:
+            cprint(f"Early stopping at epoch {epoch}", color="cyan")
+            break
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
