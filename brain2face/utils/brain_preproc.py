@@ -9,19 +9,28 @@ from typing import Optional, Tuple, Union, List
 from brain2face.utils.preproc_utils import crop_and_segment
 
 
-def scale_clamp(X: np.ndarray, clamp_lim, clamp=True) -> np.ndarray:
+def scale_clamp(
+    X: np.ndarray,
+    clamp_lim: float = 5.0,
+    clamp: bool = True,
+    scale_transposed: bool = True,
+) -> np.ndarray:
     """
     Args:
         X: ( channels, timesteps )
     Returns:
         X: ( channels, timesteps )
     """
-    X = RobustScaler().fit_transform(X.T)  # NOTE: must be samples x features
+    X = RobustScaler().fit_transform(X.T if scale_transposed else X)
+    # NOTE: must be samples x features
+
+    if scale_transposed:
+        X = X.T
 
     if clamp:
         X = X.clip(min=-clamp_lim, max=clamp_lim)
 
-    return X.T
+    return X
 
 
 def baseline_correction(
@@ -37,16 +46,16 @@ def baseline_correction(
         X ( segments, channels, segment_len )
     """
     assert baseline_len_samp is not None or baseline is not None, "Must provide either baseline_len_samp or baseline."  # fmt: skip
-    
+
     if baseline is None:
         # NOTE: this could be zero with very short seq_len.
         baseline_len_samp = max(baseline_len_samp, 1)
-            
+
         baseline = X[:, :, :baseline_len_samp].mean(axis=-1, keepdims=True)
         # ( segments, channels )
     else:
         baseline = baseline.mean(axis=-1, keepdims=True)
-    
+
     return X - baseline
 
 
@@ -127,7 +136,7 @@ def brain_preproc(
         l_freq=args.brain_filter_low,
         h_freq=args.brain_filter_high,
     )
-    
+
     """ Notch Filtering """
     if notch is not None:
         brain = mne.filter.notch_filter(
@@ -150,7 +159,9 @@ def brain_preproc(
         return brain
 
     """ Segmenting & Baseline Correction """
-    brain = segment_then_blcorr(args, brain, segment_len, brain_times, face_times, shift)
+    brain = segment_then_blcorr(
+        args, brain, segment_len, brain_times, face_times, shift
+    )
 
     return brain  # NOTE: This could be tuple.
 
@@ -186,7 +197,7 @@ def segment_then_blcorr(
         brain = crop_and_segment(brain, segment_len)
         # ( segments, segment_len, channels )
         brain = brain.transpose(0, 2, 1)  # ( segments, channels, segment_len )
-        
+
     """ Baseline Correction """
     brain = baseline_correction(
         brain, int(args.seq_len * args.baseline_ratio * args.brain_resample_sfreq)
