@@ -10,8 +10,6 @@ from termcolor import cprint
 from typing import List
 import gc
 
-from brain2face.utils.train_utils import sequential_apply
-
 
 def calc_similarity(Z: torch.Tensor, Y: torch.Tensor, sequential: bool) -> torch.Tensor:
     batch_size, _size = len(Z), len(Y)
@@ -113,31 +111,17 @@ class LabelClassifier(nn.Module):
 
         test_y_idxs = dataset.y_idxs[dataset.test_idxs].numpy()
         # ( 9600, )
+        # NOTE: torch.unique has no return_index option
         test_y_idxs, arg_unique = np.unique(test_y_idxs, return_index=True)
         # ( 2400, )
-        self.test_y_idxs = torch.from_numpy(test_y_idxs).to(device)
+        self.test_y_idxs = torch.from_numpy(test_y_idxs)
 
-        test_y_list = np.take(dataset.y_list, dataset.test_idxs).take(arg_unique)
-        # ( 2400, )
-        Y = torch.stack(
-            [
-                dataset.preprocess(Image.open(y).convert("RGB"))
-                for y in tqdm(test_y_list, desc="Preprocessing test images for classification.")  # fmt: skip
-            ]
-        ).to(device)
+        self.Y = torch.index_select(dataset.Y, 0, dataset.test_idxs)
+        self.Y = torch.index_select(self.Y, 0, torch.from_numpy(arg_unique))
+        # ( 2400, F )
 
-        self.Y = sequential_apply(
-            Y,
-            dataset.clip_model.encode_image,
-            batch_size=32,
-            device=device,
-            desc="Encoding test images for classification.",
-        ).float()
-
-        # self.Y = Y / Y.norm(dim=-1, keepdim=True)  # ( 2400, F=768 )
-
-        del Y
-        gc.collect()
+        self.Y = self.Y.to(device)
+        self.test_y_idxs = self.test_y_idxs.to(device)
 
     @torch.no_grad()
     def forward(
@@ -152,22 +136,11 @@ class LabelClassifier(nn.Module):
         Returns:
             torch.Tensor: _description_
         """
-        # Z = Z.contiguous().view(batch_size, -1)
-        # Z = Z / Z.norm(dim=-1, keepdim=True)
-
         similarity = calc_similarity(Z, self.Y, sequential)  # ( 2400, b )
-        # print(similarity.shape)
-
-        # cprint(y_idxs, "cyan")
-        # cprint(self.test_y_idxs, "yellow")
 
         labels = y_idxs == self.test_y_idxs.unsqueeze(1)  # ( 2400, b )
-        # cprint(labels.sum(dim=0), "yellow")
-        # print(labels.shape)
         assert torch.all(labels.sum(dim=0) == 1)
         labels = labels.to(int).argmax(dim=0)  # ( b, )
-        # print(labels)
-        # print(labels.shape)
 
         topk_accs = np.array([top_k_accuracy(k, similarity, labels) for k in self.topk])
 
