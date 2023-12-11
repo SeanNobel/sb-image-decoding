@@ -4,3 +4,6 @@
 [submodule "dalle2_video"]
 	path = dalle2-video
 	url = https://github.com/SeanNobel/DALLE2-video.git
+[submodule "brainmagick"]
+	path = brainmagick
+	url = https://github.com/facebookresearch/brainmagick.git
