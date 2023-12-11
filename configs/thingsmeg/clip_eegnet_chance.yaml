@@ -9,16 +9,11 @@ images_dir: ${things_dir}Images/
 metadata_dir: ${things_dir}Metadata/
 preprocessed_data_dir: data/preprocessed/thingsmeg/
 
-# segment_in_preproc: True
-
-# max_seq_len: 0.5 # This value CANNOT be changed from 0.5.
-
 # brain_filter_low: 0.1 # Hz
 # brain_filter_high: 250 # Hz
 brain_resample_sfreq: 120 # Hz
 # clamp_lim: 4.0 # Standard deviation
 # baseline_ratio: -0.1 # Ratio compared to max_seq_len. Negative value means to take signals before stimulus onset.
-
 
 # ==== Training ==== #
 project_name: nd_things_clip

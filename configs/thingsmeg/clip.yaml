@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: init
+preproc_name: 1_paper
 
 thingsmeg_dir: /mnt/tsukuyomi/things-meg/
 meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
@@ -9,36 +9,16 @@ images_dir: ${things_dir}Images/
 metadata_dir: ${things_dir}Metadata/
 preprocessed_data_dir: data/preprocessed/thingsmeg/
 
-# segment_in_preproc: True
-
-# max_seq_len: 0.5 # This value CANNOT be changed from 0.5.
+skip_meg: False
+skip_images: True
 
 # brain_filter_low: 0.1 # Hz
 # brain_filter_high: 250 # Hz
 brain_resample_sfreq: 120 # Hz
-# clamp_lim: 4.0 # Standard deviation
-# baseline_ratio: -0.1 # Ratio compared to max_seq_len. Negative value means to take signals before stimulus onset.
+clamp_lim: 5.0 # Standard deviation
 
-
-# ==== Training ==== #
-project_name: nd_things_clip
-train_name: small_test
-# debug: False
-
-# seq_onset: 0.0
-seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
-
-dataset: ThingsMEG
-# image_size: 256
-
-montage_path: brain2face/utils/montages/things_meg.npy
-layout: ch_locations_2d # DynamicChanLoc2d
-
-spatial_attention: True
-
+# ==== Architecture ==== #
 F: 768 # CLIP embedding dimension
-
-reduce_time: True
 
 vision:
   pretrained: True
@@ -58,11 +38,13 @@ vision_encoder:
 
 brain_encoder: brain_encoder
 
+num_channels: 271
 D1: 270
 D2: 320
 K: 32
+spatial_attention: True
 d_drop: 0.3 # Dropout rate for spatial-attention
-p_drop: 0.1 # Dropout rate for conv blocks
+p_drop: 0.3 # Dropout rate for conv blocks
 num_conv_blocks: 2
 downsample: False # Can be a list of bools with length num_conv_blocks
 final_ksize: 1
@@ -84,60 +66,85 @@ vq:
   alpha: 1.0 # How much to weight regularization terms against CLIP loss.
   beta: 0.25 # How much to weight encoder regularization term against codebook loss.
 
-large_test_set: False
+reduce_time: True
+
+# ==== Training ==== #
+project_name: nd_things_clip
+train_name: large_test
+# debug: False
+
+# seq_onset: 0.0
+seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
+
+dataset: ThingsMEG
+# image_size: 256
+
+montage_path: brain2face/utils/montages/things_meg.npy
+layout: ch_locations_2d # DynamicChanLoc2d
+
+large_test_set: True
 
 batch_size: 128
-lr: 0.005
-lr_scheduler: cosine # cosine or multistep
+lr: 3.0e-4 # 0.005
+lr_scheduler:  # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
 lr_step_gamma: 0.5
-epochs: 300 # 500
+epochs: 500
 reduction: mean
-clip_temp:
-  init: 5.0
-  learn: True
-  min: 0.1
-  max: 10.0
+clip_temp_init: 5.0
+clip_temp_learn: True
+clip_temp_min: 0.1
+clip_temp_max: 10.0
 
 acc_topk: [1, 5]
 
 accum_grad: False
 
+patience: 20
+
 chance: False
 
-test_with_whole: False
+test_with_whole: True
 
-num_workers: 8
+plot_latents: False
 
+num_workers: 16
 seed: 1234
+cuda_id: 0
 
-cuda_id: 2
-
-sweep_count: 3
+sweep_count: 1
 sweep_config:
   method: grid
   metric:
-    name: test_top10_acc
+    name: test_top5_acc
     goal: maximize
   parameters:
+    spatial_attention:
+      values: [True]
+
     # temporal_aggregation:
-    #   values: [original]
-    # downsample:
-    #   values: [False]
-    # split:
-    #   values: [mixed_shallow, mixed_deep]
-    # ksizes.conv_block:
-    #   values: [3, 5, 7]
+    #   values: [original, affine]
+    # num_conv_blocks:
+    #   values: [2, 5]
     # d_drop:
-    #   values: [0.4]
+    #   values: [0.1, 0.3, 0.5, 0.7]
+    #   # distribution: uniform
+    #   # min: 0.1
+    #   # max: 0.7
+    # p_drop:
+    #   values: [0.1, 0.3, 0.5, 0.7]
+    #   # distribution: uniform
+    #   # min: 0.1
+    #   # max: 0.7
+
     # seq_onset:
     #   values: [0.0, 0.5, 1.0, 1.5]
     # seq_len:
     #   values: [0.5, 0.3, 0.1]
     # layout:
     #   values: [DynamicChanLoc2d, ch_locations_2d]
-    p_drop:
-      values: [0.1, 0.2, 0.3]
+    # ksizes.conv_block:
+    #   values: [3, 5, 7]
     # vq_brain:
     #   values: [False, True]
     # vq.type:
