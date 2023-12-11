@@ -1,8 +1,10 @@
 import sys
+import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchaudio as ta
 from einops.layers.torch import Rearrange
 from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
@@ -13,61 +15,75 @@ from brain2face.utils.train_utils import conv_output_size
 
 
 class SpatialAttention(nn.Module):
-    """Same as SpatialAttentionVer2, but a little more concise"""
-
-    def __init__(self, args, loc: np.ndarray):
+    def __init__(self, args, loc: torch.Tensor, flat: bool = True):
         super().__init__()
 
-        # vectorize of k's and l's
-        a = []
-        for k in range(args.K):
-            for l in range(args.K):
-                a.append((k, l))
-        a = torch.tensor(a)
-        k, l = a[:, 0], a[:, 1]
+        self.D1 = args.D1
+        self.K = args.K
+        self.flat = flat
+        x, y = loc.T
 
-        # vectorize x- and y-positions of the sensors
-        x, y = loc[:, 0], loc[:, 1]
+        # TODO: Check if those two are identical.
 
-        # make a complex-valued parameter, reshape k,l into one dimension
-        self.z = nn.Parameter(
-            torch.rand(size=(args.D1, args.K**2), dtype=torch.cfloat)
-        )
+        if flat:  # Implementation version 1
+            self.z_re = nn.Parameter(torch.Tensor(self.D1, self.K, self.K))
+            self.z_im = nn.Parameter(torch.Tensor(self.D1, self.K, self.K))
+            nn.init.kaiming_uniform_(self.z_re, a=np.sqrt(5))
+            nn.init.kaiming_uniform_(self.z_im, a=np.sqrt(5))
 
-        # NOTE: pre-compute the values of cos and sin (they depend on k, l, x and y which repeat)
-        phi = (
-            2
-            * torch.pi
-            * (torch.einsum("k,x->kx", k, x) + torch.einsum("l,y->ly", l, y))
-        )  # torch.Size([1024, 60]))
-        self.register_buffer("cos", torch.cos(phi))
-        self.register_buffer("sin", torch.sin(phi))
+            k_arange = torch.arange(self.K)
+            rad1 = torch.einsum("k,c->kc", k_arange, x)
+            rad2 = torch.einsum("l,c->lc", k_arange, y)
+            rad = rad1.unsqueeze(1) + rad2.unsqueeze(0)
+            self.register_buffer("cos", torch.cos(2 * torch.pi * rad))
+            self.register_buffer("sin", torch.sin(2 * torch.pi * rad))
 
-        # self.spatial_dropout = SpatialDropoutX(args)
+        else:  # Implementation version 2
+            # make a complex-valued parameter, reshape k,l into one dimension
+            self.z = nn.Parameter(
+                torch.rand(size=(self.D1, self.K**2), dtype=torch.cfloat)
+            )
+
+            # vectorize of k's and l's
+            a = []
+            for k in range(self.K):
+                for l in range(self.K):
+                    a.append((k, l))
+            a = torch.tensor(a)
+            k, l = a[:, 0], a[:, 1]
+            # NOTE: pre-compute the values of cos and sin (they depend on k, l, x and y which repeat)
+            phi = 2 * torch.pi * (torch.einsum("k,x->kx", k, x) + torch.einsum("l,y->ly", l, y))  # fmt: skip
+            self.register_buffer("cos", torch.cos(phi))
+            self.register_buffer("sin", torch.sin(phi))
+
         self.spatial_dropout = SpatialDropout(loc, args.d_drop)
 
     def forward(self, X):
-        """X: (batch_size, num_channels, T)"""
+        """_summary_
 
-        # NOTE: do hadamard product and and sum over l and m (i.e. m, which is l X m)
-        re = torch.einsum(
-            "jm, me -> je", self.z.real, self.cos
-        )  # torch.Size([270, 60])
-        im = torch.einsum("jm, me -> je", self.z.imag, self.sin)
-        a = re + im
-        # essentially (unnormalized) weights with which to mix input channels into ouput channels
-        # ( D1, num_channels )
+        Args:
+            X ( b, c, t ): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        # NOTE: drop some channels within a d_drop of the sampled channel
+        X = self.spatial_dropout(X)  # ( b, c, t )
+
+        if self.flat:
+            real = torch.einsum("dkl,klc->dc", self.z_re, self.cos)
+            imag = torch.einsum("dkl,klc->dc", self.z_im, self.sin)
+            # ( D1, c )
+        else:
+            real = torch.einsum("jm, me -> je", self.z.real, self.cos)
+            imag = torch.einsum("jm, me -> je", self.z.imag, self.sin)
 
         # NOTE: to get the softmax spatial attention weights over input electrodes,
         # we don't compute exp, etc (as in the eq. 5), we take softmax instead:
-        SA_wts = F.softmax(a, dim=-1)  # each row sums to 1
-        # ( D1, num_channels )
-
-        # NOTE: drop some channels within a d_drop of the sampled channel
-        dropped_X = self.spatial_dropout(X)
+        a = F.softmax(real + imag, dim=-1)  # ( D1, c )
 
         # NOTE: each output is a diff weighted sum over each input channel
-        return torch.einsum("oi,bit->bot", SA_wts, dropped_X)
+        return torch.einsum("oi,bit->bot", a, X)
 
 
 class SpatialDropout(nn.Module):
@@ -134,9 +150,19 @@ class SubjectBlock(nn.Module):
         self.num_subjects = num_subjects
         self.D1 = args.D1
         self.K = args.K
-        self.spatial_attention = SpatialAttention(args, loc)
+
+        if args.spatial_attention:
+            cprint("Using spatial attention version 2.", "yellow")
+            self.spatial_attention = SpatialAttention2(args, loc)
+        else:
+            cprint("Not using spatial attention.", "yellow")
+            self.spatial_attention = None
+
         self.conv = nn.Conv1d(
-            in_channels=self.D1, out_channels=self.D1, kernel_size=1, stride=1
+            in_channels=self.D1 if args.spatial_attention else args.num_channels,
+            out_channels=self.D1,
+            kernel_size=1,
+            stride=1,
         )
         self.subject_layer = nn.ModuleList(
             [
@@ -154,7 +180,9 @@ class SubjectBlock(nn.Module):
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
     ) -> torch.Tensor:
-        X = self.spatial_attention(X)  # ( B, 270, 256 )
+        if self.spatial_attention is not None:
+            X = self.spatial_attention(X)  # ( B, 270, 256 )
+
         X = self.conv(X)  # ( B, 270, 256 )
 
         if subject_idxs is not None:
