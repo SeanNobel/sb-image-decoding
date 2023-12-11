@@ -152,8 +152,7 @@ class SubjectBlock(nn.Module):
         self.K = args.K
 
         if args.spatial_attention:
-            cprint("Using spatial attention version 2.", "yellow")
-            self.spatial_attention = SpatialAttention2(args, loc)
+            self.spatial_attention = SpatialAttention(args, loc)
         else:
             cprint("Not using spatial attention.", "yellow")
             self.spatial_attention = None
