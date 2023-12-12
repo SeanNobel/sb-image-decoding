@@ -12,6 +12,8 @@ from omegaconf import DictConfig, OmegaConf
 
 import clip
 
+from brainmagick.bm.models.simpleconv import SimpleConv
+
 from brain2face.datasets.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
@@ -137,6 +139,17 @@ def train():
 
     elif args.brain_encoder == "eegnet":
         brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
+
+    elif args.brain_encoder == "brainmagick":
+        brain_encoder = SimpleConv(
+            in_channels={"meg": args.num_channels},
+            out_channels=args.F,
+            n_subjects=len(dataset.subject_names),
+            **args.simpleconv,
+        )
+
+    else:
+        raise NotImplementedError
 
     if args.vision.pretrained:
         if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):

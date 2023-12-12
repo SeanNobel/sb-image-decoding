@@ -582,9 +582,7 @@ class BrainEncoder(nn.Module):
         if isinstance(downsample, bool):
             downsample = [downsample] * num_conv_blocks
         else:
-            assert (
-                len(downsample) == num_conv_blocks
-            ), "downsample and num_conv_blocks should have the same length."
+            assert len(downsample) == num_conv_blocks, "downsample and num_conv_blocks should have the same length."  # fmt: skip
 
         self.vq = vq
         self.unknown_subject = unknown_subject
@@ -635,29 +633,27 @@ class BrainEncoder(nn.Module):
             downsample=sum(downsample),
         )
 
-        if vq and args.vq.type == "aggregated":
-            assert (
-                args.temporal_aggregation == "original"
-            ), "Aggregated VQ only supports original temporal aggregation for now."
+        if vq and args.vq_type == "aggregated":
+            assert args.temporal_aggregation == "original", "Aggregated VQ only supports original temporal aggregation for now."  # fmt: skip
 
             self.vector_quantizer = AggregatedVectorQuantizer(
                 args,
-                num_concepts=args.vq.num_concepts,
-                num_embeds=args.vq.num_embeds,
+                num_concepts=args.vq_num_concepts,
+                num_embeds=args.vq_num_embeds,
                 embed_dim=args.F,
                 temporal_dim=temporal_dim,
-                alpha=args.vq.alpha,
-                beta=args.vq.beta,
+                alpha=args.vq_alpha,
+                beta=args.vq_beta,
             )
 
             self.temporal_aggregation = None
         else:
             if vq:
                 self.vector_quantizer = VectorQuantizer(
-                    num_embeds=args.vq.num_embeds,
+                    num_embeds=args.vq_num_embeds,
                     embed_dim=args.F,
-                    alpha=args.vq.alpha,
-                    beta=args.vq.beta,
+                    alpha=args.vq_alpha,
+                    beta=args.vq_beta,
                 )
 
             if temporal_aggregation is not None:

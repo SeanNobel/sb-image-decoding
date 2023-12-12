@@ -36,34 +36,54 @@ vision_encoder:
   dropout: 0.1
   emb_dropout: 0.1
 
-brain_encoder: brain_encoder
+brain_encoder: brainmagick
 
 num_channels: 271
-D1: 270
-D2: 320
-K: 32
-spatial_attention: True
-d_drop: 0.3 # Dropout rate for spatial-attention
-p_drop: 0.3 # Dropout rate for conv blocks
-num_conv_blocks: 2
-downsample: False # Can be a list of bools with length num_conv_blocks
-final_ksize: 1
-final_stride: 1
-temporal_aggregation: affine # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
-head_activation: True
-ksizes:
-  conv_block: 3
-biases:
-  conv_block: True
-  conv_subj_sa: True
-  linear_reduc_time: True
 
-vq_brain: True
-vq_type: raw # raw or (temporally) aggregated 
-vq_num_embeds: 256
-vq_num_concepts: 8 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
-vq_alpha: 1.0 # How much to weight regularization terms against CLIP loss.
-vq_beta: 0.25 # How much to weight encoder regularization term against codebook loss.
+simpleconv:
+  hidden:
+    meg: 320
+  batch_norm: true
+  depth: 10
+  dilation_period: 5
+  kernel_size: 3
+  skip: true
+  subject_layers: true
+  subject_dim: 0
+  complex_out: true
+  glu: 2
+  glu_context: 1
+  merger: true
+  initial_linear: 270
+  gelu: true
+  merger_pos_dim: 2048
+
+# D1: 270
+# D2: 320
+# K: 32
+# spatial_attention: True
+# d_drop: 0.3 # Dropout rate for spatial-attention
+# p_drop: 0.3 # Dropout rate for conv blocks
+# num_conv_blocks: 2
+# downsample: False # Can be a list of bools with length num_conv_blocks
+# final_ksize: 1
+# final_stride: 1
+# temporal_aggregation: affine # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
+# head_activation: True
+# ksizes:
+#   conv_block: 3
+# biases:
+#   conv_block: True
+#   conv_subj_sa: True
+#   linear_reduc_time: True
+
+# vq_brain: False
+# vq:
+#   type: raw # raw or (temporally) aggregated 
+#   num_embeds: 256
+#   num_concepts: 8 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
+#   alpha: 1.0 # How much to weight regularization terms against CLIP loss.
+#   beta: 0.25 # How much to weight encoder regularization term against codebook loss.
 
 reduce_time: True
 
@@ -111,15 +131,15 @@ num_workers: 16
 seed: 1234
 cuda_id: 0
 
-sweep_count: 12
+sweep_count: 1
 sweep_config:
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    # spatial_attention:
-    #   values: [True]
+    spatial_attention:
+      values: [True]
 
     # temporal_aggregation:
     #   values: [original, affine]
@@ -148,14 +168,12 @@ sweep_config:
     #   values: [False, True]
     # vq.type:
     #   values: [aggregated]
-    vq.num_embeds:
-      values: [64, 256]
-    # vq_num_concepts:
-    #   values: [8, 32, 128]
-    vq_alpha:
-      values: [0.001, 0.01, 0.1]
-    vq_beta:
-      values: [0.25, 1.0]
+    # vq.num_embeds:
+    #   values: [64, 256, 16]
+    # vq.alpha:
+    #   values: [0.001, 0.01, 0.1]
+    # vq.beta:
+    #   values: [0.25, 1.0]
     # learn_temperature:
     #   values: [False]
     # biases.conv_block:
