@@ -50,7 +50,7 @@ def train():
 
         run_name += "_" + "".join(
             [
-                f"{k}-{v:.2f}_" if isinstance(v, float) else f"{k}-{v}_"
+                f"{k}-{v:.3f}_" if isinstance(v, float) else f"{k}-{v}_"
                 for k, v in wandb.config.items()
             ]
         )
