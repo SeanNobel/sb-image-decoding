@@ -10,61 +10,7 @@ from termcolor import cprint
 from typing import List
 import gc
 
-
-def calc_similarity(Z: torch.Tensor, Y: torch.Tensor, sequential: bool) -> torch.Tensor:
-    batch_size, _size = len(Z), len(Y)
-
-    Z = Z.contiguous().view(batch_size, -1)
-    Y = Y.contiguous().view(_size, -1)
-
-    Z = Z / Z.norm(dim=-1, keepdim=True)
-    Y = Y / Y.norm(dim=-1, keepdim=True)
-
-    # NOTE: avoid CUDA out of memory like this
-    if sequential:
-        similarity = torch.empty(batch_size, _size).to(device=Z.device)
-
-        pbar = tqdm(total=batch_size, desc="Similarity matrix of test size")
-
-        for i in range(batch_size):
-            # similarity[i] = (Z[i] @ Y.T) / torch.clamp((Z[i].norm() * Y.norm(dim=1)), min=1e-8)
-            similarity[i] = Z[i] @ Y.T
-
-            pbar.update(1)
-
-        # similarity = similarity.T
-    else:
-        Z = rearrange(Z, "b f -> b 1 f")
-        Y = rearrange(Y, "b f -> 1 b f")
-        similarity = F.cosine_similarity(Y, Z, dim=-1)
-
-    torch.cuda.empty_cache()
-
-    return similarity
-
-
-def top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
-    """_summary_
-
-    Args:
-        k (int): _description_
-        similarity ( b, 2400 ): _description_
-        labels ( b, ): _description_
-
-    Returns:
-        _type_: _description_
-    """
-    # if k == 1:
-    #     return (similarity.argmax(axis=1) == diags).to(torch.float).mean().item()  # fmt: skip
-    # else:
-    return np.mean(
-        [
-            label in row
-            for row, label in zip(
-                torch.topk(similarity, k, dim=1, largest=True)[1], labels
-            )
-        ]
-    )
+from brain2face.utils.loss import calc_similarity, top_k_accuracy
 
 
 class DiagonalClassifier(nn.Module):
