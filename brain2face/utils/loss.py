@@ -133,7 +133,7 @@ class NearestNeighborCLIPLoss(nn.Module):
 
         self.bce_logits = nn.BCEWithLogitsLoss(reduction=args.reduction)
 
-    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+    def forward(self, Y: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
         """_summary_
 
         Args:
