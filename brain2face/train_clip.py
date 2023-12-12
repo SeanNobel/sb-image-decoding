@@ -326,22 +326,21 @@ def train():
                         Y, vision_encoder, args.batch_size, desc="VisionEncoder"
                     )
 
+                if not isinstance(brain_encoder, BrainEncoder):
+                    subject_idxs = None
+
+                # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
+                Z = sequential_apply(
+                    X,
+                    brain_encoder,
+                    args.batch_size,
+                    subject_idxs=subject_idxs,
+                    desc="BrainEncoder",
+                    reduction=args.reduction,
+                )
+
                 if args.vq_brain:
-                    assert (not args.test_with_whole), "vq doesn't support test_with_whole for now"  # fmt: skip
-
-                    Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
-                else:
-                    if not isinstance(brain_encoder, BrainEncoder):
-                        subject_idxs = None
-
-                    # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
-                    Z = sequential_apply(
-                        X,
-                        brain_encoder,
-                        args.batch_size,
-                        subject_idxs=subject_idxs,
-                        desc="BrainEncoder",
-                    )
+                    Z, vq_loss, perplexity = Z
 
                 clip_loss = loss_func(Y, Z)
 
