@@ -58,13 +58,12 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-vq_brain: False
-vq:
-  type: raw # raw or (temporally) aggregated 
-  num_embeds: 256
-  num_concepts: 8 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
-  alpha: 1.0 # How much to weight regularization terms against CLIP loss.
-  beta: 0.25 # How much to weight encoder regularization term against codebook loss.
+vq_brain: True
+vq_type: raw # raw or (temporally) aggregated 
+vq_num_embeds: 256
+vq_num_concepts: 8 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
+vq_alpha: 1.0 # How much to weight regularization terms against CLIP loss.
+vq_beta: 0.25 # How much to weight encoder regularization term against codebook loss.
 
 reduce_time: True
 
@@ -112,15 +111,15 @@ num_workers: 16
 seed: 1234
 cuda_id: 0
 
-sweep_count: 1
+sweep_count: 12
 sweep_config:
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    spatial_attention:
-      values: [True]
+    # spatial_attention:
+    #   values: [True]
 
     # temporal_aggregation:
     #   values: [original, affine]
@@ -149,12 +148,14 @@ sweep_config:
     #   values: [False, True]
     # vq.type:
     #   values: [aggregated]
-    # vq.num_embeds:
-    #   values: [64, 256, 16]
-    # vq.alpha:
-    #   values: [0.001, 0.01, 0.1]
-    # vq.beta:
-    #   values: [0.25, 1.0]
+    vq.num_embeds:
+      values: [64, 256]
+    # vq_num_concepts:
+    #   values: [8, 32, 128]
+    vq_alpha:
+      values: [0.001, 0.01, 0.1]
+    vq_beta:
+      values: [0.25, 1.0]
     # learn_temperature:
     #   values: [False]
     # biases.conv_block:
