@@ -406,7 +406,7 @@ class VectorQuantizer(nn.Module):
         Returns:
             loss : torch.Tensor (, )
                 目的関数の再構成誤差以外の部分．
-            z_q : torch.Tensor ( b, embed_dim, h', w' )
+            z_q : torch.Tensor ( b, embed_dim, t' )
                 離散化された潜在変数．
         """
         z_e = z_e.permute(0, 2, 1).contiguous()  # ( b, t', embed_dim )
@@ -479,15 +479,15 @@ class OriginalAggregator(nn.Module):
         )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
-        return self.layers(X)
+        return self.layers(X)  # ( b, F * temporal_multiplier )
 
 
 class TemporalAggregation(nn.Module):
-    def __init__(self, args, temporal_dim: int) -> None:
+    def __init__(self, args, temporal_dim: int, multiplier: int = 1) -> None:
         super().__init__()
 
         if args.temporal_aggregation == "original":
-            self.layers = OriginalAggregator(args, temporal_dim)
+            self.layers = OriginalAggregator(args, temporal_dim, multiplier)
         else:
             """Modified from: https://ai.meta.com/static-resource/image-decoding"""
             self.layers = nn.Sequential()
@@ -496,7 +496,7 @@ class TemporalAggregation(nn.Module):
                 "linear_projection",
                 nn.Conv1d(
                     in_channels=args.F,
-                    out_channels=args.F * 4,
+                    out_channels=args.F * 4 * multiplier,
                     kernel_size=1,
                 ),
             )
@@ -514,15 +514,15 @@ class TemporalAggregation(nn.Module):
                 "mlp_projector",
                 nn.Sequential(
                     nn.Flatten(),
-                    nn.Linear(args.F * 4, args.F * 2),
+                    nn.Linear(args.F * 4 * multiplier, args.F * 2 * multiplier),
                     nn.GELU(),
-                    nn.Linear(args.F * 2, args.F),
+                    nn.Linear(args.F * 2 * multiplier, args.F * multiplier),
                     nn.GELU(),
                 ),
             )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
-        return self.layers(X)
+        return self.layers(X)  # ( b, F * multiplier )
 
 
 class AggregatedVectorQuantizer(nn.Module):
@@ -539,7 +539,7 @@ class AggregatedVectorQuantizer(nn.Module):
         super().__init__()
 
         self.aggregator = nn.Sequential(
-            OriginalAggregator(args, temporal_dim, temporal_multiplier=num_concepts),
+            TemporalAggregation(args, temporal_dim, multiplier=num_concepts),
             nn.Unflatten(dim=1, unflattened_size=(embed_dim, num_concepts)),
         )
 
@@ -634,8 +634,6 @@ class BrainEncoder(nn.Module):
         )
 
         if vq and args.vq_type == "aggregated":
-            assert args.temporal_aggregation == "original", "Aggregated VQ only supports original temporal aggregation for now."  # fmt: skip
-
             self.vector_quantizer = AggregatedVectorQuantizer(
                 args,
                 num_concepts=args.vq_num_concepts,
