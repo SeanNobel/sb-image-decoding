@@ -1,4 +1,4 @@
-import os
+import os, sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -118,6 +118,7 @@ def sequential_apply(
     device: Optional[str] = None,
     subject_idxs: Optional[torch.Tensor] = None,
     desc: str = "",
+    reduction: str = "mean",
 ) -> torch.Tensor:
     """Avoid CPU / CUDA out of memory.
     Args:
@@ -153,25 +154,42 @@ def sequential_apply(
             return model(X.to(device), subject_idxs.to(device)).to(orig_device)
 
     if subject_idxs is None:
-        return torch.cat(
-            [
-                model(_X.to(device)).to(orig_device)
-                for _X in tqdm(torch.split(X, batch_size), desc=desc)
-            ]
-        )
+        output = [
+            model(_X.to(device)) for _X in tqdm(torch.split(X, batch_size), desc=desc)
+        ]
     else:
-        return torch.cat(
-            [
-                model(_X.to(device), _subject_idxs.to(device)).to(orig_device)
-                for _X, _subject_idxs in tqdm(
-                    zip(
-                        torch.split(X, batch_size),
-                        torch.split(subject_idxs, batch_size),
-                    ),
-                    desc=desc,
-                )
-            ]
-        )
+        output = [
+            model(_X.to(device), _subject_idxs.to(device))
+            for _X, _subject_idxs in tqdm(
+                zip(
+                    torch.split(X, batch_size),
+                    torch.split(subject_idxs, batch_size),
+                ),
+                desc=desc,
+            )
+        ]
+
+    if isinstance(output[0], torch.Tensor):
+        return torch.cat(output).to(orig_device)
+
+    elif isinstance(output[0], tuple):
+        out_list = []
+        for _output in zip(*output):
+            if _output[0].ndim == 0:
+                _output = torch.stack(_output)
+
+                if reduction == "mean":
+                    _output = _output.mean()
+                elif reduction == "sum":
+                    _output = _output.sum()
+
+                out_list.append(_output)
+            else:
+                out_list.append(torch.cat(_output))
+
+        return tuple(out_list)
+    else:
+        raise ValueError(f"Unknown output type: {type(output[0])}")
 
 
 def conv_output_size(
@@ -183,7 +201,7 @@ def conv_output_size(
 ) -> int:
     for _ in range(downsample):
         input_size = (input_size - 1) // 2 + 1
-    
+
     for _ in range(repetition):
         input_size = (input_size - ksize) // stride + 1
 

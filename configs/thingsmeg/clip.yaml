@@ -148,7 +148,7 @@ sweep_config:
     #   values: [False, True]
     # vq.type:
     #   values: [aggregated]
-    vq.num_embeds:
+    vq_num_embeds:
       values: [64, 256]
     # vq_num_concepts:
     #   values: [8, 32, 128]
