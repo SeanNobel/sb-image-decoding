@@ -62,10 +62,21 @@ vq_brain: True
 vq_type: raw # raw or (temporally) aggregated 
 vq_num_embeds: 256
 vq_num_concepts: 8 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
+vq_use_ema: True
 vq_alpha: 1.0 # How much to weight regularization terms against CLIP loss.
 vq_beta: 0.25 # How much to weight encoder regularization term against codebook loss.
+vq_gamma: 0.99 # Decay for EMA of codebook.
+vq_epsilon: 1e-5 # Epsilon for EMA of codebook.
 
 reduce_time: True
+
+# ==== Loss ==== #
+loss: clip
+
+nnclip_k: 10
+nnclip_symmetric: True
+nnclip_support_size: 20000
+nnclip_alpha: 0.5
 
 # ==== Training ==== #
 project_name: nd_things_clip
@@ -111,13 +122,24 @@ num_workers: 16
 seed: 1234
 cuda_id: 0
 
-sweep_count: 12
+sweep_count: 2
 sweep_config:
+  name: vq_ema
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
+    # loss:
+    #   values: [nnclip]
+    # nnclip_k:
+    #   values: [4, 12]
+    # nnclip_symmetric:
+    #   values: [True]
+    # nnclip_support_size:
+    #   values: [20000, 200]
+    # nnclip_alpha:
+    #   values: [0.2, 1.0]
     # spatial_attention:
     #   values: [True]
 
@@ -126,12 +148,12 @@ sweep_config:
     # num_conv_blocks:
     #   values: [2, 5]
     # d_drop:
-    #   values: [0.1, 0.3, 0.5, 0.7]
+    #   values: [0.1, 0.3]
     #   # distribution: uniform
     #   # min: 0.1
     #   # max: 0.7
     # p_drop:
-    #   values: [0.1, 0.3, 0.5, 0.7]
+    #   values: [0.1, 0.3]
     #   # distribution: uniform
     #   # min: 0.1
     #   # max: 0.7
@@ -146,16 +168,18 @@ sweep_config:
     #   values: [3, 5, 7]
     # vq_brain:
     #   values: [False, True]
-    # vq.type:
-    #   values: [aggregated]
-    vq_num_embeds:
-      values: [64, 256]
+    # vq_type:
+    #   values: [raw, aggregated]
+    # vq_num_embeds:
+    #   values: [64, 256]
     # vq_num_concepts:
     #   values: [8, 32, 128]
-    vq_alpha:
-      values: [0.001, 0.01, 0.1]
-    vq_beta:
-      values: [0.25, 1.0]
+    vq_use_ema:
+      values: [True, False]
+    # vq_alpha:
+    #   values: [0.001, 0.01, 0.1]
+    # vq_beta:
+    #   values: [0.25, 1.0]
     # learn_temperature:
     #   values: [False]
     # biases.conv_block:

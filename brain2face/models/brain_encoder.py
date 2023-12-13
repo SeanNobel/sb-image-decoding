@@ -377,7 +377,15 @@ class Downsample1D(nn.Module):
 
 class VectorQuantizer(nn.Module):
     def __init__(
-        self, num_embeds: int, embed_dim: int, alpha: float = 1.0, beta: float = 0.25
+        self,
+        num_embeds: int,
+        embed_dim: int,
+        use_ema: bool = True,
+        alpha: float = 1.0,
+        beta: float = 0.25,
+        gamma: float = 0.99,
+        epsilon: float = 1e-5,
+        emb_init: str = "normal",
     ) -> None:
         """
         Parameters
@@ -393,11 +401,25 @@ class VectorQuantizer(nn.Module):
 
         self.num_embeds = num_embeds
         self.embed_dim = embed_dim
+        self.use_ema = use_ema
         self.alpha = alpha
         self.beta = beta
+        self.gamma = gamma
+        self.epsilon = epsilon
 
-        self.embedding = nn.Embedding(self.num_embeds, self.embed_dim)
-        self.embedding.weight.data.uniform_(-1 / self.num_embeds, 1 / self.num_embeds)
+        self.embedding = nn.Embedding(num_embeds, embed_dim)
+        if emb_init == "normal":
+            self.embedding.weight.data.normal_()
+        elif emb_init == "uniform":
+            self.embedding.weight.data.uniform_(-1 / num_embeds, 1 / num_embeds)
+
+        if use_ema:
+            self.register_buffer("ema_cluster_size", torch.zeros(num_embeds))
+            self.ema_w = nn.Parameter(torch.Tensor(num_embeds, embed_dim))
+            if emb_init == "normal":
+                self.ema_w.data.normal_()
+            elif emb_init == "uniform":
+                self.ema_w.data.uniform_(-1 / num_embeds, 1 / num_embeds)
 
     def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
         """
@@ -423,22 +445,45 @@ class VectorQuantizer(nn.Module):
         # ( b * t', num_embeds )
 
         # 最も距離の近いembedding vectorのインデックス
-        encoding_indices = torch.argmin(distances, dim=1)
+        encoding_indices = torch.argmin(distances, dim=1).unsqueeze(1)
         # ( b * t', )
-
-        encodings = F.one_hot(encoding_indices, num_classes=self.num_embeds).to(
-            torch.float32
+        encodings = torch.zeros(
+            encoding_indices.shape[0], self.num_embeds, device=z_e.device
         )
         # ( b * t', num_embeds )
+        encodings.scatter_(1, encoding_indices, 1)
+        # ( b * t', num_embeds )
 
-        z_q = torch.matmul(encodings, self.embedding.weight)
-        # ( b * t', embed_dim )
-        z_q = z_q.view(z_e_shape)  # ( b, t', embed_dim )
+        z_q = torch.matmul(encodings, self.embedding.weight).view(z_e_shape)
+        # ( b, t', embed_dim )
 
-        e_latent_loss = F.mse_loss(z_q.detach(), z_e)
-        q_latent_loss = F.mse_loss(z_q, z_e.detach())
+        if self.use_ema and self.training:
+            self.ema_cluster_size = self.ema_cluster_size * self.gamma \
+                + (1 - self.gamma) * torch.sum(encodings, 0)  # fmt: skip
+
+            # Laplace smoothing of the cluster size
+            n = torch.sum(self.ema_cluster_size.data)
+            self.ema_cluster_size = (
+                (self.ema_cluster_size + self.epsilon)
+                / (n + self.num_embeds * self.epsilon)
+                * n
+            )
+
+            dw = torch.matmul(encodings.T, z_e_flat)
+            self.ema_w = nn.Parameter(self.ema_w * self.gamma + (1 - self.gamma) * dw)
+
+            self.embedding.weight = nn.Parameter(
+                self.ema_w / self.ema_cluster_size.unsqueeze(1)
+            )
+
         # Regularization loss
-        reg_loss = self.alpha * (q_latent_loss + self.beta * e_latent_loss)
+        e_latent_loss = F.mse_loss(z_q.detach(), z_e)
+
+        if self.use_ema:
+            vq_loss = self.alpha * self.beta * e_latent_loss
+        else:
+            q_latent_loss = F.mse_loss(z_q, z_e.detach())
+            vq_loss = self.alpha * (q_latent_loss + self.beta * e_latent_loss)
 
         # Straight-through estimator
         z_q = z_e + (z_q - z_e).detach()
@@ -448,7 +493,7 @@ class VectorQuantizer(nn.Module):
         avg_probs = torch.mean(encodings, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
-        return z_q, reg_loss, perplexity
+        return z_q, vq_loss, perplexity
 
 
 class OriginalAggregator(nn.Module):
@@ -533,8 +578,11 @@ class AggregatedVectorQuantizer(nn.Module):
         num_embeds: int,
         embed_dim: int,
         temporal_dim: int,
+        use_ema: bool = True,
         alpha: float = 1.0,
         beta: float = 0.25,
+        gamma: float = 0.99,
+        epsilon: float = 1e-5,
     ) -> None:
         super().__init__()
 
@@ -543,7 +591,9 @@ class AggregatedVectorQuantizer(nn.Module):
             nn.Unflatten(dim=1, unflattened_size=(embed_dim, num_concepts)),
         )
 
-        self.vector_quantizer = VectorQuantizer(num_embeds, embed_dim, alpha, beta)
+        self.vector_quantizer = VectorQuantizer(
+            num_embeds, embed_dim, use_ema, alpha, beta, gamma, epsilon
+        )
 
         self.mlp_projector = nn.Sequential(
             nn.Flatten(),
@@ -599,7 +649,6 @@ class BrainEncoder(nn.Module):
                 self.subject_block = SubjectBlockConvDynamic(
                     args, len(subject_names), layout(args, subject_names)
                 )
-
         else:
             raise TypeError
 
@@ -633,26 +682,28 @@ class BrainEncoder(nn.Module):
             downsample=sum(downsample),
         )
 
+        vq_args = {
+            "num_embeds": args.vq_num_embeds,
+            "embed_dim": args.F,
+            "use_ema": args.vq_use_ema,
+            "alpha": args.vq_alpha,
+            "beta": args.vq_beta,
+            "gamma": args.vq_gamma,
+            "epsilon": args.vq_epsilon,
+        }
+
         if vq and args.vq_type == "aggregated":
             self.vector_quantizer = AggregatedVectorQuantizer(
                 args,
                 num_concepts=args.vq_num_concepts,
-                num_embeds=args.vq_num_embeds,
-                embed_dim=args.F,
                 temporal_dim=temporal_dim,
-                alpha=args.vq_alpha,
-                beta=args.vq_beta,
+                **vq_args,
             )
 
             self.temporal_aggregation = None
         else:
             if vq:
-                self.vector_quantizer = VectorQuantizer(
-                    num_embeds=args.vq_num_embeds,
-                    embed_dim=args.F,
-                    alpha=args.vq_alpha,
-                    beta=args.vq_beta,
-                )
+                self.vector_quantizer = VectorQuantizer(**vq_args)
 
             if temporal_aggregation is not None:
                 self.temporal_aggregation = TemporalAggregation(args, temporal_dim)

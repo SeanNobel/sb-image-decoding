@@ -34,7 +34,7 @@ from brain2face.models.vision_encoders import (
 )
 from brain2face.models.classifier import DiagonalClassifier, LabelClassifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
-from brain2face.utils.loss import CLIPLoss
+from brain2face.utils.loss import CLIPLoss, NearestNeighborCLIPLoss
 from brain2face.utils.train_utils import Models, sequential_apply, count_parameters
 from brain2face.utils.plots import plot_latents_2d
 
@@ -121,7 +121,12 @@ def train():
     # ---------------
     #      Loss
     # ---------------
-    loss_func = CLIPLoss(args).to(device)
+    if args.loss == "clip":
+        loss_func = CLIPLoss(args).to(device)
+    elif args.loss == "nnclip":
+        loss_func = NearestNeighborCLIPLoss(args).to(device)
+    else:
+        raise ValueError(f"Invalid loss function: {args.loss}")
 
     # ---------------------
     #        Models
