@@ -309,6 +309,35 @@ class SubjectBlockSA(nn.Module):
         return X
 
 
+class Inception1DBlock(nn.Module):
+    def __init__(self, k: int, D1: int, D2: int, p_drop: float = 0.1) -> None:
+        super().__init__()
+
+        self.k = k
+        self.D2 = D2
+        self.in_channels = D1 if k == 0 else D2
+
+        self.conv1 = nn.Conv1d(self.in_channels, D2 // 4, kernel_size=1, padding="same")
+        self.conv2 = nn.Conv1d(self.in_channels, D2 // 4, kernel_size=3, padding="same")
+        self.conv3 = nn.Conv1d(self.in_channels, D2 // 4, kernel_size=5, padding="same")
+        self.conv4 = nn.Conv1d(self.in_channels, D2 // 4, kernel_size=7, padding="same")
+
+        self.norm = nn.BatchNorm1d(num_features=D2)
+        self.dropout = nn.Dropout(p=p_drop)
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        _X = torch.cat(
+            [self.conv1(X), self.conv2(X), self.conv3(X), self.conv4(X)], dim=1
+        )
+
+        if self.k == 0:
+            X = F.gelu(self.norm(_X))
+        else:
+            X = F.gelu(self.norm(_X + X))  # skip connection
+
+        return self.dropout(X)
+
+
 class ConvBlock(nn.Module):
     def __init__(
         self, k: int, D1: int, D2: int, ksize: int = 3, p_drop: float = 0.1
@@ -654,10 +683,18 @@ class BrainEncoder(nn.Module):
 
         self.conv_blocks = nn.Sequential()
         for k in range(num_conv_blocks):
-            self.conv_blocks.add_module(
-                f"conv{k}",
-                ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block, args.p_drop),
-            )
+            if args.conv_block == "dilated_conv":
+                self.conv_blocks.add_module(
+                    f"conv{k}",
+                    ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block, args.p_drop),
+                )
+            elif args.conv_block == "inception":
+                self.conv_blocks.add_module(
+                    f"conv{k}", Inception1DBlock(k, self.D1, self.D2, args.p_drop)
+                )
+            else:
+                raise NotImplementedError()
+
             if downsample[k]:
                 self.conv_blocks.add_module(f"downsample{k}", Downsample1D(self.D2))
 
