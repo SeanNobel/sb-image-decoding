@@ -10,6 +10,7 @@ from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
+from brain2face.models.utils import DropBlock1D
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from brain2face.utils.train_utils import conv_output_size
 
@@ -309,8 +310,21 @@ class SubjectBlockSA(nn.Module):
         return X
 
 
+def get_dropout(mode: str, p_drop: float) -> nn.Module:
+    if mode == "dropout":
+        return nn.Dropout(p=p_drop)
+    elif mode == "dropout1d":
+        return nn.Dropout1d(p=p_drop)
+    elif mode == "dropblock":
+        return DropBlock1D(p=p_drop)
+    else:
+        raise ValueError(f"Unknown dropout mode: {mode}")
+
+
 class Inception1DBlock(nn.Module):
-    def __init__(self, k: int, D1: int, D2: int, p_drop: float = 0.1) -> None:
+    def __init__(
+        self, k: int, D1: int, D2: int, drop_mode: str = "dropout", p_drop: float = 0.1
+    ) -> None:
         super().__init__()
 
         self.k = k
@@ -323,7 +337,7 @@ class Inception1DBlock(nn.Module):
         self.conv4 = nn.Conv1d(self.in_channels, D2 // 4, kernel_size=7, padding="same")
 
         self.norm = nn.BatchNorm1d(num_features=D2)
-        self.dropout = nn.Dropout(p=p_drop)
+        self.dropout = get_dropout(drop_mode, p_drop)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         _X = torch.cat(
@@ -340,7 +354,13 @@ class Inception1DBlock(nn.Module):
 
 class ConvBlock(nn.Module):
     def __init__(
-        self, k: int, D1: int, D2: int, ksize: int = 3, p_drop: float = 0.1
+        self,
+        k: int,
+        D1: int,
+        D2: int,
+        ksize: int = 3,
+        drop_mode: str = "dropout",
+        p_drop: float = 0.1,
     ) -> None:
         super().__init__()
 
@@ -371,7 +391,7 @@ class ConvBlock(nn.Module):
             padding="same",
             dilation=2,  # NOTE: The text doesn't say this, but the picture shows dilation=2
         )
-        self.dropout = nn.Dropout(p=p_drop)
+        self.dropout = get_dropout(drop_mode, p_drop)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         if self.k == 0:
@@ -681,16 +701,22 @@ class BrainEncoder(nn.Module):
         else:
             raise TypeError
 
+        block_args = {
+            "D1": self.D1,
+            "D2": self.D2,
+            "drop_mode": args.drop_mode,
+            "p_drop": args.p_drop,
+        }
+
         self.conv_blocks = nn.Sequential()
         for k in range(num_conv_blocks):
             if args.conv_block == "dilated_conv":
                 self.conv_blocks.add_module(
-                    f"conv{k}",
-                    ConvBlock(k, self.D1, self.D2, args.ksizes.conv_block, args.p_drop),
+                    f"conv{k}", ConvBlock(k, ksize=args.ksizes.conv_block, **block_args)
                 )
             elif args.conv_block == "inception":
                 self.conv_blocks.add_module(
-                    f"conv{k}", Inception1DBlock(k, self.D1, self.D2, args.p_drop)
+                    f"conv{k}", Inception1DBlock(k, **block_args)
                 )
             else:
                 raise NotImplementedError()
