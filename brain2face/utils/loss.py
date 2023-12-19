@@ -250,34 +250,25 @@ class CosFaceCLIPLoss(CLIPLoss):
             X = X / X.norm(dim=-1, keepdim=True)
             Y = Y / Y.norm(dim=-1, keepdim=True)
 
-            scaling = self.calc_scaling(classes_onehot)
-            margin = self.calc_margin(classes_onehot)
-
-            # FIXME: Probably exp is not needed, but keeping it for consistency.
-            logits_x = (torch.matmul(X, W.T) - margin) * scaling
-            logits_y = (torch.matmul(Y, W.T) - margin) * scaling
-            # ( b, n_classes )
-
             sim_x = torch.matmul(X, W.T)
             sim_y = torch.matmul(Y, W.T)
 
-            sim_x = (sim_x - self._margin(classes_onehot)) * self._scaling(
-                sim_x, classes_onehot
-            )
+            sim_x = (sim_x - self._margin(classes_onehot)) * self._scaling(sim_x, classes_onehot)  # fmt: skip
+            sim_y = (sim_y - self._margin(classes_onehot)) * self._scaling(sim_y, classes_onehot)  # fmt: skip
 
             cosface_loss = (
-                self.cross_entropy(logits_x, classes)
-                + self.cross_entropy(logits_y, classes)
+                self.cross_entropy(sim_x, classes) + self.cross_entropy(sim_y, classes)
             ) / 2
 
             loss += self.alpha * cosface_loss
 
         return loss
 
-    def calc_scaling(self, classes: torch.Tensor) -> torch.Tensor:
+    def _scaling(self, *args, **kwargs) -> torch.Tensor:
+        # FIXME: Probably exp is not needed, but keeping it for consistency.
         return self.temp.exp()
 
-    def calc_margin(self, classes: torch.Tensor) -> torch.Tensor:
+    def _margin(self, classes: torch.Tensor) -> torch.Tensor:
         """_summary_
         Args:
             classes ( b, n_classes ): Float32 one-hot encoded.
@@ -298,18 +289,17 @@ class CircleCLIPLoss(CosFaceCLIPLoss):
         super().__init__(args, n_classes)
 
         self.m = args.clip_margin_init
+
         self.margin_p = 1 - self.m
         self.margin_n = self.m
         self.o_p = 1 + self.m
         self.o_n = -self.m
 
-    def calc_scaling(
-        self, similarity: torch.Tensor, classes: torch.Tensor
-    ) -> torch.Tensor:
+    def _scaling(self, similarity: torch.Tensor, classes: torch.Tensor) -> torch.Tensor:
         """_summary_
         Args:
             similarity ( b, n_classes ): _description_
-            classes ( b, ): _description_
+            classes ( b, n_classes ): Float32 one-hot encoded.
         Returns:
             penalty ( b, n_classes ): _description_
         """
@@ -319,13 +309,14 @@ class CircleCLIPLoss(CosFaceCLIPLoss):
             torch.relu(similarity - self.o_n),
         )
 
-    def calc_margin(self, classes: torch.Tensor) -> torch.Tensor:
+    def _margin(self, classes: torch.Tensor) -> torch.Tensor:
         """_summary_
         Args:
-            classes ( b, ): _description_
+            classes ( b, n_classes ): Float32 one-hot encoded.
         Returns:
             margin ( b, n_classes ): _description_
         """
-        classes = F.one_hot(classes, self.n_classes)
-
         return torch.where(classes == 1, self.margin_p, self.margin_n)
+
+    def clamp_params(self):
+        pass
