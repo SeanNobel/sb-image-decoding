@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from tqdm import tqdm
+from termcolor import cprint
+from typing import Optional
 
 
 def calc_similarity(
@@ -66,12 +68,20 @@ def top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
 
 
 class CLIPLoss(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, push_negative: bool = False) -> None:
         super().__init__()
-        self.compute_similarity = nn.CosineSimilarity(dim=-1)
-        self._criterion = nn.CrossEntropyLoss(reduction=args.reduction)
 
+        self.compute_similarity = nn.CosineSimilarity(dim=-1)
+
+        if push_negative:
+            self.cross_entropy = nn.BCELoss(reduction=args.reduction)
+        else:
+            self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
+
+        # Temperature (scaler)
         self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
+        self.temp_min = args.clip_temp_min
+        self.temp_max = args.clip_temp_max
         if not args.clip_temp_learn:
             self.temp.requires_grad = False
 
@@ -98,16 +108,20 @@ class CLIPLoss(nn.Module):
             # get dot products
             logits = torch.matmul(x, y.T)
 
-        # scale by temperature
+        # FIXME: Probably exp is not needed, but keeping it for consistency.
         logits *= torch.exp(self.temp)
 
         # NOTE: as in https://arxiv.org/abs/2103.00020
-        loss = (self._criterion(logits, targets) + self._criterion(logits.t(), targets)) / 2  # fmt: skip
+        loss = (self.cross_entropy(logits, targets) + self.cross_entropy(logits.t(), targets)) / 2  # fmt: skip
 
         if return_logits:
             return logits, loss
         else:
             return loss
+
+    def clamp_params(self):
+        if not (self.temp_min is None and self.temp_max is None):
+            self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
 
 
 class NearestNeighborCLIPLoss(nn.Module):
@@ -194,3 +208,65 @@ class NearestNeighborCLIPLoss(nn.Module):
             self.support_set_y = torch.cat([self.support_set_y, Y.to(device)], dim=0)[
                 -self.support_size :
             ]
+
+
+class CosFaceCLIPLoss(CLIPLoss):
+    def __init__(self, args, n_classes, push_negative: bool = False) -> None:
+        super().__init__(args, push_negative)
+
+        self.alpha = args.cosface_alpha
+
+        self.n_classes = n_classes
+        # Centers of the classes
+        self.W = nn.Parameter(torch.Tensor(n_classes, args.F))
+        self.W.data.normal_()
+
+        # Cosine margin
+        self.margin = nn.Parameter(torch.tensor([float(args.clip_margin_init)]))
+        self.margin_min = args.clip_margin_min
+        self.margin_max = args.clip_margin_max
+        if not args.clip_margin_learn:
+            self.margin.requires_grad = False
+
+    def forward(
+        self, X: torch.Tensor, Y: torch.Tensor, classes: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """_summary_
+        Args:
+            X ( b, f ): _description_
+            Y ( b, f ): _description_
+            classes ( b, ): Elements are integers [0, n_classes - 1].
+                            If None (evaluation), super().forward() is called.
+        Returns:
+            torch.Tensor: _description_
+        """
+        loss = super().forward(X, Y)
+
+        if classes is not None:
+            classes = classes.to(X.device)
+
+            W = self.W / self.W.norm(dim=-1, keepdim=True)
+            X = X / X.norm(dim=-1, keepdim=True)
+            Y = Y / Y.norm(dim=-1, keepdim=True)
+
+            margin = self.margin * F.one_hot(classes, self.n_classes).to(torch.float32)
+
+            # FIXME: Probably exp is not needed, but keeping it for consistency.
+            logits_x = torch.matmul(X, W.T) * self.temp.exp() - margin
+            logits_y = torch.matmul(Y, W.T) * self.temp.exp() - margin
+            # ( b, n_classes )
+
+            cosface_loss = (
+                self.cross_entropy(logits_x, classes)
+                + self.cross_entropy(logits_y, classes)
+            ) / 2
+
+            loss += self.alpha * cosface_loss
+
+        return loss
+
+    def clamp_params(self):
+        super().clamp_params()
+
+        if not (self.margin_min is None and self.margin_max is None):
+            self.margin.data.clamp_(min=self.margin_min, max=self.margin_max)
