@@ -68,12 +68,12 @@ def top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
 
 
 class CLIPLoss(nn.Module):
-    def __init__(self, args, push_negative: bool = False) -> None:
+    def __init__(self, args) -> None:
         super().__init__()
 
         self.compute_similarity = nn.CosineSimilarity(dim=-1)
 
-        if push_negative:
+        if args.push_negative:
             self.cross_entropy = nn.BCELoss(reduction=args.reduction)
         else:
             self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
@@ -106,7 +106,7 @@ class CLIPLoss(nn.Module):
             y = y / y.norm(dim=-1, keepdim=True)
 
             # get dot products
-            logits = torch.matmul(x, y.T)
+            logits = torch.matmul(x, y.T)  # ( b, b )
 
         # FIXME: Probably exp is not needed, but keeping it for consistency.
         logits *= torch.exp(self.temp)
@@ -211,8 +211,8 @@ class NearestNeighborCLIPLoss(nn.Module):
 
 
 class CosFaceCLIPLoss(CLIPLoss):
-    def __init__(self, args, n_classes, push_negative: bool = False) -> None:
-        super().__init__(args, push_negative)
+    def __init__(self, args, n_classes) -> None:
+        super().__init__(args)
 
         self.alpha = args.cosface_alpha
 
@@ -244,17 +244,26 @@ class CosFaceCLIPLoss(CLIPLoss):
 
         if classes is not None:
             classes = classes.to(X.device)
+            classes_onehot = F.one_hot(classes, self.n_classes).to(torch.float32)
 
             W = self.W / self.W.norm(dim=-1, keepdim=True)
             X = X / X.norm(dim=-1, keepdim=True)
             Y = Y / Y.norm(dim=-1, keepdim=True)
 
-            margin = self.margin * F.one_hot(classes, self.n_classes).to(torch.float32)
+            scaling = self.calc_scaling(classes_onehot)
+            margin = self.calc_margin(classes_onehot)
 
             # FIXME: Probably exp is not needed, but keeping it for consistency.
-            logits_x = torch.matmul(X, W.T) * self.temp.exp() - margin
-            logits_y = torch.matmul(Y, W.T) * self.temp.exp() - margin
+            logits_x = (torch.matmul(X, W.T) - margin) * scaling
+            logits_y = (torch.matmul(Y, W.T) - margin) * scaling
             # ( b, n_classes )
+
+            sim_x = torch.matmul(X, W.T)
+            sim_y = torch.matmul(Y, W.T)
+
+            sim_x = (sim_x - self._margin(classes_onehot)) * self._scaling(
+                sim_x, classes_onehot
+            )
 
             cosface_loss = (
                 self.cross_entropy(logits_x, classes)
@@ -265,8 +274,58 @@ class CosFaceCLIPLoss(CLIPLoss):
 
         return loss
 
+    def calc_scaling(self, classes: torch.Tensor) -> torch.Tensor:
+        return self.temp.exp()
+
+    def calc_margin(self, classes: torch.Tensor) -> torch.Tensor:
+        """_summary_
+        Args:
+            classes ( b, n_classes ): Float32 one-hot encoded.
+        Returns:
+            margin ( b, n_classes ): _description_
+        """
+        return self.margin * classes
+
     def clamp_params(self):
         super().clamp_params()
 
         if not (self.margin_min is None and self.margin_max is None):
             self.margin.data.clamp_(min=self.margin_min, max=self.margin_max)
+
+
+class CircleCLIPLoss(CosFaceCLIPLoss):
+    def __init__(self, args, n_classes) -> None:
+        super().__init__(args, n_classes)
+
+        self.m = args.clip_margin_init
+        self.margin_p = 1 - self.m
+        self.margin_n = self.m
+        self.o_p = 1 + self.m
+        self.o_n = -self.m
+
+    def calc_scaling(
+        self, similarity: torch.Tensor, classes: torch.Tensor
+    ) -> torch.Tensor:
+        """_summary_
+        Args:
+            similarity ( b, n_classes ): _description_
+            classes ( b, ): _description_
+        Returns:
+            penalty ( b, n_classes ): _description_
+        """
+        return torch.where(
+            classes == 1,
+            torch.relu(self.o_p - similarity),
+            torch.relu(similarity - self.o_n),
+        )
+
+    def calc_margin(self, classes: torch.Tensor) -> torch.Tensor:
+        """_summary_
+        Args:
+            classes ( b, ): _description_
+        Returns:
+            margin ( b, n_classes ): _description_
+        """
+        classes = F.one_hot(classes, self.n_classes)
+
+        return torch.where(classes == 1, self.margin_p, self.margin_n)
