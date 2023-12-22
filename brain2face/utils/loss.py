@@ -211,15 +211,22 @@ class NearestNeighborCLIPLoss(nn.Module):
 
 
 class CosFaceCLIPLoss(CLIPLoss):
-    def __init__(self, args, n_classes) -> None:
+    def __init__(
+        self, args, n_classes, n_high_categories: Optional[int] = None
+    ) -> None:
         super().__init__(args)
 
         self.alpha = args.cosface_alpha
-
         self.n_classes = n_classes
+        self.n_high_categories = n_high_categories
+
         # Centers of the classes
         self.W = nn.Parameter(torch.Tensor(n_classes, args.F))
         self.W.data.normal_()
+
+        if n_high_categories is not None:
+            self.W_high = nn.Parameter(torch.Tensor(n_high_categories, args.F))
+            self.W_high.data.normal_()
 
         # Cosine margin
         self.margin = nn.Parameter(torch.tensor([float(args.clip_margin_init)]))
@@ -229,7 +236,11 @@ class CosFaceCLIPLoss(CLIPLoss):
             self.margin.requires_grad = False
 
     def forward(
-        self, X: torch.Tensor, Y: torch.Tensor, classes: Optional[torch.Tensor] = None
+        self,
+        X: torch.Tensor,
+        Y: torch.Tensor,
+        classes: Optional[torch.Tensor] = None,
+        high_categories: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """_summary_
         Args:
@@ -243,26 +254,40 @@ class CosFaceCLIPLoss(CLIPLoss):
         loss = super().forward(X, Y)
 
         if classes is not None:
-            classes = classes.to(X.device)
-            classes_onehot = F.one_hot(classes, self.n_classes).to(torch.float32)
+            loss += self.alpha * self.metric_loss(
+                self.W, X, Y, classes.to(X.device), self.n_classes
+            )
 
-            W = self.W / self.W.norm(dim=-1, keepdim=True)
-            X = X / X.norm(dim=-1, keepdim=True)
-            Y = Y / Y.norm(dim=-1, keepdim=True)
-
-            sim_x = torch.matmul(X, W.T)
-            sim_y = torch.matmul(Y, W.T)
-
-            sim_x = (sim_x - self._margin(classes_onehot)) * self._scaling(sim_x, classes_onehot)  # fmt: skip
-            sim_y = (sim_y - self._margin(classes_onehot)) * self._scaling(sim_y, classes_onehot)  # fmt: skip
-
-            cosface_loss = (
-                self.cross_entropy(sim_x, classes) + self.cross_entropy(sim_y, classes)
-            ) / 2
-
-            loss += self.alpha * cosface_loss
+        if high_categories is not None:
+            loss += self.alpha * self.metric_loss(
+                self.W_high, X, Y, high_categories.to(X.device), self.n_high_categories
+            )
 
         return loss
+
+    def metric_loss(
+        self,
+        W: torch.Tensor,
+        X: torch.Tensor,
+        Y: torch.Tensor,
+        classes: torch.Tensor,
+        n_classes: int,
+    ):
+        classes_onehot = F.one_hot(classes, n_classes).to(torch.float32)
+
+        W = W / W.norm(dim=-1, keepdim=True)
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        sim_x = torch.matmul(X, W.T)
+        sim_y = torch.matmul(Y, W.T)
+
+        sim_x = (sim_x - self._margin(classes_onehot)) * self._scaling(sim_x, classes_onehot)  # fmt: skip
+        sim_y = (sim_y - self._margin(classes_onehot)) * self._scaling(sim_y, classes_onehot)  # fmt: skip
+
+        return (
+            self.cross_entropy(sim_x, classes) + self.cross_entropy(sim_y, classes) / 2
+        )
 
     def _scaling(self, *args, **kwargs) -> torch.Tensor:
         # FIXME: Probably exp is not needed, but keeping it for consistency.
@@ -277,7 +302,7 @@ class CosFaceCLIPLoss(CLIPLoss):
         """
         return self.margin * classes
 
-    def clamp_params(self):
+    def clamp_params(self) -> None:
         super().clamp_params()
 
         if not (self.margin_min is None and self.margin_max is None):
@@ -285,8 +310,8 @@ class CosFaceCLIPLoss(CLIPLoss):
 
 
 class CircleCLIPLoss(CosFaceCLIPLoss):
-    def __init__(self, args, n_classes) -> None:
-        super().__init__(args, n_classes)
+    def __init__(self, args, n_classes, n_high_categories) -> None:
+        super().__init__(args, n_classes, n_high_categories)
 
         self.m = args.clip_margin_init
 
@@ -318,5 +343,5 @@ class CircleCLIPLoss(CosFaceCLIPLoss):
         """
         return torch.where(classes == 1, self.margin_p, self.margin_n)
 
-    def clamp_params(self):
+    def clamp_params(self) -> None:
         pass

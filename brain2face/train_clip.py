@@ -131,9 +131,17 @@ def train():
     elif args.loss == "nnclip":
         loss_func = NearestNeighborCLIPLoss(args).to(device)
     elif args.loss == "cosfaceclip":
-        loss_func = CosFaceCLIPLoss(args, dataset.num_categories).to(device)
+        loss_func = CosFaceCLIPLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
     elif args.loss == "circleclip":
-        loss_func = CircleCLIPLoss(args, dataset.num_categories).to(device)
+        loss_func = CircleCLIPLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
     else:
         raise ValueError(f"Invalid loss function: {args.loss}")
 
@@ -279,7 +287,10 @@ def train():
                 vq_loss, perplexity = None, None
 
                 if isinstance(loss_func, CosFaceCLIPLoss):
-                    loss = clip_loss = loss_func(Y, Z, classes)
+                    if args.use_high_categories:
+                        loss = clip_loss = loss_func(Y, Z, classes, high_categories)
+                    else:
+                        loss = clip_loss = loss_func(Y, Z, classes)
                 else:
                     loss = clip_loss = loss_func(Y, Z)
 
