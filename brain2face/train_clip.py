@@ -34,7 +34,12 @@ from brain2face.models.vision_encoders import (
 )
 from brain2face.models.classifier import DiagonalClassifier, LabelClassifier
 from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
-from brain2face.utils.loss import CLIPLoss, NearestNeighborCLIPLoss
+from brain2face.utils.loss import (
+    CLIPLoss,
+    NearestNeighborCLIPLoss,
+    CosFaceCLIPLoss,
+    CircleCLIPLoss,
+)
 from brain2face.utils.train_utils import Models, sequential_apply, count_parameters
 from brain2face.utils.plots import plot_latents_2d
 
@@ -125,18 +130,32 @@ def train():
         loss_func = CLIPLoss(args).to(device)
     elif args.loss == "nnclip":
         loss_func = NearestNeighborCLIPLoss(args).to(device)
+    elif args.loss == "cosfaceclip":
+        loss_func = CosFaceCLIPLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
+    elif args.loss == "circleclip":
+        loss_func = CircleCLIPLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
     else:
         raise ValueError(f"Invalid loss function: {args.loss}")
 
     # ---------------------
     #        Models
     # ---------------------
+    vq_brain = args.vq_type is not None
+
     if args.brain_encoder == "brain_encoder":
         brain_encoder = BrainEncoder(
             args,
             subject_names=dataset.subject_names,
             layout=eval(args.layout),
-            vq=args.vq_brain,
+            vq=vq_brain,
             num_conv_blocks=args.num_conv_blocks,
             downsample=args.downsample,
             temporal_aggregation=args.temporal_aggregation,
@@ -224,19 +243,14 @@ def train():
         # For plotting latents
         train_Y_list = []
         train_Z_list = []
-        train_classes_list = []
+        train_categories_list = []
 
         trained_models.train()
         if args.accum_grad:
             optimizer.zero_grad()
 
         for batch in tqdm(train_loader, desc="Train"):
-            if len(batch) == 5:
-                X, Y, subject_idxs, classes, y_idxs = batch
-            elif len(batch) == 4:
-                X, Y, subject_idxs, classes, y_idxs = *batch, None
-            else:
-                X, Y, subject_idxs, classes, y_idxs = *batch, None, None
+            X, Y, subject_idxs, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
 
             if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
@@ -251,11 +265,15 @@ def train():
             else:
                 Y = vision_encoder(Y)
 
-            if args.vq_brain:
-                assert isinstance(brain_encoder, BrainEncoder), "Please set vq_brain=False when it's not BrainEncoder."  # fmt: skip
+            if vq_brain:
+                assert isinstance(brain_encoder, BrainEncoder), "Please set vq_type=null when it's not BrainEncoder."  # fmt: skip
 
                 Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
-                clip_loss = loss_func(Y, Z)
+
+                if isinstance(loss_func, CosFaceCLIPLoss):
+                    clip_loss = loss_func(Y, Z, classes)
+                else:
+                    clip_loss = loss_func(Y, Z)
 
                 loss = clip_loss + vq_loss
             else:
@@ -267,7 +285,14 @@ def train():
                     raise NotImplementedError
 
                 vq_loss, perplexity = None, None
-                loss = clip_loss = loss_func(Y, Z)
+
+                if isinstance(loss_func, CosFaceCLIPLoss):
+                    if args.use_high_categories:
+                        loss = clip_loss = loss_func(Y, Z, classes, high_categories)
+                    else:
+                        loss = clip_loss = loss_func(Y, Z, classes)
+                else:
+                    loss = clip_loss = loss_func(Y, Z)
 
             with torch.no_grad():
                 if isinstance(train_classifier, DiagonalClassifier):
@@ -279,7 +304,7 @@ def train():
 
             train_clip_losses.append(clip_loss.item())
             train_topk_accs.append(topk_accs)
-            if args.vq_brain:
+            if vq_brain:
                 train_vq_losses.append(vq_loss.item())
                 train_perplexities.append(perplexity.item())
 
@@ -290,26 +315,27 @@ def train():
                 loss.backward()
                 optimizer.step()
 
-            if classes is not None and args.plot_latents:
+            if args.plot_latents:
                 train_Y_list.append(Y.detach().cpu().numpy())
                 train_Z_list.append(Z.detach().cpu().numpy())
-                train_classes_list.append(classes.numpy())
+
+                if high_categories is not None:
+                    train_categories_list.append(high_categories.numpy())
+                elif classes is not None:
+                    train_categories_list.append(classes.numpy())
+                else:
+                    raise ValueError("plot_latents is True but no classes are given.")
 
         if args.accum_grad:
             optimizer.step()
 
-        loss_func.temp.data.clamp_(min=args.clip_temp_min, max=args.clip_temp_max)
+        loss_func.clamp_params()
 
         _ = trained_models.params_updated()
 
         trained_models.eval()
         for batch in tqdm(test_loader, desc="Test"):
-            if len(batch) == 5:
-                X, Y, subject_idxs, classes, y_idxs = batch
-            elif len(batch) == 4:
-                X, Y, subject_idxs, classes, y_idxs = *batch, None
-            else:
-                X, Y, subject_idxs, classes, y_idxs = *batch, None, None
+            X, Y, subject_idxs, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
 
             if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
@@ -344,7 +370,7 @@ def train():
                     reduction=args.reduction,
                 )
 
-                if args.vq_brain:
+                if vq_brain:
                     Z, vq_loss, perplexity = Z
 
                 clip_loss = loss_func(Y, Z)
@@ -362,7 +388,7 @@ def train():
 
             test_clip_losses.append(clip_loss.item())
             test_topk_accs.append(topk_accs)
-            if args.vq_brain:
+            if vq_brain:
                 test_vq_losses.append(vq_loss.item())
                 test_perplexities.append(perplexity.item())
 
@@ -398,7 +424,7 @@ def train():
                 }
             )
 
-            if args.vq_brain:
+            if vq_brain:
                 performance_now.update(
                     {
                         "train_vq_loss": np.mean(train_vq_losses),
@@ -407,6 +433,9 @@ def train():
                         "test_perplexity": np.mean(test_perplexities),
                     }
                 )
+
+            if isinstance(loss_func, CosFaceCLIPLoss):
+                performance_now.update({"margin": loss_func.margin.item()})
 
             wandb.log(performance_now)
 
@@ -425,18 +454,18 @@ def train():
         else:
             no_best_counter += 1
 
-        if len(train_classes_list) > 0:
+        if len(train_categories_list) > 0:
             if epoch == 0:
                 plot_latents_2d(
                     np.concatenate(train_Y_list),
-                    np.concatenate(train_classes_list),
+                    np.concatenate(train_categories_list),
                     epoch=epoch,
                     save_dir=os.path.join(run_dir, "plots/image_latents"),
                 )
             if epoch % 50 == 0:
                 plot_latents_2d(
                     np.concatenate(train_Z_list),
-                    np.concatenate(train_classes_list),
+                    np.concatenate(train_categories_list),
                     epoch=epoch,
                     save_dir=os.path.join(run_dir, "plots/ecog_latents"),
                 )
