@@ -464,6 +464,7 @@ class VectorQuantizer(nn.Module):
 
         if use_ema:
             self.register_buffer("ema_cluster_size", torch.zeros(num_embeds))
+
             self.ema_w = nn.Parameter(torch.Tensor(num_embeds, embed_dim))
             if emb_init == "normal":
                 self.ema_w.data.normal_()
@@ -532,7 +533,9 @@ class VectorQuantizer(nn.Module):
             vq_loss = self.alpha * self.beta * e_latent_loss
         else:
             q_latent_loss = F.mse_loss(z_q, z_e.detach())
-            vq_loss = self.alpha * (q_latent_loss + self.beta * e_latent_loss)
+            vq_loss = self.alpha * (
+                (1 - self.beta) * q_latent_loss + self.beta * e_latent_loss
+            )
 
         # Straight-through estimator
         z_q = z_e + (z_q - z_e).detach()
