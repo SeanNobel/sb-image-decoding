@@ -93,6 +93,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         self.num_categories = len(self.categories.unique())
 
         self.high_categories = self.to_high_categories(self.categories, high_categories)
+        self.num_high_categories = self.high_categories.max() + 1
 
         self.y_idxs = torch.cat(y_idxs_list) - 1
         assert torch.equal(self.y_idxs.unique(), torch.arange(self.y_idxs.max() + 1))
