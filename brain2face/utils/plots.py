@@ -1,8 +1,11 @@
 import os
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+
+matplotlib.use("Agg")
 
 
 def plot_latents_2d(
