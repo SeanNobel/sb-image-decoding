@@ -59,7 +59,8 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-vq_type: aggregated # null or raw or (temporally) aggregated 
+vq_type: affine # null / original / affine (= vqtorch basic) / group / residual
+vq_aggregated: False
 vq_num_embeds: 512
 vq_num_concepts: 8 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
 vq_use_ema: True
@@ -68,6 +69,17 @@ vq_beta: 0.0 # How much to weight encoder regularization term against codebook l
 # When using EMA for codebook, beta needs to be zero. https://arxiv.org/abs/2305.08842
 vq_gamma: 0.99 # Decay for EMA of codebook.
 vq_epsilon: 1e-5 # Epsilon for EMA of codebook.
+
+# vqtorch
+vq_kmeans_init: False # Whether to use kmeans++ init
+vq_norm: null # Noralization for input vectors
+vq_cb_norm: null # Normalization for codebook vectors
+vq_affine_lr: 10.0 # lr scale for affine parameters
+vq_sync_nu: 0.2 # Codebook synchronization contribution
+vq_replace_freq: 0 # Frequency to replace dead codes
+# group
+vq_groups: 1 # Number of groups for group VQ
+vq_share: True # If True, codebook is shared for each sub-vector.
 
 drop_mode: dropout
 
@@ -126,7 +138,7 @@ acc_topk: [1, 5]
 
 accum_grad: False
 
-patience: 100
+patience: 80
 
 chance: False
 
@@ -136,21 +148,28 @@ plot_latents: True
 
 num_workers: 4
 seed: 1234
-cuda_id: 1
+cuda_id: 0
 
-sweep_count: 16
+sweep_count: 24
 sweep_config:
-  name: circle_clip_vqbeta0
+  name: vqtorch_init
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    use_high_categories:
-      values: [False, True]
+    vq_affine_lr:
+      values: [10.0, 1.0, 0.1]
+    vq_sync_nu:
+      values: [0.2, 0.5]
+    vq_replace_freq:
+      values: [0, 20]
 
-    push_negative:
-      values: [False, True]
+    # use_high_categories:
+    #   values: [False, True]
+
+    # push_negative:
+    #   values: [False, True]
 
     # clip_margin_init:
     #   values: [1.0, 10.0, 100.0]
@@ -198,10 +217,10 @@ sweep_config:
     # ksizes.conv_block:
     #   values: [3, 5, 7]
 
-    vq_type:
-      values: [raw, aggregated]
-    # vq_num_embeds:
-    #   values: [64, 256, 768]
+    # vq_type:
+    #   values: [raw, aggregated]
+    vq_num_embeds:
+      values: [512, 2048]
     # vq_num_concepts:
     #   values: [8, 32, 128]
     # vq_use_ema:
@@ -210,8 +229,9 @@ sweep_config:
     #   values: [0.001, 0.01, 0.1]
     # vq_beta:
     #   values: [0.05, 0.25, 1.0]
-    vq_gamma:
-      values: [0.99, 0.95]
+    # vq_gamma:
+    #   values: [0.99, 0.95]
+
     # learn_temperature:
     #   values: [False]
     # biases.conv_block:
