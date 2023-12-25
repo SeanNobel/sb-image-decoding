@@ -9,4 +9,4 @@
 	url = https://github.com/SeanNobel/brainmagick.git
 [submodule "vqtorch"]
 	path = vqtorch
-	url = https://github.com/minyoungg/vqtorch.git
+	url = https://github.com/SeanNobel/vqtorch.git
