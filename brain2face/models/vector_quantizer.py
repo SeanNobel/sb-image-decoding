@@ -24,19 +24,25 @@ def get_vector_quantizer(args) -> nn.Module:
             epsilon=args.vq_epsilon,
         )
     else:
+        vq_args = {
+            "feature_size": args.F,
+            "num_codes": args.vq_num_embeds,
+            "beta": args.vq_beta,
+            "kmeans_init": args.vq_kmeans_init,
+            "norm": args.vq_norm,
+            "cb_norm": args.vq_cb_norm,
+            "affine_lr": args.vq_affine_lr,
+            "sync_nu": args.vq_sync_nu,
+            "replace_freq": args.vq_replace_freq,
+            "dim": 1,
+        }
+
         if args.vq_type == "affine":
-            vq = VectorQuant(
-                feature_size=args.F,
-                num_codes=args.vq_num_embeds,
-                beta=args.vq_beta,
-                kmeans_init=args.vq_kmeans_init,
-                norm=args.vq_norm,
-                cb_norm=args.vq_cb_norm,
-                affine_lr=args.vq_affine_lr,
-                sync_nu=args.vq_sync_nu,
-                replace_freq=args.vq_replace_freq,
-                dim=1,
-            )
+            vq = VectorQuant(**vq_args)
+        elif args.vq_type == "group":
+            vq = GroupVectorQuant(groups=args.vq_groups, share=args.vq_share, **vq_args)
+        elif args.vq_type == "residual":
+            vq = ResidualVectorQuant(groups=args.vq_groups, share=args.vq_share, **vq_args)  # fmt: skip
         else:
             raise NotImplementedError()
 
