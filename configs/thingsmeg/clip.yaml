@@ -121,7 +121,7 @@ seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
 dataset: ThingsMEG
 # image_size: 256
 
-montage_path: brain2face/utils/montages/things_meg.npy
+montage_path: nd/utils/montages/things_meg.npy
 layout: ch_locations_2d # DynamicChanLoc2d
 
 large_test_set: True

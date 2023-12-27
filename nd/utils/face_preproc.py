@@ -12,9 +12,9 @@ import multiprocessing
 ctx = multiprocessing.get_context("spawn")
 torch.multiprocessing.set_start_method("spawn", force=True)
 
-from brain2face.utils.extractor import FaceExtractor
-from brain2face.utils.preproc_utils import crop_and_segment
-from brain2face.utils.constants import EXTRACTED_VIDEO_ROOT
+from nd.utils.extractor import FaceExtractor
+from nd.utils.preproc_utils import crop_and_segment
+from nd.utils.constants import EXTRACTED_VIDEO_ROOT
 
 
 class FacePreprocessor:

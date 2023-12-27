@@ -1,5 +1,5 @@
 import numpy as np
-from brain2face.utils.gTecUtils import gTecUtils as gu
+from nd.utils.gTecUtils import gTecUtils as gu
 
 
 def eeg_subset_fromTrigger(args, raweeg_fname):
@@ -119,15 +119,17 @@ def get_GameStartEnd_index(args, gtec_dataset):
             np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[0][0]
         ]
         if (
-            len(np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[0])
+            len(
+                np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[0]
+            )
             < 4
         ):
             # cond1: missing GameStart Trigger (Global_Unity_Start_End[1] > Lap[0])
             if (
                 trigger_eegTimeIdxSeq[
-                    np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[
-                        0
-                    ][1]
+                    np.where(
+                        trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"])
+                    )[0][1]
                 ]
                 > trigger_eegTimeIdxSeq[
                     np.where(trigger_IDSeq == int(triggerInfo["Lap"]))[0][0]
@@ -151,18 +153,18 @@ def get_GameStartEnd_index(args, gtec_dataset):
             # cond2: missing GameEnd Trigger (Global_Unity_Start_End[-1] < Lap[-1])
             elif (
                 trigger_eegTimeIdxSeq[
-                    np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[
-                        0
-                    ][-1]
+                    np.where(
+                        trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"])
+                    )[0][-1]
                 ]
                 < trigger_eegTimeIdxSeq[
                     np.where(trigger_IDSeq == int(triggerInfo["Lap"]))[0][-1]
                 ]
             ):
                 game_StEnd_index = trigger_eegTimeIdxSeq[
-                    np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[
-                        0
-                    ][1]
+                    np.where(
+                        trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"])
+                    )[0][1]
                 ]
                 game_StEnd_index = np.hstack(
                     (
@@ -174,9 +176,9 @@ def get_GameStartEnd_index(args, gtec_dataset):
                 )
         else:
             game_StEnd_index = trigger_eegTimeIdxSeq[
-                np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[0][
-                    1:3
-                ]
+                np.where(trigger_IDSeq == int(triggerInfo["Global_Unity_Start_End"]))[
+                    0
+                ][1:3]
             ]
 
         return GlobalT0_index, game_StEnd_index[0], game_StEnd_index[1]

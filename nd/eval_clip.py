@@ -10,18 +10,18 @@ from omegaconf import DictConfig, OmegaConf
 
 import clip
 
-from brain2face.datasets.datasets import (
+from nd.datasets.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
     UHDCLIPDataset,
     StyleGANCLIPDataset,
     CollateFunctionForVideoHDF5,
 )
-from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
-from brain2face.models.vision_encoders import ViT, ViViT, ViViTReduceTime, Unet3DEncoder
-from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
-from brain2face.utils.train_utils import sequential_apply
-from brain2face.utils.eval_utils import (
+from nd.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
+from nd.models.vision_encoders import ViT, ViViT, ViViTReduceTime, Unet3DEncoder
+from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
+from nd.utils.train_utils import sequential_apply
+from nd.utils.eval_utils import (
     VisionSaver,
     EmbeddingSaver,
     update_with_eval,

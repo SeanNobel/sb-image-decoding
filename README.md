@@ -111,21 +111,21 @@ pip install -e .
 ### Yanagisawa Lab GOD
 
 ```bash
-python brain2face/preprocs/ylab_god.py
+python nd/preprocs/ylab_god.py
 ```
 
 ### Yanagisawa Lab OpenFace (subject E0030)
 
 ```bash
-python brain2face/preprocs/ylab_e0030.py
+python nd/preprocs/ylab_e0030.py
 ```
 
 ### UHD
 
 ```bash
-nohup python brain2face/preprocs/uhd.py start_subj=0 end_subj=8 > logs/uhd/out1.log &
-nohup python brain2face/preprocs/uhd.py start_subj=8 end_subj=16 > logs/uhd/out2.log &
-nohup python brain2face/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out3.log &
+nohup python nd/preprocs/uhd.py start_subj=0 end_subj=8 > logs/uhd/out1.log &
+nohup python nd/preprocs/uhd.py start_subj=8 end_subj=16 > logs/uhd/out2.log &
+nohup python nd/preprocs/uhd.py start_subj=16 end_subj=22 > logs/uhd/out3.log &
 ```
 
 ### Hayashi Lab @ AIST
@@ -142,10 +142,10 @@ gdown https://drive.google.com/uc?id=1EM87UquaoQmk17Q8d5kYIAHqu0dkYqdT
 - Run preprocess (using 4 GPUs)
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 nohup python brain2face/preprocs/stylegan.py start_subj=0 end_subj=8 > logs/ica/out1.log &
-CUDA_VISIBLE_DEVICES=1 nohup python brain2face/preprocs/stylegan.py start_subj=8 end_subj=16 > logs/ica/out2.log &
-CUDA_VISIBLE_DEVICES=2 nohup python brain2face/preprocs/stylegan.py start_subj=16 end_subj=24 > logs/ica/out3.log &
-CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=24 end_subj=32 > logs/ica/out4.log &
+CUDA_VISIBLE_DEVICES=0 nohup python nd/preprocs/stylegan.py start_subj=0 end_subj=8 > logs/ica/out1.log &
+CUDA_VISIBLE_DEVICES=1 nohup python nd/preprocs/stylegan.py start_subj=8 end_subj=16 > logs/ica/out2.log &
+CUDA_VISIBLE_DEVICES=2 nohup python nd/preprocs/stylegan.py start_subj=16 end_subj=24 > logs/ica/out3.log &
+CUDA_VISIBLE_DEVICES=3 nohup python nd/preprocs/stylegan.py start_subj=24 end_subj=32 > logs/ica/out4.log &
 ```
 
 <br>
@@ -154,10 +154,10 @@ CUDA_VISIBLE_DEVICES=3 nohup python brain2face/preprocs/stylegan.py start_subj=2
 
 ```bash
 # Normal
-python brain2face/train_clip.py config_path={path to config}.yaml 
+python nd/train_clip.py config_path={path to config}.yaml 
 
 # Sweep
-nohup python brain2face/train_clip.py config_path={path to config}.yaml sweep=True > logs/{path to log}.log &
+nohup python nd/train_clip.py config_path={path to config}.yaml sweep=True > logs/{path to log}.log &
 ```
 
 <br>
@@ -165,7 +165,7 @@ nohup python brain2face/train_clip.py config_path={path to config}.yaml sweep=Tr
 ## CLIP evaluation (save CLIP embeds + corresponding images / videos)
 
 ```bash
-python brain2face/eval_clip.py config_path={path to config}.yaml
+python nd/eval_clip.py config_path={path to config}.yaml
 ```
 
 <br>
@@ -173,7 +173,7 @@ python brain2face/eval_clip.py config_path={path to config}.yaml
 ## DALLE-2 prior training
 
 ```bash
-python brain2face/train_prior.py config_path={path to config}.yaml
+python nd/train_prior.py config_path={path to config}.yaml
 ```
 
 <br>
@@ -183,13 +183,13 @@ python brain2face/train_prior.py config_path={path to config}.yaml
 ### Image
 
 ```bash
-nohup python brain2face/train_image_decoder.py config_path={path to config}.yaml > logs/{path to log}.log &
+nohup python nd/train_image_decoder.py config_path={path to config}.yaml > logs/{path to log}.log &
 ```
 
 ### Video
 
 ```bash
-nohup python brain2face/train_video_decoder.py config_path={path to config}.yaml > logs/{path to log}.log &
+nohup python nd/train_video_decoder.py config_path={path to config}.yaml > logs/{path to log}.log &
 ```
 
 ### Video (with DeepSpeed)
@@ -199,13 +199,13 @@ nohup python brain2face/train_video_decoder.py config_path={path to config}.yaml
 - One cannot use nohup with many distributed training APIs (https://github.com/pytorch/pytorch/issues/67538). Use tmux instead.
 
 ```bash
-accelerate launch brain2face/train_video_decoder.py config_path={path to config}.yaml
+accelerate launch nd/train_video_decoder.py config_path={path to config}.yaml
 ```
 
 ```bash
 tmux new -s train-video-decoder
 
-CUDA_VISIBLE_DEVICES=2,3 accelerate launch brain2face/train_video_decoder.py config_path=uhd/video/decoder/static-emb.yaml use_wandb=True
+CUDA_VISIBLE_DEVICES=2,3 accelerate launch nd/train_video_decoder.py config_path=uhd/video/decoder/static-emb.yaml use_wandb=True
 
 [Ctrl+b -> d] # detach from tmux session
 
@@ -226,13 +226,13 @@ vi ~/.cache/huggingface/accelerate/default_config.yaml
 ### Image
 
 ```bash
-python brain2face/eval_image_pipeline.py config_path={path to config}.yaml
+python nd/eval_image_pipeline.py config_path={path to config}.yaml
 ```
 
 ### Video
 
 ```bash
-python brain2face/eval_video_pipeline.py config_path={path to config}.yaml
+python nd/eval_video_pipeline.py config_path={path to config}.yaml
 ```
 
 <br>
@@ -242,7 +242,7 @@ python brain2face/eval_video_pipeline.py config_path={path to config}.yaml
 ### Distributed DALLE-2 prior training for image (deprecated)
 
 ```bash
-python brain2face/distributed_train_prior.py
+python nd/distributed_train_prior.py
 ```
 
 ### Distributed DALLE-2 decoder training for image (deprecated)
@@ -256,5 +256,5 @@ huggingface-cli login
 # need to create this directory manually
 mkdir .tracker_data
 # Run distributedtraining
-python brain2face/train_decoder_distributed.py
+python nd/train_decoder_distributed.py
 ```

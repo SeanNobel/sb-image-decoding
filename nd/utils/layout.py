@@ -8,7 +8,7 @@ from glob import glob
 from natsort import natsorted
 from typing import Union, List, Tuple, Optional
 
-from brain2face.utils.gTecUtils.gTecUtils import loadMontage
+from nd.utils.gTecUtils.gTecUtils import loadMontage
 
 
 class DynamicChanLoc2d:

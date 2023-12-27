@@ -10,7 +10,7 @@ from einops.layers.torch import Rearrange
 
 from typing import Optional, Union
 
-from brain2face.utils.train_utils import conv_output_size
+from nd.utils.train_utils import conv_output_size
 
 
 def pair(t):

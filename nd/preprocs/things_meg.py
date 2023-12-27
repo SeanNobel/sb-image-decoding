@@ -17,8 +17,8 @@ from typing import Tuple, List
 import hydra
 from omegaconf import DictConfig
 
-from brain2face.utils.brain_preproc import scale_clamp
-from brain2face.utils.train_utils import sequential_apply
+from nd.utils.brain_preproc import scale_clamp
+from nd.utils.train_utils import sequential_apply
 
 
 @torch.no_grad()

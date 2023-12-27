@@ -21,8 +21,8 @@ import torch
 
 torch.multiprocessing.set_start_method("spawn", force=True)
 
-from brain2face.utils.brain_preproc import brain_preproc
-from brain2face.utils.preproc_utils import crop_and_segment, crop_longer, h5_save
+from nd.utils.brain_preproc import brain_preproc
+from nd.utils.preproc_utils import crop_and_segment, crop_longer, h5_save
 
 
 def load_ecog_data(args, sync_df: pd.DataFrame) -> np.ndarray:

@@ -5,7 +5,7 @@ import pandas as pd
 from lxml import etree
 import xml.etree.ElementTree as ET
 from termcolor import cprint
-from brain2face.utils.constants import MONTAGE_INFO_PATH
+from nd.utils.constants import MONTAGE_INFO_PATH
 
 mne.set_log_level(verbose="WARNING")
 
@@ -49,7 +49,8 @@ class gTecDataset:
             )
         else:
             v = getValueFromXML(
-                self.hdf5["RawData"]["AcquisitionTaskDescription"][0], "SamplingFrequency"
+                self.hdf5["RawData"]["AcquisitionTaskDescription"][0],
+                "SamplingFrequency",
             )
             self.sfreq = int(v)
 
@@ -215,7 +216,11 @@ def loadMontage(fn: str):
     cXYZ = dict()
     for i, cName in enumerate(chanInfo["electrodename"]):
         xyz = np.array(
-            [chanInfo["xposition"][i], chanInfo["yposition"][i], chanInfo["zposition"][i]]
+            [
+                chanInfo["xposition"][i],
+                chanInfo["yposition"][i],
+                chanInfo["zposition"][i],
+            ]
         )
         cXYZ[cName] = xyz.astype(np.float32) / 1000
 

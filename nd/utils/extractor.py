@@ -7,7 +7,7 @@ from termcolor import cprint
 from datetime import timedelta
 from typing import Optional
 
-from brain2face.utils.vector2d import Vector2d
+from nd.utils.vector2d import Vector2d
 
 
 class FaceExtractor:

@@ -6,7 +6,7 @@ from tqdm import tqdm
 from termcolor import cprint
 from typing import Optional, Tuple, Union, List
 
-from brain2face.utils.preproc_utils import crop_and_segment
+from nd.utils.preproc_utils import crop_and_segment
 
 
 def scale_clamp(

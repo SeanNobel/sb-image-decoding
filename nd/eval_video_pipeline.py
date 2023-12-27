@@ -9,13 +9,18 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from dalle2_pytorch import DiffusionPriorNetwork, DiffusionPrior
-from dalle2_video.dalle2_video import DALLE2Video, Unet3D, UnetTemporalConv, VideoDecoder
+from dalle2_video.dalle2_video import (
+    DALLE2Video,
+    Unet3D,
+    UnetTemporalConv,
+    VideoDecoder,
+)
 
-from brain2face.datasets.datasets import UHDPipelineDataset
-from brain2face.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
-from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
-from brain2face.utils.train_utils import sequential_apply
-from brain2face.utils.eval_utils import update_with_eval, get_run_dir
+from nd.datasets.datasets import UHDPipelineDataset
+from nd.models.brain_encoder import BrainEncoder, BrainEncoderReduceTime
+from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
+from nd.utils.train_utils import sequential_apply
+from nd.utils.eval_utils import update_with_eval, get_run_dir
 
 
 @torch.no_grad()

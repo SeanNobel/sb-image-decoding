@@ -10,10 +10,10 @@ from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
-from brain2face.models.vector_quantizer import get_vector_quantizer, VectorQuantizer
-from brain2face.models.utils import DropBlock1D
-from brain2face.utils.layout import ch_locations_2d, DynamicChanLoc2d
-from brain2face.utils.train_utils import conv_output_size
+from nd.models.vector_quantizer import get_vector_quantizer, VectorQuantizer
+from nd.models.utils import DropBlock1D
+from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
+from nd.utils.train_utils import conv_output_size
 
 
 class SpatialAttention(nn.Module):

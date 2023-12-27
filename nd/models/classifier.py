@@ -10,7 +10,7 @@ from termcolor import cprint
 from typing import List
 import gc
 
-from brain2face.utils.loss import calc_similarity, top_k_accuracy
+from nd.utils.loss import calc_similarity, top_k_accuracy
 
 
 class DiagonalClassifier(nn.Module):

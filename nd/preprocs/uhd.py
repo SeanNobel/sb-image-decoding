@@ -8,9 +8,9 @@ import hydra
 from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, open_dict
 
-from brain2face.utils.brain_preproc import brain_preproc
-from brain2face.utils.face_preproc import FacePreprocessor
-from brain2face.utils.preproc_utils import get_uhd_data_paths, sequential_load, h5_save
+from nd.utils.brain_preproc import brain_preproc
+from nd.utils.face_preproc import FacePreprocessor
+from nd.utils.preproc_utils import get_uhd_data_paths, sequential_load, h5_save
 
 
 # FIXME: might cause error when running
@@ -21,7 +21,9 @@ def load_resample(chunk: np.ndarray, down: float):
     return chunk
 
 
-@hydra.main(version_base=None, config_path="../../configs/uhd/video", config_name="clip")
+@hydra.main(
+    version_base=None, config_path="../../configs/uhd/video", config_name="clip"
+)
 def main(args: DictConfig) -> None:
     with open_dict(args):
         args.root_dir = get_original_cwd()

@@ -13,7 +13,7 @@ from termcolor import cprint
 from typing import Optional, Tuple, List
 from pathlib import Path
 
-from brain2face.utils.constants import DLIB_PREDICTOR_PATH
+from nd.utils.constants import DLIB_PREDICTOR_PATH
 
 from encoder4editing.models.psp import pSp
 

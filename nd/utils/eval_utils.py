@@ -8,7 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 from termcolor import cprint
 from typing import Optional
 
-from brain2face.utils.constants import EMB_CHUNK_SIZE
+from nd.utils.constants import EMB_CHUNK_SIZE
 
 
 class VisionSaver:

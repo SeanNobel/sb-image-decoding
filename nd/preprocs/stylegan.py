@@ -15,15 +15,15 @@ import multiprocessing
 # ctx = multiprocessing.get_context("spawn")
 # torch.multiprocessing.set_start_method("spawn", force=True)
 
-from brain2face.utils.brain_preproc import brain_preproc
-from brain2face.utils.face_preproc import FacePreprocessor
-from brain2face.utils.stylegan_encoder import StyleGANEncoder
-from brain2face.utils.preproc_utils import (
+from nd.utils.brain_preproc import brain_preproc
+from nd.utils.face_preproc import FacePreprocessor
+from nd.utils.stylegan_encoder import StyleGANEncoder
+from nd.utils.preproc_utils import (
     get_face2brain_data_paths,
     crop_and_segment,
     h5_save,
 )
-from brain2face.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
+from nd.utils.gTecUtils.gtec_preproc import eeg_subset_fromTrigger
 
 from encoder4editing.utils.alignment import align_face
 
@@ -167,7 +167,9 @@ def main(args: DictConfig) -> None:
         else:
             Y = Y[face_drops_prev:-face_drops_after]
 
-        assert len(X) == len(Y), "Brain and face data have different number of segments."
+        assert len(X) == len(
+            Y
+        ), "Brain and face data have different number of segments."
         cprint(f"Session {i} EEG: {X.shape}", color="cyan")
         cprint(f"Session {i} face: {Y.shape}", color="cyan")
 

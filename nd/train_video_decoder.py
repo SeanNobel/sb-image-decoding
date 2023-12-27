@@ -15,7 +15,7 @@ from accelerate import Accelerator
 from dalle2_video.dalle2_video import Unet3D, VideoDecoder
 from dalle2_video.trainer import VideoDecoderTrainer
 
-from brain2face.datasets.datasets import (
+from nd.datasets.datasets import (
     NeuroDiffusionCLIPEmbVideoDataset,
     CollateFunctionForVideoHDF5,
 )

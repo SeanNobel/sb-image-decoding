@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 
-from brain2face.datasets.datasets import NeuroDiffusionCLIPEmbImageDataset
+from nd.datasets.datasets import NeuroDiffusionCLIPEmbImageDataset
 
 
 def train(args: DictConfig) -> None:
@@ -32,9 +32,7 @@ def train(args: DictConfig) -> None:
         wandb.run.name = args.train_name
         wandb.run.save()
 
-    run_dir = os.path.join(
-        "runs/decoder", args.dataset.lower(), args.train_name
-    )
+    run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.train_name)
     os.makedirs(run_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -42,9 +40,7 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    train_set = NeuroDiffusionCLIPEmbImageDataset(
-        args.dataset, args.clip_train_name
-    )
+    train_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset, args.clip_train_name)
     test_set = NeuroDiffusionCLIPEmbImageDataset(
         args.dataset, args.clip_train_name, train=False
     )
@@ -181,10 +177,10 @@ def train(args: DictConfig) -> None:
 def run(_args: DictConfig) -> None:
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
-    
+
     with open_dict(args):
         args.use_wandb = _args.use_wandb
-    
+
     train(args)
 
     # sweep = _args.sweep

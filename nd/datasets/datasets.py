@@ -23,14 +23,14 @@ from omegaconf import DictConfig
 import clip
 from clip.model import CLIP
 
-from brain2face.utils.brain_preproc import segment_then_blcorr
-from brain2face.utils.train_utils import sequential_apply
-from brain2face.utils.preproc_utils import (
+from nd.utils.brain_preproc import segment_then_blcorr
+from nd.utils.train_utils import sequential_apply
+from nd.utils.preproc_utils import (
     crop_and_segment,
     crop_longer,
     sequential_load,
 )
-from brain2face.utils.timer import timer
+from nd.utils.timer import timer
 
 mne.set_log_level(verbose="WARNING")
 mp_face_mesh = mp.solutions.face_mesh
@@ -84,9 +84,9 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
                 assert not isinstance(Y, h5py._hl.dataset.Dataset), "Y must be segmented in preproc when it's video."  # fmt: skip
                 X, Y = crop_longer(X, Y)
                 if classes is not None:
-                    classes = classes[:len(Y)]
+                    classes = classes[: len(Y)]
 
-            assert len(X) == len(Y) and len(Y) == len(classes) 
+            assert len(X) == len(Y) and len(Y) == len(classes)
 
             if args.split == "deep":
                 split_idx = int(X.shape[0] * args.train_ratio)
@@ -107,7 +107,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
                 subject_idx = np.where(np.array(self.subject_names) == name)[0][0]
 
             subject_idx *= torch.ones(X.shape[0], dtype=torch.uint8)
-            
+
             cprint(f"X: {X.shape} | Y: {Y.shape} | subject_idx: {subject_idx.shape}","cyan")  # fmt: skip
 
             X_list.append(X)
@@ -139,7 +139,7 @@ class NeuroDiffusionCLIPDatasetBase(torch.utils.data.Dataset):
         self.Y = torch.cat(Y_list)
         del Y_list
         cprint(f"self.Y: {self.Y.shape}", color="cyan")
-        
+
         self.classes = torch.cat(classes_list) if len(classes_list) > 0 else None
         del classes_list
         if self.classes is not None:
@@ -258,13 +258,9 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
                 self._mixed_loader, args, train=train, _loader=self._loader
             )
         elif args.split == "mixed_shallow":
-            loader = partial(
-                self._mixed_loader, args, train=None, _loader=self._loader
-            )
+            loader = partial(self._mixed_loader, args, train=None, _loader=self._loader)
         elif args.split == "rep_or_part":
-            loader = partial(
-                self._rep_loader, args, train=train, _loader=self._loader
-            )
+            loader = partial(self._rep_loader, args, train=train, _loader=self._loader)
         else:
             loader = partial(self._loader, args=args, train=train)
 
@@ -282,7 +278,7 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         split and that will be done by torch.utils.data.random_split in training script.
         """
         X, Y, classes = [], [], []
-        
+
         for train_orig in [True, False]:
             _X, _Y, _classes = _loader(args, subject_path, train_orig)
 
@@ -304,39 +300,42 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
             classes.append(_classes)
 
         return torch.cat(X), torch.cat(Y), torch.cat(classes)
-    
+
     @staticmethod
     def _rep_loader(
-        args, subject_path: str, train: bool, _loader: Callable, 
+        args,
+        subject_path: str,
+        train: bool,
+        _loader: Callable,
     ) -> Tuple[torch.Tensor]:
         """
         Loads rep1 or part1 for train and rep2 or part2 for test.
         Returns:
             X: ( samples, channels, timesteps )
             Y: ( samples, 3, image_size, image_size )
-        """        
+        """
         # NOTE: Using only Trn, as Val sessions are done only once.
         image_fname_filepaths = natsorted(
             glob.glob(os.path.join(subject_path, "image_*_trn_*.txt"))
         )
-        
+
         if train:
             image_fname_filepaths = image_fname_filepaths[:-1]
         else:
             image_fname_filepaths = image_fname_filepaths[-1:]
-            
-        cprint(f"{'Train' if train else 'Test'} sessions for subject {subject_path.split('/')[-2]}: {len(image_fname_filepaths)}", "cyan") # fmt: skip
-            
+
+        cprint(f"{'Train' if train else 'Test'} sessions for subject {subject_path.split('/')[-2]}: {len(image_fname_filepaths)}", "cyan")  # fmt: skip
+
         X, Y, classes = [], [], []
         for fpath in image_fname_filepaths:
             _X, _Y, _classes = _loader(
                 args, subject_path=None, train=True, image_fname_filepath=fpath
             )
-            
+
             X.append(_X)
             Y.append(_Y)
             classes.append(_classes)
-            
+
             print(f"{os.path.basename(fpath)} X: {_X.shape} | Y: {_Y.shape}")
 
         return torch.cat(X), torch.cat(Y), torch.cat(classes)
@@ -346,7 +345,7 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         args,
         subject_path: Optional[str],
         train: bool,
-        image_fname_filepath: Optional[str] = None
+        image_fname_filepath: Optional[str] = None,
     ) -> Tuple[torch.Tensor]:
         """
         Returns:
@@ -359,24 +358,22 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         if image_fname_filepath is None:
             assert subject_path is not None, "subject_path must be given when image_fname_filepath is None."  # fmt: skip
             cprint(f"Preprocessing subject {subject_path.split('/')[-2]}", "cyan")
-            
+
             image_fname_filepath = os.path.join(
                 subject_path, f"image_{'train' if train else 'test'}.txt"
             )
 
-        image_fnames = np.loadtxt(
-            image_fname_filepath, delimiter=",", dtype=str
-        )
+        image_fnames = np.loadtxt(image_fname_filepath, delimiter=",", dtype=str)
 
         images_dir = os.path.join(args.data_root, f"images_{'trn' if train else 'val'}")
-        
+
         prefix2class = np.loadtxt(
             f"assets/god_{'trn' if train else 'val'}_prefix2class.csv",
             delimiter=",",
             dtype=str,
         )
         prefix2class = {prefix: float(i) for prefix, i in prefix2class}
-        
+
         Y = []
         classes = []
         dropped_idxs = []
@@ -403,7 +400,9 @@ class YLabGODCLIPDataset(NeuroDiffusionCLIPDatasetBase):
         # -----------
         #    ECoG
         # -----------
-        ecog_filepath = image_fname_filepath.replace("image", "brain").replace(".txt", ".npy")
+        ecog_filepath = image_fname_filepath.replace("image", "brain").replace(
+            ".txt", ".npy"
+        )
         X = np.load(ecog_filepath)
         X = torch.from_numpy(np.delete(X, dropped_idxs, axis=0).astype(np.float32))
         X = X[:, :, int(args.seq_onset * args.brain_resample_sfreq) : int((args.seq_onset + args.seq_len) * args.brain_resample_sfreq)]  # fmt: skip
