@@ -470,7 +470,7 @@ class TemporalAggregation(nn.Module):
                 "linear_projection",
                 nn.Conv1d(
                     in_channels=args.F,
-                    out_channels=args.F * 4 * multiplier,
+                    out_channels=args.F * 2 * multiplier,
                     kernel_size=1,
                 ),
             )
@@ -488,8 +488,8 @@ class TemporalAggregation(nn.Module):
                 "mlp_projector",
                 nn.Sequential(
                     nn.Flatten(),
-                    nn.Linear(args.F * 4 * multiplier, args.F * 2 * multiplier),
-                    nn.GELU(),
+                    # nn.Linear(args.F * 4 * multiplier, args.F * 2 * multiplier),
+                    # nn.GELU(),
                     nn.Linear(args.F * 2 * multiplier, args.F * multiplier),
                     nn.GELU(),
                 ),
