@@ -1,9 +1,16 @@
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple
+from termcolor import cprint
 
-from vqtorch.nn import VectorQuant, GroupVectorQuant, ResidualVectorQuant
+from vqtorch.nn import (
+    VectorQuant,
+    AffineTransform,
+    GroupVectorQuant,
+    ResidualVectorQuant,
+)
 
 
 def get_vector_quantizer(args) -> nn.Module:
@@ -17,6 +24,7 @@ def get_vector_quantizer(args) -> nn.Module:
         return VectorQuantizer(
             num_embeds=args.vq_num_embeds,
             embed_dim=args.F,
+            affine_lr=args.vq_affine_lr,
             use_ema=args.vq_use_ema,
             alpha=args.vq_alpha,
             beta=args.vq_beta,
@@ -54,7 +62,8 @@ class VectorQuantizer(nn.Module):
         self,
         num_embeds: int,
         embed_dim: int,
-        use_ema: bool = True,
+        affine_lr: float = 0.0,
+        use_ema: bool = False,
         alpha: float = 1.0,
         beta: float = 0.25,
         gamma: float = 0.99,
@@ -87,6 +96,16 @@ class VectorQuantizer(nn.Module):
         elif emb_init == "uniform":
             self.embedding.weight.data.uniform_(-1 / num_embeds, 1 / num_embeds)
 
+        if affine_lr > 0:
+            assert not use_ema, "EMA is not compatible with affine transform."
+
+            self.affine_transform = AffineTransform(
+                self.embed_dim,
+                use_running_statistics=False,
+                lr_scale=affine_lr,
+                num_groups=1,
+            )
+
         if use_ema:
             self.register_buffer("ema_cluster_size", torch.zeros(num_embeds))
 
@@ -109,13 +128,19 @@ class VectorQuantizer(nn.Module):
         z_e = z_e.permute(0, 2, 1).contiguous()  # ( b, t', embed_dim )
         z_e_shape = z_e.shape
 
+        if hasattr(self, "affine_transform"):
+            self.affine_transform.update_running_statistics(z_e, self.embedding.weight)
+            codebook = self.affine_transform(self.embedding.weight)
+        else:
+            codebook = self.embedding.weight
+
         z_e_flat = z_e.view(-1, self.embed_dim)  # ( b * t', embed_dim )
 
         # L2 distances
         distances = (
             torch.sum(z_e_flat**2, dim=1, keepdim=True)
-            + torch.sum(self.embedding.weight**2, dim=1)
-            - 2 * torch.matmul(z_e_flat, self.embedding.weight.T)
+            + torch.sum(codebook**2, dim=1)
+            - 2 * torch.matmul(z_e_flat, codebook.T)
         )
         # ( b * t', num_embeds )
 
@@ -129,7 +154,7 @@ class VectorQuantizer(nn.Module):
         encodings.scatter_(1, encoding_indices, 1)
         # ( b * t', num_embeds )
 
-        z_q = torch.matmul(encodings, self.embedding.weight).view(z_e_shape)
+        z_q = torch.matmul(encodings, codebook).view(z_e_shape)
         # ( b, t', embed_dim )
 
         if self.use_ema and self.training:
