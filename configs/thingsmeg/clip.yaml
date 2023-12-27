@@ -44,7 +44,7 @@ D2: 320
 K: 32
 spatial_attention: True
 conv_block: dilated_conv # dilated_conv or inception
-num_conv_blocks: 2
+num_conv_blocks: 5
 d_drop: 0.3 # Dropout rate for spatial-attention
 p_drop: 0.3 # Dropout rate for conv blocks
 downsample: False # Can be a list of bools with length num_conv_blocks
@@ -59,15 +59,26 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-vq_type: aggregated # null or raw or (temporally) aggregated 
-vq_num_embeds: 512
-vq_num_concepts: 8 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
-vq_use_ema: True
+vq_type: affine # null / original / affine (= vqtorch basic) / group / residual
+vq_aggregated: True
+vq_num_embeds: 2048
+vq_num_concepts: 16 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
 vq_alpha: 1.0 # How much to weight regularization terms against CLIP loss.
-vq_beta: 0.0 # How much to weight encoder regularization term against codebook loss.
-# When using EMA for codebook, beta needs to be zero. https://arxiv.org/abs/2305.08842
+vq_beta: 0.1 # How much to weight encoder regularization term against codebook loss.
+vq_affine_lr: 0.1 # lr scale for affine parameters
+# EMA. When using EMA for codebook, beta should be zero? https://arxiv.org/abs/2305.08842
+vq_use_ema: False
 vq_gamma: 0.99 # Decay for EMA of codebook.
 vq_epsilon: 1e-5 # Epsilon for EMA of codebook.
+# vqtorch
+vq_kmeans_init: False # Whether to use kmeans++ init
+vq_norm: null # Noralization for input vectors
+vq_cb_norm: null # Normalization for codebook vectors
+vq_sync_nu: 0.2 # Codebook synchronization contribution
+vq_replace_freq: 20 # Frequency to replace dead codes
+## group
+vq_groups: 1 # Number of groups for group VQ
+vq_share: True # If True, codebook is shared for each sub-vector.
 
 drop_mode: dropout
 
@@ -126,31 +137,41 @@ acc_topk: [1, 5]
 
 accum_grad: False
 
-patience: 100
+patience: 50
 
 chance: False
 
 test_with_whole: True
 
-plot_latents: True
+plot_latents: False
 
 num_workers: 4
 seed: 1234
 cuda_id: 1
 
-sweep_count: 16
+sweep_count: 64
 sweep_config:
-  name: circle_clip_vqbeta0
+  name: affine_agg-vq_16concepts_5blocks
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    use_high_categories:
-      values: [False, True]
+    D2:
+      values: [640, 320]
 
-    push_negative:
-      values: [False, True]
+    # vq_affine_lr:
+    #   values: [0.1]
+    # vq_sync_nu:
+    #   values: [0.2, 0.5]
+    # vq_replace_freq:
+    #   values: [20]
+
+    # use_high_categories:
+    #   values: [False, True]
+
+    # push_negative:
+    #   values: [False, True]
 
     # clip_margin_init:
     #   values: [1.0, 10.0, 100.0]
@@ -161,7 +182,7 @@ sweep_config:
     #   values: [dropblock, dropout1d, dropout]
 
     # loss:
-    #   values: [nnclip]
+    #   values: [circleclip, clip]
     # nnclip_k:
     #   values: [4, 12]
     # nnclip_symmetric:
@@ -176,17 +197,17 @@ sweep_config:
     # temporal_aggregation:
     #   values: [original, affine]
     # num_conv_blocks:
-    #   values: [5, 2]
-    # d_drop:
-    #   values: [0.1, 0.3]
-    #   # distribution: uniform
-    #   # min: 0.1
-    #   # max: 0.7
-    # p_drop:
-    #   values: [0.1, 0.3, 0.6]
-    #   # distribution: uniform
-    #   # min: 0.1
-    #   # max: 0.7
+    #   values: [5]
+    d_drop:
+      values: [0.1, 0.3]
+      # distribution: uniform
+      # min: 0.1
+      # max: 0.7
+    p_drop:
+      values: [0.1, 0.3]
+      # distribution: uniform
+      # min: 0.1
+      # max: 0.7
 
     # seq_onset:
     #   values: [0.0, 0.5, 1.0, 1.5]
@@ -198,20 +219,21 @@ sweep_config:
     # ksizes.conv_block:
     #   values: [3, 5, 7]
 
-    vq_type:
-      values: [raw, aggregated]
-    # vq_num_embeds:
-    #   values: [64, 256, 768]
+    # vq_type:
+    #   values: [raw, aggregated]
+    vq_num_embeds:
+      values: [8192, 2048]
     # vq_num_concepts:
     #   values: [8, 32, 128]
     # vq_use_ema:
     #   values: [True]
-    # vq_alpha:
-    #   values: [0.001, 0.01, 0.1]
-    # vq_beta:
-    #   values: [0.05, 0.25, 1.0]
-    vq_gamma:
-      values: [0.99, 0.95]
+    vq_alpha:
+      values: [5.0, 1.0]
+    vq_beta:
+      values: [0.02, 0.1]
+    # vq_gamma:
+    #   values: [0.99, 0.95]
+
     # learn_temperature:
     #   values: [False]
     # biases.conv_block:
