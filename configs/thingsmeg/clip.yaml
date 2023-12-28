@@ -44,7 +44,7 @@ D2: 320
 K: 32
 spatial_attention: True
 conv_block: dilated_conv # dilated_conv or inception
-num_conv_blocks: 5
+num_conv_blocks: 2
 d_drop: 0.3 # Dropout rate for spatial-attention
 p_drop: 0.3 # Dropout rate for conv blocks
 downsample: False # Can be a list of bools with length num_conv_blocks
@@ -62,7 +62,7 @@ biases:
 vq_type: affine # null / original / affine (= vqtorch basic) / group / residual
 vq_aggregated: True
 vq_num_embeds: 2048
-vq_num_concepts: 16 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
+vq_num_concepts: 32 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
 vq_alpha: 1.0 # How much to weight regularization terms against CLIP loss.
 vq_beta: 0.1 # How much to weight encoder regularization term against codebook loss.
 vq_affine_lr: 0.1 # lr scale for affine parameters
@@ -85,7 +85,7 @@ drop_mode: dropout
 reduce_time: True
 
 # ==== Loss ==== #
-loss: circleclip
+loss: clip
 
 reduction: mean
 
@@ -147,11 +147,11 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 1
+cuda_id: 2
 
 sweep_count: 64
 sweep_config:
-  name: affine_agg-vq_16concepts_5blocks
+  name: affine_agg-vq_32concepts_2048embeds_clip
   method: grid
   metric:
     name: test_top5_acc
@@ -196,8 +196,8 @@ sweep_config:
     #   values: [True]
     # temporal_aggregation:
     #   values: [original, affine]
-    # num_conv_blocks:
-    #   values: [5]
+    num_conv_blocks:
+      values: [5, 2]
     d_drop:
       values: [0.1, 0.3]
       # distribution: uniform
@@ -221,14 +221,14 @@ sweep_config:
 
     # vq_type:
     #   values: [raw, aggregated]
-    vq_num_embeds:
-      values: [8192, 2048]
+    # vq_num_embeds:
+    #   values: [2048]
     # vq_num_concepts:
     #   values: [8, 32, 128]
     # vq_use_ema:
     #   values: [True]
     vq_alpha:
-      values: [5.0, 1.0]
+      values: [1.0, 5.0]
     vq_beta:
       values: [0.02, 0.1]
     # vq_gamma:
