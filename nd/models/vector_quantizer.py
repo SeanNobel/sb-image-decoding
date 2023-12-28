@@ -26,7 +26,6 @@ def get_vector_quantizer(args) -> nn.Module:
             embed_dim=args.F,
             affine_lr=args.vq_affine_lr,
             use_ema=args.vq_use_ema,
-            alpha=args.vq_alpha,
             beta=args.vq_beta,
             gamma=args.vq_gamma,
             epsilon=args.vq_epsilon,
@@ -64,7 +63,6 @@ class VectorQuantizer(nn.Module):
         embed_dim: int,
         affine_lr: float = 0.0,
         use_ema: bool = False,
-        alpha: float = 1.0,
         beta: float = 0.25,
         gamma: float = 0.99,
         epsilon: float = 1e-5,
@@ -85,7 +83,6 @@ class VectorQuantizer(nn.Module):
         self.num_embeds = num_embeds
         self.embed_dim = embed_dim
         self.use_ema = use_ema
-        self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
         self.epsilon = epsilon
@@ -180,12 +177,10 @@ class VectorQuantizer(nn.Module):
         e_latent_loss = F.mse_loss(z_q.detach(), z_e)
 
         if self.use_ema:
-            vq_loss = self.alpha * self.beta * e_latent_loss
+            vq_loss = self.beta * e_latent_loss
         else:
             q_latent_loss = F.mse_loss(z_q, z_e.detach())
-            vq_loss = self.alpha * (
-                (1 - self.beta) * q_latent_loss + self.beta * e_latent_loss
-            )
+            vq_loss = (1 - self.beta) * q_latent_loss + self.beta * e_latent_loss
 
         # Straight-through estimator
         z_q = z_e + (z_q - z_e).detach()

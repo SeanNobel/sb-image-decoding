@@ -457,7 +457,9 @@ class OriginalAggregator(nn.Module):
 
 
 class TemporalAggregation(nn.Module):
-    def __init__(self, args, temporal_dim: int, multiplier: int = 1) -> None:
+    def __init__(
+        self, args, temporal_dim: int, multiplier: int = 1, expand: int = 1
+    ) -> None:
         super().__init__()
 
         if args.temporal_aggregation == "original":
@@ -470,7 +472,7 @@ class TemporalAggregation(nn.Module):
                 "linear_projection",
                 nn.Conv1d(
                     in_channels=args.F,
-                    out_channels=args.F * 2 * multiplier,
+                    out_channels=args.F * expand * multiplier,
                     kernel_size=1,
                 ),
             )
@@ -490,7 +492,7 @@ class TemporalAggregation(nn.Module):
                     nn.Flatten(),
                     # nn.Linear(args.F * 4 * multiplier, args.F * 2 * multiplier),
                     # nn.GELU(),
-                    nn.Linear(args.F * 2 * multiplier, args.F * multiplier),
+                    nn.Linear(args.F * expand * multiplier, args.F * multiplier),
                     nn.GELU(),
                 ),
             )
@@ -626,6 +628,7 @@ class BrainEncoder(nn.Module):
 
         if vq:
             self.vector_quantizer = get_vector_quantizer(args)
+            self.alpha = args.vq_alpha
 
             if args.vq_aggregated:
                 self.vector_quantizer = AggregatedVectorQuantizer(
@@ -648,6 +651,7 @@ class BrainEncoder(nn.Module):
 
         if self.vq:
             X, vq_loss, perplexity = self.vector_quantizer(X)
+            vq_loss = self.alpha * vq_loss
 
         if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
