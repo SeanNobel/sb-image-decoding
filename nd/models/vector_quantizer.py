@@ -34,7 +34,7 @@ def get_vector_quantizer(args) -> nn.Module:
         vq_args = {
             "feature_size": args.F,
             "num_codes": args.vq_num_embeds,
-            "beta": args.vq_beta,
+            "beta": 1 - args.vq_beta,
             "kmeans_init": args.vq_kmeans_init,
             "norm": args.vq_norm,
             "cb_norm": args.vq_cb_norm,
