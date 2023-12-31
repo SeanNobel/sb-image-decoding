@@ -45,8 +45,8 @@ K: 32
 spatial_attention: True
 conv_block: dilated_conv # dilated_conv or inception
 num_conv_blocks: 2
-d_drop: 0.3 # Dropout rate for spatial-attention
-p_drop: 0.3 # Dropout rate for conv blocks
+d_drop: 0.1 # Dropout rate for spatial-attention
+p_drop: 0.1 # Dropout rate for conv blocks
 downsample: False # Can be a list of bools with length num_conv_blocks
 final_ksize: 1
 final_stride: 1
@@ -59,12 +59,13 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-vq_type: affine # null / original / affine (= vqtorch basic) / group / residual
+vq_type: residual # null / original / affine (= vqtorch basic) / group / residual
 vq_aggregated: True
 vq_num_embeds: 2048
 vq_num_concepts: 32 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
 vq_alpha: 1.0 # How much to weight regularization terms against CLIP loss.
 vq_beta: 0.1 # How much to weight encoder regularization term against codebook loss.
+# NOTE that this beta is (1 - beta) in vqtorch paper.
 vq_affine_lr: 0.1 # lr scale for affine parameters
 # EMA. When using EMA for codebook, beta should be zero? https://arxiv.org/abs/2305.08842
 vq_use_ema: False
@@ -76,7 +77,8 @@ vq_norm: null # Noralization for input vectors
 vq_cb_norm: null # Normalization for codebook vectors
 vq_sync_nu: 0.2 # Codebook synchronization contribution
 vq_replace_freq: 20 # Frequency to replace dead codes
-## group
+vq_alternate: False # Whether to alternate between task loss and vq loss
+# NOTE that vq_beta will be overwritten by 0.0 when vq_alternate is True.
 vq_groups: 1 # Number of groups for group VQ
 vq_share: True # If True, codebook is shared for each sub-vector.
 
@@ -85,7 +87,7 @@ drop_mode: dropout
 reduce_time: True
 
 # ==== Loss ==== #
-loss: clip
+loss: circleclip
 
 reduction: mean
 
@@ -147,18 +149,26 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 2
+cuda_id: 0
 
-sweep_count: 64
+sweep_count: 12
 sweep_config:
-  name: affine_agg-vq_32concepts_2048embeds_clip
+  name: vq_residual
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    D2:
-      values: [640, 320]
+    vq_groups:
+      values: [4, 2, 1]
+    vq_share:
+      values: [False, True]
+
+    # vq_alternate:
+    #   values: [False]
+
+    # D2:
+    #   values: [640, 320] # 320
 
     # vq_affine_lr:
     #   values: [0.1]
@@ -182,7 +192,7 @@ sweep_config:
     #   values: [dropblock, dropout1d, dropout]
 
     # loss:
-    #   values: [circleclip, clip]
+    #   values: [circleclip]
     # nnclip_k:
     #   values: [4, 12]
     # nnclip_symmetric:
@@ -196,18 +206,18 @@ sweep_config:
     #   values: [True]
     # temporal_aggregation:
     #   values: [original, affine]
-    num_conv_blocks:
-      values: [5, 2]
-    d_drop:
-      values: [0.1, 0.3]
-      # distribution: uniform
-      # min: 0.1
-      # max: 0.7
-    p_drop:
-      values: [0.1, 0.3]
-      # distribution: uniform
-      # min: 0.1
-      # max: 0.7
+    # num_conv_blocks:
+    #   values: [5, 2] # 2
+    # d_drop:
+    #   values: [0.1, 0.3] # 0.3
+    #   # distribution: uniform
+    #   # min: 0.1
+    #   # max: 0.7
+    # p_drop:
+    #   values: [0.1, 0.3] # 0.3
+    #   # distribution: uniform
+    #   # min: 0.1
+    #   # max: 0.7
 
     # seq_onset:
     #   values: [0.0, 0.5, 1.0, 1.5]
@@ -227,10 +237,10 @@ sweep_config:
     #   values: [8, 32, 128]
     # vq_use_ema:
     #   values: [True]
-    vq_alpha:
-      values: [1.0, 5.0]
+    # vq_alpha:
+    #   values: [1.0]
     vq_beta:
-      values: [0.02, 0.1]
+      values: [0.1, 0.5]
     # vq_gamma:
     #   values: [0.99, 0.95]
 
