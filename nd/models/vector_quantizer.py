@@ -44,6 +44,16 @@ def get_vector_quantizer(args) -> nn.Module:
             "dim": 1,
         }
 
+        if args.vq_alternate:
+            vq_args.update(
+                {
+                    "beta": 1.0,  # Overwrite beta
+                    "inplace_optimizer": lambda *args, **kwargs: torch.optim.SGD(
+                        *args, **kwargs, lr=50.0, momentum=0.9
+                    ),
+                }
+            )
+
         if args.vq_type == "affine":
             vq = VectorQuant(**vq_args)
         elif args.vq_type == "group":
