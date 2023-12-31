@@ -63,6 +63,7 @@ def train():
         wandb.run.name = run_name
         args.__dict__.update(wandb.config)
         cprint(wandb.config, "cyan")
+        wandb.config.update(args.__dict__)
 
     run_dir = os.path.join("runs", args.dataset.lower(), run_name)
     os.makedirs(run_dir, exist_ok=True)
@@ -275,7 +276,10 @@ def train():
                 else:
                     clip_loss = loss_func(Y, Z)
 
-                loss = clip_loss + vq_loss
+                if not args.vq_alternate:
+                    loss = clip_loss + vq_loss
+                else:
+                    loss = clip_loss
             else:
                 if isinstance(brain_encoder, BrainEncoder):
                     Z = brain_encoder(X, subject_idxs)
