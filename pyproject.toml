@@ -3,8 +3,8 @@ requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "brain2face"
-description = "brain2face"
+name = "nd"
+description = "neuro-diffusion"
 readme = "README.md"
 license = {file = "LICENSE"}
 classifiers = [

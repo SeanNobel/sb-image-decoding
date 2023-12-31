@@ -6,8 +6,8 @@ assets/*
 
 generated/
 
-brain2face/models/_spatial_attn_impls.py
-brain2face/models/lightning/
+nd/models/_spatial_attn_impls.py
+nd/models/lightning/
 
 tmp/
 
@@ -36,8 +36,8 @@ driving_ica/
 .tracker_data/
 # tar_face_images.sh
 
-brain2face/utils/montages/E0030/
-brain2face/utils/montages/GOD/
+nd/utils/montages/E0030/
+nd/utils/montages/GOD/
 
 
 # Byte-compiled / optimized / DLL files
