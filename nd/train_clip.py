@@ -2,6 +2,7 @@ import os, sys
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from time import time
 from tqdm import tqdm
 from termcolor import cprint
@@ -149,14 +150,14 @@ def train():
     # ---------------------
     #        Models
     # ---------------------
-    vq_brain = args.vq_type is not None
+    vq_brain = args.vq is not None
 
     if args.brain_encoder == "brain_encoder":
         brain_encoder = BrainEncoder(
             args,
             subject_names=dataset.subject_names,
             layout=eval(args.layout),
-            vq=vq_brain,
+            vq=args.vq,
             num_conv_blocks=args.num_conv_blocks,
             downsample=args.downsample,
             temporal_aggregation=args.temporal_aggregation,
@@ -233,8 +234,10 @@ def train():
 
     for epoch in range(args.epochs):
         train_clip_losses = []
+        train_mse_losses = []
         train_vq_losses = []
         test_clip_losses = []
+        test_mse_losses = []
         test_vq_losses = []
         train_topk_accs = []
         test_topk_accs = []
@@ -266,37 +269,33 @@ def train():
             else:
                 Y = vision_encoder(Y)
 
-            if vq_brain:
-                assert isinstance(brain_encoder, BrainEncoder), "Please set vq_type=null when it's not BrainEncoder."  # fmt: skip
+            if isinstance(brain_encoder, BrainEncoder):
+                Z = brain_encoder(X, subject_idxs)
 
-                Z, vq_loss, perplexity = brain_encoder(X, subject_idxs)
+                if vq_brain:
+                    Z, vq_loss, perplexity = Z
 
-                if isinstance(loss_func, CosFaceCLIPLoss):
-                    clip_loss = loss_func(Y, Z, classes)
-                else:
-                    clip_loss = loss_func(Y, Z)
+            elif isinstance(brain_encoder, EEGNetDeep):
+                assert not vq_brain, "EEGNetDeep doesn't support vector quantization."
 
-                if not args.vq_alternate:
-                    loss = clip_loss + vq_loss
-                else:
-                    loss = clip_loss
+                Z = brain_encoder(X)
             else:
-                if isinstance(brain_encoder, BrainEncoder):
-                    Z = brain_encoder(X, subject_idxs)
-                elif isinstance(brain_encoder, EEGNetDeep):
-                    Z = brain_encoder(X)
-                else:
-                    raise NotImplementedError
+                raise NotImplementedError
 
-                vq_loss, perplexity = None, None
-
-                if isinstance(loss_func, CosFaceCLIPLoss):
-                    if args.use_high_categories:
-                        loss = clip_loss = loss_func(Y, Z, classes, high_categories)
-                    else:
-                        loss = clip_loss = loss_func(Y, Z, classes)
+            if isinstance(loss_func, CosFaceCLIPLoss):
+                if args.use_high_categories:
+                    clip_loss = loss_func(Y, Z, classes, high_categories)
                 else:
-                    loss = clip_loss = loss_func(Y, Z)
+                    clip_loss = loss_func(Y, Z, classes)
+            else:
+                clip_loss = loss_func(Y, Z)
+
+            mse_loss = F.mse_loss(Y, Z, reduction=args.reduction)
+
+            loss = args.lambd * clip_loss + (1 - args.lambd) * mse_loss
+
+            if vq_brain and not args.vq_alternate:
+                loss = loss + vq_loss
 
             with torch.no_grad():
                 if isinstance(train_classifier, DiagonalClassifier):
@@ -307,6 +306,7 @@ def train():
                     raise NotImplementedError
 
             train_clip_losses.append(clip_loss.item())
+            train_mse_losses.append(mse_loss.item())
             train_topk_accs.append(topk_accs)
             if vq_brain:
                 train_vq_losses.append(vq_loss.item())
@@ -373,11 +373,18 @@ def train():
                     desc="BrainEncoder",
                     reduction=args.reduction,
                 )
-
                 if vq_brain:
                     Z, vq_loss, perplexity = Z
 
-                clip_loss = loss_func(Y, Z)
+                if isinstance(loss_func, CosFaceCLIPLoss):
+                    if args.use_high_categories:
+                        clip_loss = loss_func(Y, Z, classes, high_categories)
+                    else:
+                        clip_loss = loss_func(Y, Z, classes)
+                else:
+                    clip_loss = loss_func(Y, Z)
+
+                mse_loss = F.mse_loss(Y, Z, reduction=args.reduction)
 
                 if isinstance(test_classifier, DiagonalClassifier):
                     topk_accs, _ = test_classifier(
@@ -391,6 +398,7 @@ def train():
                     raise NotImplementedError
 
             test_clip_losses.append(clip_loss.item())
+            test_mse_losses.append(mse_loss.item())
             test_topk_accs.append(topk_accs)
             if vq_brain:
                 test_vq_losses.append(vq_loss.item())
@@ -411,6 +419,8 @@ def train():
                 "epoch": epoch,
                 "train_clip_loss": np.mean(train_clip_losses),
                 "test_clip_loss": np.mean(test_clip_losses),
+                "train_mse_loss": np.mean(train_mse_losses),
+                "test_mse_loss": np.mean(test_mse_losses),
                 "lrate": optimizer.param_groups[0]["lr"],
                 "temp": loss_func.temp.item(),
             }

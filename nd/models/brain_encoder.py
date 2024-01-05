@@ -458,9 +458,17 @@ class OriginalAggregator(nn.Module):
 
 class TemporalAggregation(nn.Module):
     def __init__(
-        self, args, temporal_dim: int, multiplier: int = 1, expand: int = 1
+        self,
+        args,
+        temporal_dim: int,
+        embed_dim: Optional[int] = None,
+        multiplier: int = 1,
+        expand: int = 1,
     ) -> None:
         super().__init__()
+
+        if embed_dim is None:
+            embed_dim = args.F
 
         if args.temporal_aggregation == "original":
             self.layers = OriginalAggregator(args, temporal_dim, multiplier)
@@ -471,8 +479,8 @@ class TemporalAggregation(nn.Module):
             self.layers.add_module(
                 "linear_projection",
                 nn.Conv1d(
-                    in_channels=args.F,
-                    out_channels=args.F * expand * multiplier,
+                    in_channels=embed_dim,
+                    out_channels=embed_dim * expand * multiplier,
                     kernel_size=1,
                 ),
             )
@@ -492,7 +500,7 @@ class TemporalAggregation(nn.Module):
                     nn.Flatten(),
                     # nn.Linear(args.F * 4 * multiplier, args.F * 2 * multiplier),
                     # nn.GELU(),
-                    nn.Linear(args.F * expand * multiplier, args.F * multiplier),
+                    nn.Linear(embed_dim * expand * multiplier, embed_dim * multiplier),
                     nn.GELU(),
                 ),
             )
@@ -505,16 +513,18 @@ class AggregatedVectorQuantizer(nn.Module):
     def __init__(
         self,
         args,
+        embed_dim: int,
         vector_quantizer: VectorQuantizer,  # or VectorQuant
         temporal_dim: int,
     ) -> None:
         super().__init__()
 
         num_concepts = args.vq_num_concepts
-        embed_dim = args.F
 
         self.aggregator = nn.Sequential(
-            TemporalAggregation(args, temporal_dim, multiplier=num_concepts),
+            TemporalAggregation(
+                args, temporal_dim, embed_dim=embed_dim, multiplier=num_concepts
+            ),
             nn.Unflatten(dim=1, unflattened_size=(embed_dim, num_concepts)),
         )
 
@@ -542,7 +552,7 @@ class BrainEncoder(nn.Module):
         args,
         subject_names: List[str],
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
-        vq: bool = False,
+        vq: Optional[str] = None,
         num_conv_blocks: int = 5,
         downsample: Union[bool, List[bool]] = False,
         temporal_aggregation: Optional[str] = None,
@@ -626,13 +636,17 @@ class BrainEncoder(nn.Module):
         else:
             self.temporal_aggregation = None
 
-        if vq:
-            self.vector_quantizer = get_vector_quantizer(args)
+        if vq is not None:
+            dim = {"middle": self.D2, "end": self.F}[vq]
+            self.vector_quantizer = get_vector_quantizer(args, dim)
+
             self.alpha = args.vq_alpha
 
             if args.vq_aggregated:
+                assert not vq == "middle", "Cannot aggregate time in the middle of the model."  # fmt: skip
+
                 self.vector_quantizer = AggregatedVectorQuantizer(
-                    args, self.vector_quantizer, temporal_dim=temporal_dim
+                    args, dim, self.vector_quantizer, temporal_dim=temporal_dim
                 )
 
                 self.temporal_aggregation = None
@@ -646,17 +660,21 @@ class BrainEncoder(nn.Module):
 
         X = self.conv_blocks(X)
 
+        if self.vq == "middle":
+            X, vq_loss, perplexity = self.vector_quantizer(X)
+            vq_loss = self.alpha * vq_loss
+
         X = F.gelu(self.conv_final1(X))
         X = F.gelu(self.conv_final2(X))
 
-        if self.vq:
+        if self.vq == "end":
             X, vq_loss, perplexity = self.vector_quantizer(X)
             vq_loss = self.alpha * vq_loss
 
         if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
 
-        if self.vq:
+        if self.vq is not None:
             return X, vq_loss, perplexity
         else:
             return X

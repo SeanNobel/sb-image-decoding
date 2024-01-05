@@ -59,12 +59,14 @@ biases:
   conv_subj_sa: True
   linear_reduc_time: True
 
-vq_type: residual # null / original / affine (= vqtorch basic) / group / residual
-vq_aggregated: True
+vq: null # null / middle (after conv_blocks) / end
+# Where of the model to apply vector quantization.
+vq_type: vqt_residual # original / affine (= vqtorch basic) / group / residual
+vq_aggregated: False
 vq_num_embeds: 2048
 vq_num_concepts: 32 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
 vq_alpha: 1.0 # How much to weight regularization terms against CLIP loss.
-vq_beta: 0.1 # How much to weight encoder regularization term against codebook loss.
+vq_beta: 0.3 # How much to weight encoder regularization term against codebook loss.
 # NOTE that this beta is (1 - beta) in vqtorch paper.
 vq_affine_lr: 0.1 # lr scale for affine parameters
 # EMA. When using EMA for codebook, beta should be zero? https://arxiv.org/abs/2305.08842
@@ -79,8 +81,10 @@ vq_sync_nu: 0.2 # Codebook synchronization contribution
 vq_replace_freq: 20 # Frequency to replace dead codes
 vq_alternate: False # Whether to alternate between task loss and vq loss
 # NOTE that vq_beta will be overwritten by 0.0 when vq_alternate is True.
-vq_groups: 1 # Number of groups for group VQ
+vq_groups: 4 # Number of groups for group VQ
 vq_share: True # If True, codebook is shared for each sub-vector.
+# lucidrains
+vq_num_quantizers: 1 # Number of quantizers to use
 
 drop_mode: dropout
 
@@ -88,6 +92,8 @@ reduce_time: True
 
 # ==== Loss ==== #
 loss: circleclip
+
+lambd: 1.0 # Weighting of CLIP and MSE loss
 
 reduction: mean
 
@@ -149,20 +155,28 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 0
+cuda_id: 1
 
-sweep_count: 12
+sweep_count: 5
 sweep_config:
-  name: vq_residual
+  name: vq_lambd_null-vq
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    vq_groups:
-      values: [4, 2, 1]
-    vq_share:
-      values: [False, True]
+    lambd:
+      values: [0.0, 0.25, 0.5, 0.75, 1.0]
+
+    # vq:
+    #   values: [middle, null]
+      
+    # vq_type:
+    #   values: [vqt_affine, vqt_residual]
+    # vq_groups:
+    #   values: [8, 4]
+    # vq_share:
+    #   values: [False, True]
 
     # vq_alternate:
     #   values: [False]
@@ -239,8 +253,8 @@ sweep_config:
     #   values: [True]
     # vq_alpha:
     #   values: [1.0]
-    vq_beta:
-      values: [0.1, 0.5]
+    # vq_beta:
+    #   values: [0.1, 0.3, 0.5]
     # vq_gamma:
     #   values: [0.99, 0.95]
 

@@ -12,27 +12,39 @@ from vqtorch.nn import (
     ResidualVectorQuant,
 )
 
+from vector_quantize_pytorch import (
+    ResidualVQ,
+    GroupedResidualVQ,
+    FSQ,
+    LFQ,
+    ResidualLFQ,
+    GroupedResidualLFQ,
+    ResidualFSQ,
+    GroupedResidualFSQ,
+)
 
-def get_vector_quantizer(args) -> nn.Module:
+
+def get_vector_quantizer(args, dim: int) -> nn.Module:
     """_summary_
     Args:
         args (_type_): _description_
+        dim (int): Embedding dimension.
     Returns:
         nn.Module: _description_
     """
     if args.vq_type == "original":
         return VectorQuantizer(
             num_embeds=args.vq_num_embeds,
-            embed_dim=args.F,
+            embed_dim=dim,
             affine_lr=args.vq_affine_lr,
             use_ema=args.vq_use_ema,
             beta=args.vq_beta,
             gamma=args.vq_gamma,
             epsilon=args.vq_epsilon,
         )
-    else:
+    elif args.vq_type.startswith("vqt_"):  # vqtorch
         vq_args = {
-            "feature_size": args.F,
+            "feature_size": dim,
             "num_codes": args.vq_num_embeds,
             "beta": 1 - args.vq_beta,
             "kmeans_init": args.vq_kmeans_init,
@@ -54,16 +66,98 @@ def get_vector_quantizer(args) -> nn.Module:
                 }
             )
 
-        if args.vq_type == "affine":
+        if args.vq_type.endswith("_affine"):
             vq = VectorQuant(**vq_args)
-        elif args.vq_type == "group":
+        elif args.vq_type.endswith("_group"):
             vq = GroupVectorQuant(groups=args.vq_groups, share=args.vq_share, **vq_args)
-        elif args.vq_type == "residual":
+        elif args.vq_type.endswith("_residual"):
             vq = ResidualVectorQuant(groups=args.vq_groups, share=args.vq_share, **vq_args)  # fmt: skip
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(f"vq_type {args.vq_type} not implemented.")
 
-        return VectorQuantWrapper(vq)
+        return VQtorchWrapper(vq)
+
+    elif args.vq_type.startswith("lu_"):  # lucidrains
+        vq_args = {}
+
+        if "fsq" in args.vq_type:
+            vq_args.update({"levels": [8, 5, 5, 5]})
+        elif "lfq" in args.vq_type:
+            pass
+        else:
+            vq_args.update({"dim": dim, "codebook_size": args.vq_num_embeds})
+
+        if "res" in args.vq_type:
+            vq_args.update({"num_quantizers": args.vq_num_quantizers})
+
+        if "group" in args.vq_type:
+            vq_args.update({"groups": args.vq_groups})
+
+        if args.vq_type.endswith("_residual"):
+            vq = ResidualVQ(**vq_args)
+        elif args.vq_type.endswith("_groupres"):
+            vq = GroupedResidualVQ(**vq_args)
+        elif args.vq_type.endswith("_fsq"):
+            vq = FSQ(**vq_args)
+        elif args.vq_type.endswith("_lfq"):
+            vq = LFQ(**vq_args)
+        # elif args.vq_type.endswith("_resfsq"):
+        #     vq = ResidualFSQ(**vq_args)
+        # elif args.vq_type.endswith("_reslfq"):
+        #     vq = ResidualLFQ(**vq_args)
+        # elif args.vq_type.endswith("_groupresfsq"):
+        #     vq = GroupedResidualFSQ(dim=args.vq_groups * 4, **vq_args)
+        # elif args.vq_type.endswith("_groupreslfq"):
+        #     vq = GroupedResidualLFQ(**vq_args)
+        else:
+            raise NotImplementedError(f"vq_type {args.vq_type} not implemented.")
+
+        return LucidrainsWrapper(vq, args.vq_groups)
+
+
+class VQtorchWrapper(nn.Module):
+    def __init__(self, vq: VectorQuant) -> None:
+        super().__init__()
+
+        self.vq = vq
+
+    def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
+        z_q, vq_returns = self.vq(z_e)
+
+        return z_q, vq_returns["loss"], vq_returns["perplexity"]
+
+
+class LucidrainsWrapper(nn.Module):
+    def __init__(self, vq: ResidualVQ, codebook_size: int) -> None:
+        super().__init__()
+
+        self.vq = vq
+        self.codebook_size = codebook_size
+
+    def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
+        """_summary_
+        Args:
+            z_e ( b, f, t ): _description_
+        Returns:
+            Tuple[torch.Tensor]: _description_
+        """
+        z_q, indices, loss = self.vq(z_e.permute(0, 2, 1).contiguous())
+
+        z_q = z_q.permute(0, 2, 1).contiguous()
+
+        # FIXME: It's unsure whether taking loss of the last layer is correct.
+        loss = loss.squeeze()
+        if loss.ndim > 0:
+            loss = loss[-1]
+
+        # FIXME: indices returned has the same shape as q in vqtorch but not sure if I can calculate perplexity in the same way.
+        # !!!! Also if I calculate perplexity this way, CUDA device-side assertion error occurs !!!!
+        # e_mean = F.one_hot(indices, num_classes=self.codebook_size).view(-1, self.codebook_size).float().mean(0)  # fmt: skip
+        # perplexity = torch.exp(-torch.sum(e_mean * torch.log(e_mean + 1e-10)))
+        # TODO: Calculate perplexity.
+        perplexity = torch.tensor(0.0)
+
+        return z_q, loss, perplexity
 
 
 class VectorQuantizer(nn.Module):
@@ -201,15 +295,3 @@ class VectorQuantizer(nn.Module):
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
         return z_q, vq_loss, perplexity
-
-
-class VectorQuantWrapper(nn.Module):
-    def __init__(self, vq: VectorQuant) -> None:
-        super().__init__()
-
-        self.vq = vq
-
-    def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
-        z_q, vq_returns = self.vq(z_e)
-
-        return z_q, vq_returns["loss"], vq_returns["perplexity"]
