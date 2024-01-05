@@ -124,92 +124,6 @@ class CLIPLoss(nn.Module):
             self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
 
 
-class NearestNeighborCLIPLoss(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-
-        # CLIP related
-        self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
-
-        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
-        if not args.clip_temp_learn:
-            self.temp.requires_grad = False
-
-        # Nearest Neighbor related
-        self.k = args.nnclip_k
-        self.symmetric = args.nnclip_symmetric
-        self.support_size = args.nnclip_support_size
-        self.alpha = args.nnclip_alpha
-
-        self.support_set_x = torch.randn(self.support_size, args.F)
-        if self.symmetric:
-            self.support_set_y = torch.randn(self.support_size, args.F)
-
-        self.bce_logits = nn.BCEWithLogitsLoss(reduction=args.reduction)
-
-    def forward(self, Y: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
-        """_summary_
-
-        Args:
-            X ( b, f ): _description_
-            Y ( b, f ): _description_
-
-        Returns:
-            torch.Tensor: _description_
-        """
-        b, f = X.shape
-
-        targets = torch.arange(b, dtype=torch.long, device=X.device, requires_grad=False)  # fmt: skip
-        X = X / X.norm(dim=-1, keepdim=True)
-        Y = Y / Y.norm(dim=-1, keepdim=True)
-
-        logits = torch.matmul(X, Y.T) * torch.exp(self.temp)
-
-        clip_loss = (self.cross_entropy(logits, targets) + self.cross_entropy(logits.T, targets)) / 2  # fmt: skip
-
-        # -------------------------
-        #   Nearest Neighbor Loss
-        # -------------------------
-        nnclip_loss = self._calc_nnclip_loss(X, self.support_set_x.to(X.device))
-        if self.symmetric:
-            nnclip_loss = (
-                nnclip_loss + self._calc_nnclip_loss(Y, self.support_set_y.to(Y.device))
-            ) / 2
-
-        self._update_support_set(X, Y)
-
-        return clip_loss + self.alpha * nnclip_loss
-
-    def _calc_nnclip_loss(self, X, support_set):
-        similarity = calc_similarity(X, support_set, sequential=True, pbar=False)
-        # ( b, support_size )
-        topk = torch.topk(similarity, self.k, dim=1)[1]  # ( b, k )
-        targets = F.one_hot(topk, num_classes=self.support_size)
-        targets = targets.sum(dim=1).to(torch.float32)  # ( b, support_size )
-
-        similarity = similarity * torch.exp(self.temp)
-
-        return self.bce_logits(similarity, targets)
-
-    @torch.no_grad()
-    def _update_support_set(self, X: torch.Tensor, Y: torch.Tensor) -> None:
-        """_summary_
-
-        Args:
-            X ( b, f ): _description_
-            Y ( b, f ): _description_
-        """
-        device = self.support_set_x.device
-
-        self.support_set_x = torch.cat([self.support_set_x, X.to(device)], dim=0)[
-            -self.support_size :
-        ]
-        if self.symmetric:
-            self.support_set_y = torch.cat([self.support_set_y, Y.to(device)], dim=0)[
-                -self.support_size :
-            ]
-
-
 class CosFaceCLIPLoss(CLIPLoss):
     def __init__(
         self, args, n_classes, n_high_categories: Optional[int] = None
@@ -345,3 +259,89 @@ class CircleCLIPLoss(CosFaceCLIPLoss):
 
     def clamp_params(self) -> None:
         pass
+
+
+class NearestNeighborCLIPLoss(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+
+        # CLIP related
+        self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
+
+        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
+        if not args.clip_temp_learn:
+            self.temp.requires_grad = False
+
+        # Nearest Neighbor related
+        self.k = args.nnclip_k
+        self.symmetric = args.nnclip_symmetric
+        self.support_size = args.nnclip_support_size
+        self.alpha = args.nnclip_alpha
+
+        self.support_set_x = torch.randn(self.support_size, args.F)
+        if self.symmetric:
+            self.support_set_y = torch.randn(self.support_size, args.F)
+
+        self.bce_logits = nn.BCEWithLogitsLoss(reduction=args.reduction)
+
+    def forward(self, Y: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+        """_summary_
+
+        Args:
+            X ( b, f ): _description_
+            Y ( b, f ): _description_
+
+        Returns:
+            torch.Tensor: _description_
+        """
+        b, f = X.shape
+
+        targets = torch.arange(b, dtype=torch.long, device=X.device, requires_grad=False)  # fmt: skip
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        logits = torch.matmul(X, Y.T) * torch.exp(self.temp)
+
+        clip_loss = (self.cross_entropy(logits, targets) + self.cross_entropy(logits.T, targets)) / 2  # fmt: skip
+
+        # -------------------------
+        #   Nearest Neighbor Loss
+        # -------------------------
+        nnclip_loss = self._calc_nnclip_loss(X, self.support_set_x.to(X.device))
+        if self.symmetric:
+            nnclip_loss = (
+                nnclip_loss + self._calc_nnclip_loss(Y, self.support_set_y.to(Y.device))
+            ) / 2
+
+        self._update_support_set(X, Y)
+
+        return clip_loss + self.alpha * nnclip_loss
+
+    def _calc_nnclip_loss(self, X, support_set):
+        similarity = calc_similarity(X, support_set, sequential=True, pbar=False)
+        # ( b, support_size )
+        topk = torch.topk(similarity, self.k, dim=1)[1]  # ( b, k )
+        targets = F.one_hot(topk, num_classes=self.support_size)
+        targets = targets.sum(dim=1).to(torch.float32)  # ( b, support_size )
+
+        similarity = similarity * torch.exp(self.temp)
+
+        return self.bce_logits(similarity, targets)
+
+    @torch.no_grad()
+    def _update_support_set(self, X: torch.Tensor, Y: torch.Tensor) -> None:
+        """_summary_
+
+        Args:
+            X ( b, f ): _description_
+            Y ( b, f ): _description_
+        """
+        device = self.support_set_x.device
+
+        self.support_set_x = torch.cat([self.support_set_x, X.to(device)], dim=0)[
+            -self.support_size :
+        ]
+        if self.symmetric:
+            self.support_set_y = torch.cat([self.support_set_y, Y.to(device)], dim=0)[
+                -self.support_size :
+            ]
