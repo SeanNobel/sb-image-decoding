@@ -270,15 +270,15 @@ def train():
                 Y = vision_encoder(Y)
 
             if isinstance(brain_encoder, BrainEncoder):
-                Z = brain_encoder(X, subject_idxs)
-
                 if vq_brain:
-                    Z, vq_loss, perplexity = Z
+                    Z, Z_mse, vq_loss, perplexity = brain_encoder(X, subject_idxs)
+                else:
+                    Z, Z_mse = brain_encoder(X, subject_idxs)
 
             elif isinstance(brain_encoder, EEGNetDeep):
                 assert not vq_brain, "EEGNetDeep doesn't support vector quantization."
 
-                Z = brain_encoder(X)
+                Z, Z_mse = brain_encoder(X), None
             else:
                 raise NotImplementedError
 
@@ -290,9 +290,12 @@ def train():
             else:
                 clip_loss = loss_func(Y, Z)
 
-            mse_loss = F.mse_loss(Y, Z, reduction=args.reduction)
+            if Z_mse is not None:
+                mse_loss = F.mse_loss(Y, Z_mse, reduction=args.reduction)
 
-            loss = args.lambd * clip_loss + (1 - args.lambd) * mse_loss
+                loss = args.lambd * clip_loss + (1 - args.lambd) * mse_loss
+            else:
+                loss = clip_loss
 
             if vq_brain and not args.vq_alternate:
                 loss = loss + vq_loss
@@ -306,8 +309,11 @@ def train():
                     raise NotImplementedError
 
             train_clip_losses.append(clip_loss.item())
-            train_mse_losses.append(mse_loss.item())
             train_topk_accs.append(topk_accs)
+
+            if Z_mse is not None:
+                train_mse_losses.append(mse_loss.item())
+
             if vq_brain:
                 train_vq_losses.append(vq_loss.item())
                 train_perplexities.append(perplexity.item())
@@ -373,8 +379,16 @@ def train():
                     desc="BrainEncoder",
                     reduction=args.reduction,
                 )
-                if vq_brain:
-                    Z, vq_loss, perplexity = Z
+
+                if isinstance(brain_encoder, BrainEncoder):
+                    if vq_brain:
+                        Z, Z_mse, vq_loss, perplexity = Z
+                    else:
+                        Z, Z_mse = Z
+                elif isinstance(brain_encoder, EEGNetDeep):
+                    Z_mse = None
+                else:
+                    raise NotImplementedError
 
                 if isinstance(loss_func, CosFaceCLIPLoss):
                     if args.use_high_categories:
@@ -383,8 +397,6 @@ def train():
                         clip_loss = loss_func(Y, Z, classes)
                 else:
                     clip_loss = loss_func(Y, Z)
-
-                mse_loss = F.mse_loss(Y, Z, reduction=args.reduction)
 
                 if isinstance(test_classifier, DiagonalClassifier):
                     topk_accs, _ = test_classifier(
@@ -400,6 +412,11 @@ def train():
             test_clip_losses.append(clip_loss.item())
             test_mse_losses.append(mse_loss.item())
             test_topk_accs.append(topk_accs)
+
+            if Z_mse is not None:
+                test_mse_losses.append(
+                    F.mse_loss(Y, Z_mse, reduction=args.reduction).item()
+                )
             if vq_brain:
                 test_vq_losses.append(vq_loss.item())
                 test_perplexities.append(perplexity.item())
@@ -419,8 +436,6 @@ def train():
                 "epoch": epoch,
                 "train_clip_loss": np.mean(train_clip_losses),
                 "test_clip_loss": np.mean(test_clip_losses),
-                "train_mse_loss": np.mean(train_mse_losses),
-                "test_mse_loss": np.mean(test_mse_losses),
                 "lrate": optimizer.param_groups[0]["lr"],
                 "temp": loss_func.temp.item(),
             }
@@ -437,6 +452,16 @@ def train():
                     for i, k in enumerate(args.acc_topk)
                 }
             )
+
+            if len(train_mse_losses) > 0:
+                assert len(test_mse_losses) > 0
+
+                performance_now.update(
+                    {
+                        "train_mse_loss": np.mean(train_mse_losses),
+                        "test_mse_loss": np.mean(test_mse_losses),
+                    }
+                )
 
             if vq_brain:
                 performance_now.update(
