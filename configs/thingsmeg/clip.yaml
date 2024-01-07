@@ -42,6 +42,7 @@ brain_encoder: brain_encoder
 num_channels: 271
 D1: 270
 D2: 320
+D3: 2048
 K: 32
 spatial_attention: True
 conv_block: dilated_conv # dilated_conv or inception
@@ -94,7 +95,7 @@ reduce_time: True
 # ==== Loss ==== #
 loss: circleclip
 
-lambd: 1.0 # Weighting of CLIP and MSE loss
+lambd: 0.75 # Weighting of CLIP and MSE loss
 
 reduction: mean
 
@@ -156,11 +157,11 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 2
+cuda_id: 0
 
 sweep_count: 5
 sweep_config:
-  name: vq_lambd_null-vq
+  name: lambds_mse-head_null-vq
   method: grid
   metric:
     name: test_top5_acc
