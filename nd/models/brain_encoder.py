@@ -468,7 +468,7 @@ class TemporalAggregation(nn.Module):
         super().__init__()
 
         if embed_dim is None:
-            embed_dim = args.F
+            embed_dim = args.D3
 
         if args.temporal_aggregation == "original":
             self.layers = OriginalAggregator(args, temporal_dim, multiplier)
@@ -560,9 +560,7 @@ class BrainEncoder(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.D1 = args.D1
-        self.D2 = args.D2
-        self.F = args.F
+        D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
 
         if isinstance(downsample, bool):
             downsample = [downsample] * num_conv_blocks
@@ -588,8 +586,8 @@ class BrainEncoder(nn.Module):
             raise TypeError
 
         block_args = {
-            "D1": self.D1,
-            "D2": self.D2,
+            "D1": D1,
+            "D2": D2,
             "drop_mode": args.drop_mode,
             "p_drop": args.p_drop,
         }
@@ -608,26 +606,28 @@ class BrainEncoder(nn.Module):
                 raise NotImplementedError()
 
             if downsample[k]:
-                self.conv_blocks.add_module(f"downsample{k}", Downsample1D(self.D2))
+                self.conv_blocks.add_module(f"downsample{k}", Downsample1D(D2))
 
         self.conv_final1 = nn.Conv1d(
-            in_channels=self.D2,
-            out_channels=2 * self.D2,
+            in_channels=D2,
+            # out_channels=2 * self.D2,
+            out_channels=D3,
             kernel_size=args.final_ksize,
             stride=args.final_stride,
         )
-        self.conv_final2 = nn.Conv1d(
-            in_channels=2 * self.D2,
-            out_channels=self.F,
-            kernel_size=args.final_ksize,
-            stride=args.final_stride,
-        )
+        # self.conv_final2 = nn.Conv1d(
+        #     in_channels=2 * self.D2,
+        #     out_channels=self.F,
+        #     kernel_size=args.final_ksize,
+        #     stride=args.final_stride,
+        # )
 
         temporal_dim = conv_output_size(
             int(args.seq_len * args.brain_resample_sfreq),
             ksize=args.final_ksize,
             stride=args.final_stride,
-            repetition=4 if args.temporal_aggregation == "original" else 2,
+            # repetition=4 if args.temporal_aggregation == "original" else 2,
+            repetition=3 if args.temporal_aggregation == "original" else 1,
             downsample=sum(downsample),
         )
 
@@ -637,7 +637,7 @@ class BrainEncoder(nn.Module):
             self.temporal_aggregation = None
 
         if vq is not None:
-            dim = {"middle": self.D2, "end": self.F}[vq]
+            dim = {"middle": D2, "end": D3}[vq]
             self.vector_quantizer = get_vector_quantizer(args, dim)
 
             self.alpha = args.vq_alpha
@@ -650,6 +650,9 @@ class BrainEncoder(nn.Module):
                 )
 
                 self.temporal_aggregation = None
+
+        self.clip_head = nn.Sequential(nn.LayerNorm(D3), nn.GELU(), nn.Linear(D3, F))
+        self.mse_head = nn.Sequential(nn.LayerNorm(D3), nn.GELU(), nn.Linear(D3, F))
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
@@ -665,7 +668,7 @@ class BrainEncoder(nn.Module):
             vq_loss = self.alpha * vq_loss
 
         X = F.gelu(self.conv_final1(X))
-        X = F.gelu(self.conv_final2(X))
+        # X = F.gelu(self.conv_final2(X))
 
         if self.vq == "end":
             X, vq_loss, perplexity = self.vector_quantizer(X)
@@ -674,7 +677,10 @@ class BrainEncoder(nn.Module):
         if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
 
+        X_clip = self.clip_head(X)
+        X_mse = self.mse_head(X)
+
         if self.vq is not None:
-            return X, vq_loss, perplexity
+            return X_clip, X_mse, vq_loss, perplexity
         else:
-            return X
+            return X_clip, X_mse
