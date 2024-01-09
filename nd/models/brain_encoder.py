@@ -11,7 +11,13 @@ from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
 from nd.models.vector_quantizer import get_vector_quantizer, VectorQuantizer
-from nd.models.transformer import SelfAttention, FeedForward, PreNorm, Residual
+from nd.models.transformer import (
+    SelfAttention,
+    FeedForward,
+    PreNorm,
+    Residual,
+    positional_encoding,
+)
 from nd.models.utils import DropBlock1D
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.train_utils import conv_output_size
@@ -420,7 +426,7 @@ class TransformerBlock(nn.Module):
         D2: int,
         n_heads: int,
         block_size: int,
-        pos_emb: bool = False,
+        pos_emb: Optional[str] = None,
         p_drop: float = 0.1,
     ):
         super().__init__()
@@ -431,8 +437,12 @@ class TransformerBlock(nn.Module):
         if k == 0:
             self.proj = nn.Linear(D1, emb_dim)
 
-        if pos_emb:
+        if pos_emb == "learn":
             self.pos_emb = nn.Parameter(torch.zeros(1, block_size, emb_dim))
+        elif pos_emb == "sine":
+            self.register_buffer("pos_emb", positional_encoding(block_size, emb_dim))
+        else:
+            assert pos_emb is None
 
         self.attn = Residual(
             PreNorm(SelfAttention(emb_dim, n_heads, block_size, do_mask=False), emb_dim)
@@ -661,9 +671,9 @@ class BrainEncoder(nn.Module):
                     TransformerBlock(
                         k,
                         n_heads=args.transformer_heads,
-                        # TODO: TransformerBlock after downsampling with ConvBlocks
+                        # TODO: TransformerBlocks after downsampling with ConvBlocks
                         block_size=init_temporal_dim,
-                        pos_emb=k == 0,
+                        pos_emb=args.pos_emb if k == 0 else None,
                         **block_args,
                     ),
                 )
