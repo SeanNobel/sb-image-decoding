@@ -52,7 +52,6 @@ class SelfAttention(nn.Module):
         """
         b, t, d = X.size()
 
-        # Que, Key, Valueをそれぞれの全結合層で計算
         Q = self.query(X)  # ( b, t, n_head * d_qk )
         K = self.key(X)  # ( b, t, n_head * d_qk )
         V = self.value(X)  # ( b, t, n_head * d_v )
