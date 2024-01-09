@@ -613,7 +613,7 @@ class BrainEncoder(nn.Module):
         subject_names: List[str],
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         vq: Optional[str] = None,
-        num_blocks: int = 5,
+        blocks: Union[str, List[str]] = "dilated_conv",
         downsample: Union[bool, List[bool]] = False,
         temporal_aggregation: Optional[str] = None,
         unknown_subject: bool = False,
@@ -622,6 +622,14 @@ class BrainEncoder(nn.Module):
 
         D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
         init_temporal_dim = int(args.seq_len * args.brain_resample_sfreq)
+        num_blocks = args.num_blocks
+
+        if isinstance(blocks, str):
+            blocks = [blocks] * num_blocks
+        else:
+            if len(blocks) != num_blocks:
+                num_blocks = len(blocks)
+                cprint(f"Updating num_blocks to {num_blocks}.", "yellow")
 
         if isinstance(downsample, bool):
             downsample = [downsample] * num_blocks
@@ -649,8 +657,10 @@ class BrainEncoder(nn.Module):
         block_args = {"D1": D1, "D2": D2, "p_drop": args.p_drop}
         self.blocks = nn.Sequential()
 
-        for k in range(num_blocks):
-            if args.block == "dilated_conv":
+        for k, block in enumerate(blocks):
+            if block == "dilated_conv":
+                cprint(f"Block{k}: dilated_conv", "magenta")
+
                 self.blocks.add_module(
                     f"block{k}",
                     ConvBlock(
@@ -660,12 +670,17 @@ class BrainEncoder(nn.Module):
                         **block_args,
                     ),
                 )
-            elif args.block == "inception":
+            elif block == "inception":
+                cprint(f"Block{k}: inception", "magenta")
+
                 self.blocks.add_module(
                     f"block{k}",
                     Inception1DBlock(k, drop_mode=args.drop_mode, **block_args),
                 )
-            elif args.block == "transformer":
+            elif block == "transformer":
+                pos_emb = args.pos_emb if k == blocks.index("transformer") else None
+                cprint(f"Block{k}: transformer with pos_emb {pos_emb}", "magenta")
+
                 self.blocks.add_module(
                     f"block{k}",
                     TransformerBlock(
@@ -673,7 +688,7 @@ class BrainEncoder(nn.Module):
                         n_heads=args.transformer_heads,
                         # TODO: TransformerBlocks after downsampling with ConvBlocks
                         block_size=init_temporal_dim,
-                        pos_emb=args.pos_emb if k == 0 else None,
+                        pos_emb=pos_emb,
                         **block_args,
                     ),
                 )

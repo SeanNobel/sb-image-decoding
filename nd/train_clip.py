@@ -159,7 +159,7 @@ def train():
             subject_names=dataset.subject_names,
             layout=eval(args.layout),
             vq=args.vq,
-            num_blocks=args.num_blocks,
+            blocks=args.blocks,
             downsample=args.downsample,
             temporal_aggregation=args.temporal_aggregation,
         ).to(device)
