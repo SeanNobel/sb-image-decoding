@@ -25,10 +25,9 @@ from nd.utils.train_utils import sequential_apply
 
 @torch.no_grad()
 def encode_images(y_list: List[str], preprocess, clip_model, device) -> torch.Tensor:
-    print(type(clip_model))
-    print(type(preprocess))
-
-    y_list = y_list[:128]
+    """Encodes images with either OpenAI or Huggingface pretrained CLIP.
+    https://huggingface.co/openai/clip-vit-large-patch14
+    """
     if isinstance(clip_model, CLIPVisionModel):
         last_hidden_states = []
 
@@ -37,28 +36,24 @@ def encode_images(y_list: List[str], preprocess, clip_model, device) -> torch.Te
 
             model_output = clip_model(**model_input.to(device))
 
-            last_hidden_states.append(model_output.last_hidden_state)
+            last_hidden_states.append(model_output.last_hidden_state.cpu())
 
-        last_hidden_states = torch.cat(last_hidden_states, dim=0)
-        print(last_hidden_states.shape)
-        sys.exit()
+        return torch.cat(last_hidden_states, dim=0)
+    else:
+        model_input = torch.stack(
+            [
+                preprocess(Image.open(y).convert("RGB"))
+                for y in tqdm(y_list, desc="Preprocessing images")
+            ]
+        )
 
-    Y = torch.stack(
-        [
-            preprocess(Image.open(y).convert("RGB"))
-            for y in tqdm(y_list, desc="Preprocessing images")
-        ]
-    )
-
-    Y = sequential_apply(
-        Y,
-        clip_model.encode_image,
-        batch_size=32,
-        device=device,
-        desc="Encoding images",
-    ).float()
-
-    return Y
+        return sequential_apply(
+            model_input,
+            clip_model.encode_image,
+            batch_size=32,
+            device=device,
+            desc="Encoding images",
+        ).float()
 
 
 def encode_images_huggingface(
