@@ -141,3 +141,19 @@ class FeedForward(nn.Module):
             X: ( batch_size, seq_len, emb_dim )
         """
         return self.net(X)
+
+
+def positional_encoding(block_size: int, emb_dim: int) -> torch.Tensor:
+    """Modified from: https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py"""
+    assert emb_dim % 2 == 0, "Cannot use sin/cos positional encoding with odd dim"
+
+    pe = torch.zeros(block_size, emb_dim)
+    position = torch.arange(0, block_size).unsqueeze(1)
+    div_term = torch.exp(
+        torch.arange(0, emb_dim, 2, dtype=torch.float) * -(math.log(10000.0) / emb_dim)
+    )
+
+    pe[:, 0::2] = torch.sin(position.float() * div_term)
+    pe[:, 1::2] = torch.cos(position.float() * div_term)
+
+    return pe.unsqueeze(0)
