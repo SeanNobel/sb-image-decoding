@@ -31,13 +31,10 @@ class SelfAttention(nn.Module):
         self.attn_drop = nn.Dropout(attn_pdrop)
         self.proj_drop = nn.Dropout(proj_pdrop)
 
-        # Multi-Head AttentionアウトプットのFeedForward
         self.proj = nn.Linear(self.n_head * self.d_v, emb_dim)
 
         self.do_mask = do_mask
         if self.do_mask:
-            # torch.trilは行列の右上三角部分をゼロにして返します（予測するトークンの右側をマスク）
-            # nn.Moduleのregister_bufferは, モデルのパラメータとならないtensorを追加するのに使われます.
             self.register_buffer(
                 name="mask",
                 tensor=torch.tril(torch.ones(block_size, block_size)).view(
@@ -51,56 +48,45 @@ class SelfAttention(nn.Module):
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """_summary_
         Args:
-            x (torch.Tensor): ( B, T, C )
-                B: バッチサイズ batch_size
-                T: シークエンスの長さ. コンテクストサイズ （block_size, または上のn）よりも小さくないといけない.
-                C: Embedding空間の次元数. 上の説明のd_model
-            layer_past (_type_, optional): _description_. Defaults to None.
-        Returns:
-            _type_: _description_
+            x ( b, t, d ): _description_
         """
-        B, T, C = X.size()
+        b, t, d = X.size()
 
         # Que, Key, Valueをそれぞれの全結合層で計算
-        Q = self.query(X)  # ( B, T, n_head * d_qk )
-        K = self.key(X)  # ( B, T, n_head * d_qk )
-        V = self.value(X)  # ( B, T, n_head * d_v )
+        Q = self.query(X)  # ( b, t, n_head * d_qk )
+        K = self.key(X)  # ( b, t, n_head * d_qk )
+        V = self.value(X)  # ( b, t, n_head * d_v )
 
         # Multi-Head
-        Q = Q.view(B, T, self.n_head, self.d_qk).transpose(1, 2)
-        # ( B, n_heads, T, d_k )
-        K = K.view(B, T, self.n_head, self.d_qk).transpose(1, 2)
-        # ( B, n_heads, T, d_k )
-        V = V.view(B, T, self.n_head, self.d_v).transpose(1, 2)
-        # ( B, n_heads, T, d_v )
+        Q = Q.view(b, t, self.n_head, self.d_qk).transpose(1, 2)
+        # ( b, n_heads, t, d_k )
+        K = K.view(b, t, self.n_head, self.d_qk).transpose(1, 2)
+        # ( b, n_heads, t, d_k )
+        V = V.view(b, t, self.n_head, self.d_v).transpose(1, 2)
+        # ( b, n_heads, t, d_v )
 
-        # QとKの行列積をとり, sqrt(d_k)でスケール
-        # ( B, n_heads, T, d_k ) x ( B, n_heads, d_k, T ) -> ( B, n_heads, T, T )
         att = (Q @ K.transpose(-2, -1)) * (1.0 / math.sqrt(K.size(-1)))
+        # ( b, n_heads, t, d_k ) x ( b, n_heads, d_k, t ) -> ( b, n_heads, t, t )
 
-        # Attention matrixの右上三角部分をマスク
         if self.do_mask:
-            att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float("-inf"))
+            att = att.masked_fill(self.mask[:, :, :t, :t] == 0, float("-inf"))
 
-        att = F.softmax(att, dim=-1)  # ( B, n_heads, T, T )
+        att = F.softmax(att, dim=-1)  # ( b, n_heads, t, t )
 
-        # 正則化
         att = self.attn_drop(att)
 
         if self.return_attn:
             return att
 
-        # VとのMatMul
-        # ( B, n_heads, T, T ) x ( B, n_heads, T, d_v ) -> ( B, n_heads, T, d_v )
         y = att @ V
+        # ( b, n_heads, t, t ) x ( b, n_heads, t, d_v ) -> ( b, n_heads, t, d_v )
 
-        # 各headからの出力を結合する.
-        # ( B, n_heads, T, d_v ) -> ( B, T, n_heads, d_v ) -> ( B, T, n_heads * d_v )
-        y = y.transpose(1, 2).contiguous().view(B, T, self.n_head * self.d_v)
+        y = y.transpose(1, 2).contiguous().view(b, t, self.n_head * self.d_v)
+        # ( b, n_heads, t, d_v ) -> ( b, t, n_heads, d_v ) -> ( b, t, n_heads * d_v )
 
-        # Attentionアウトプットの全結合層
-        y = self.proj_drop(self.proj(y))  # ( B, T, emb_dim )
+        y = self.proj_drop(self.proj(y))  # ( b, t, emb_dim )
 
+        # NOTE: For visualization.
         self.att = att.detach().cpu().numpy()
 
         if self.return_attn:
