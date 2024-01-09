@@ -60,9 +60,10 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             # ( 27048, 271, segment_len )
 
             # Images
-            Y_list.append(
-                torch.load(os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt"))
-            )
+            Y = torch.load(os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt"))
+            if Y.ndim == 3:
+                Y = Y[:, 0]  # Take CLS token
+            Y_list.append(Y.clone())
 
             # Indexes
             sample_attrs = np.loadtxt(
