@@ -45,7 +45,7 @@ D2: 320
 D3: 2048
 K: 32
 spatial_attention: True
-block: transformer # dilated_conv or inception or transformer
+blocks: [dilated_conv, dilated_conv, transformer, transformer] # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
 num_blocks: 2
 d_drop: 0.1 # Dropout rate for spatial-attention
 p_drop: 0.1 # Dropout rate for conv blocks
@@ -159,26 +159,33 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 1
+cuda_id: 0
 
-sweep_count: 3
+sweep_count: 6
 sweep_config:
-  name: transformer_pos-emb
+  name: sine-emb_vq_
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    pos_emb:
-      values: [sine, learn, null]
+    blocks:
+      values: [
+        [dilated_conv, dilated_conv, transformer, transformer],
+        [dilated_conv, transformer, transformer],
+        [dilated_conv, dilated_conv, transformer],
+      ]
+
+    # pos_emb:
+    #   values: [sine, learn, null]
     # transformer_heads:
     #   values: [4, 8]
 
     # lambd:
     #   values: [0.0, 0.25, 0.5, 0.75, 1.0]
 
-    # vq:
-    #   values: [null, middle]
+    vq:
+      values: [null, middle]
       
     # vq_type:
     #   values: [vqt_affine, vqt_residual]
