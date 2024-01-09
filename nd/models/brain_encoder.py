@@ -11,6 +11,7 @@ from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
 from nd.models.vector_quantizer import get_vector_quantizer, VectorQuantizer
+from nd.models.transformer import SelfAttention, FeedForward, PreNorm, Residual
 from nd.models.utils import DropBlock1D
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.train_utils import conv_output_size
@@ -124,7 +125,7 @@ class SubjectSpatialAttention(nn.Module):
             out_channels=args.D1,
             kernel_size=1,
             stride=1,
-            bias=args.biases.conv_subj_sa,
+            bias=True,  # args.biases.conv_subj_sa,
         )
 
     def forward(self, X):
@@ -264,7 +265,7 @@ class SubjectBlockSA(nn.Module):
             out_channels=args.D1,
             kernel_size=1,
             stride=1,
-            bias=args.biases.conv_block,
+            bias=True,  # args.biases.conv_block,
         )
 
     def forward(
@@ -411,6 +412,49 @@ class ConvBlock(nn.Module):
         return self.dropout(X)
 
 
+class TransformerBlock(nn.Module):
+    def __init__(
+        self,
+        k: int,
+        D1: int,
+        D2: int,
+        n_heads: int,
+        block_size: int,
+        pos_emb: bool = False,
+        p_drop: float = 0.1,
+    ):
+        super().__init__()
+
+        self.k = k
+        emb_dim = D2
+
+        if k == 0:
+            self.proj = nn.Linear(D1, emb_dim)
+
+        if pos_emb:
+            self.pos_emb = nn.Parameter(torch.zeros(1, block_size, emb_dim))
+
+        self.attn = Residual(
+            PreNorm(SelfAttention(emb_dim, n_heads, block_size, do_mask=False), emb_dim)
+        )
+
+        self.mlp = FeedForward(emb_dim, ff_pdrop=p_drop)
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        X = X.permute(0, 2, 1)
+
+        if hasattr(self, "proj"):
+            X = self.proj(X)
+
+        if hasattr(self, "pos_emb"):
+            X += self.pos_emb
+
+        X = self.attn(X)
+        X = self.mlp(X)
+
+        return X.permute(0, 2, 1)
+
+
 class Downsample1D(nn.Module):
     def __init__(self, D2: int) -> None:
         super().__init__()
@@ -448,7 +492,7 @@ class OriginalAggregator(nn.Module):
             nn.Linear(
                 args.F * temporal_dim,
                 args.F * temporal_multiplier,
-                bias=args.biases.linear_reduc_time,
+                bias=True,  # args.biases.linear_reduc_time,
             ),
         )
 
@@ -553,7 +597,7 @@ class BrainEncoder(nn.Module):
         subject_names: List[str],
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         vq: Optional[str] = None,
-        num_conv_blocks: int = 5,
+        num_blocks: int = 5,
         downsample: Union[bool, List[bool]] = False,
         temporal_aggregation: Optional[str] = None,
         unknown_subject: bool = False,
@@ -561,11 +605,12 @@ class BrainEncoder(nn.Module):
         super().__init__()
 
         D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
+        init_temporal_dim = int(args.seq_len * args.brain_resample_sfreq)
 
         if isinstance(downsample, bool):
-            downsample = [downsample] * num_conv_blocks
+            downsample = [downsample] * num_blocks
         else:
-            assert len(downsample) == num_conv_blocks, "downsample and num_conv_blocks should have the same length."  # fmt: skip
+            assert len(downsample) == num_blocks, "downsample and num_blocks should have the same length."  # fmt: skip
 
         self.vq = vq
         self.unknown_subject = unknown_subject
@@ -585,28 +630,42 @@ class BrainEncoder(nn.Module):
         else:
             raise TypeError
 
-        block_args = {
-            "D1": D1,
-            "D2": D2,
-            "drop_mode": args.drop_mode,
-            "p_drop": args.p_drop,
-        }
+        block_args = {"D1": D1, "D2": D2, "p_drop": args.p_drop}
+        self.blocks = nn.Sequential()
 
-        self.conv_blocks = nn.Sequential()
-        for k in range(num_conv_blocks):
-            if args.conv_block == "dilated_conv":
-                self.conv_blocks.add_module(
-                    f"conv{k}", ConvBlock(k, ksize=args.ksizes.conv_block, **block_args)
+        for k in range(num_blocks):
+            if args.block == "dilated_conv":
+                self.blocks.add_module(
+                    f"block{k}",
+                    ConvBlock(
+                        k,
+                        ksize=args.ksizes.conv_block,
+                        drop_mode=args.drop_mode,
+                        **block_args,
+                    ),
                 )
-            elif args.conv_block == "inception":
-                self.conv_blocks.add_module(
-                    f"conv{k}", Inception1DBlock(k, **block_args)
+            elif args.block == "inception":
+                self.blocks.add_module(
+                    f"block{k}",
+                    Inception1DBlock(k, drop_mode=args.drop_mode, **block_args),
+                )
+            elif args.block == "transformer":
+                self.blocks.add_module(
+                    f"block{k}",
+                    TransformerBlock(
+                        k,
+                        n_heads=args.transformer_heads,
+                        # TODO: TransformerBlock after downsampling with ConvBlocks
+                        block_size=init_temporal_dim,
+                        pos_emb=k == 0,
+                        **block_args,
+                    ),
                 )
             else:
                 raise NotImplementedError()
 
             if downsample[k]:
-                self.conv_blocks.add_module(f"downsample{k}", Downsample1D(D2))
+                self.blocks.add_module(f"downsample{k}", Downsample1D(D2))
 
         self.conv_final1 = nn.Conv1d(
             in_channels=D2,
@@ -623,7 +682,7 @@ class BrainEncoder(nn.Module):
         # )
 
         temporal_dim = conv_output_size(
-            int(args.seq_len * args.brain_resample_sfreq),
+            init_temporal_dim,
             ksize=args.final_ksize,
             stride=args.final_stride,
             # repetition=4 if args.temporal_aggregation == "original" else 2,
@@ -661,7 +720,7 @@ class BrainEncoder(nn.Module):
 
         X = self.subject_block(X, subject_idxs)
 
-        X = self.conv_blocks(X)
+        X = self.blocks(X)
 
         if self.vq == "middle":
             X, vq_loss, perplexity = self.vector_quantizer(X)
