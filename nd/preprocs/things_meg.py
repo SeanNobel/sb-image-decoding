@@ -7,7 +7,6 @@ import os, sys
 import numpy as np
 import mne
 import torch
-import clip
 from PIL import Image
 from functools import partial
 from termcolor import cprint
@@ -17,12 +16,49 @@ from typing import Tuple, List
 import hydra
 from omegaconf import DictConfig
 
+from transformers import AutoProcessor, CLIPVisionModel
+import clip
+
 from nd.utils.brain_preproc import scale_clamp
 from nd.utils.train_utils import sequential_apply
 
 
 @torch.no_grad()
 def encode_images(y_list: List[str], preprocess, clip_model, device) -> torch.Tensor:
+    """Encodes images with either OpenAI or Huggingface pretrained CLIP.
+    https://huggingface.co/openai/clip-vit-large-patch14
+    """
+    if isinstance(clip_model, CLIPVisionModel):
+        last_hidden_states = []
+
+        for y in tqdm(y_list, desc="Preprocessing & encoding images"):
+            model_input = preprocess(images=Image.open(y), return_tensors="pt")
+
+            model_output = clip_model(**model_input.to(device))
+
+            last_hidden_states.append(model_output.last_hidden_state.cpu())
+
+        return torch.cat(last_hidden_states, dim=0)
+    else:
+        model_input = torch.stack(
+            [
+                preprocess(Image.open(y).convert("RGB"))
+                for y in tqdm(y_list, desc="Preprocessing images")
+            ]
+        )
+
+        return sequential_apply(
+            model_input,
+            clip_model.encode_image,
+            batch_size=32,
+            device=device,
+            desc="Encoding images",
+        ).float()
+
+
+def encode_images_huggingface(
+    y_list: List[str], preprocess, clip_model, device
+) -> torch.Tensor:
     Y = torch.stack(
         [
             preprocess(Image.open(y).convert("RGB"))
@@ -120,8 +156,17 @@ def run(args: DictConfig) -> None:
         if args.vision.pretrained and not args.skip_images:
             device = f"cuda:{args.cuda_id}"
 
-            clip_model, preprocess = clip.load(args.vision.pretrained_model)
-            clip_model = clip_model.eval().to(device)
+            if args.vision.pretrained_model.startswith("ViT-"):
+                clip_model, preprocess = clip.load(args.vision.pretrained_model)
+                clip_model = clip_model.eval().to(device)
+
+            elif args.vision.pretrained_model.startswith("openai/"):
+                clip_model = CLIPVisionModel.from_pretrained(args.vision.pretrained_model).to(device)  # fmt: skip
+                preprocess = AutoProcessor.from_pretrained(args.vision.pretrained_model)
+            else:
+                raise ValueError(
+                    f"Unknown pretrained CLIP type: {args.vision.pretrained_model}"
+                )
 
             sample_attrs = np.loadtxt(
                 sample_attrs_path, dtype=str, delimiter=",", skiprows=1

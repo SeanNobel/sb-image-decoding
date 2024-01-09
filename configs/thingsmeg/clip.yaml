@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: 1_paper
+preproc_name: 2_huggingface
 
 thingsmeg_dir: /mnt/tsukuyomi/things-meg/
 meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
@@ -9,8 +9,8 @@ images_dir: ${things_dir}Images/
 metadata_dir: ${things_dir}Metadata/
 preprocessed_data_dir: data/preprocessed/thingsmeg/
 
-skip_meg: False
-skip_images: True
+skip_meg: True
+skip_images: False
 
 # brain_filter_low: 0.1 # Hz
 # brain_filter_high: 250 # Hz
@@ -23,7 +23,8 @@ F: 768 # CLIP embedding dimension
 vision:
   pretrained: True
   model: ViT # For face.pretrained=False
-  pretrained_model: ViT-L/14 # For face.pretrained=True
+  pretrained_model: openai/clip-vit-base-patch16
+  # openai/clip-vit-base-patch16 (Huggingface) or ViT-L/14 (OpenAI)
   encoded: False # False is basically only for StyleGAN
   
 vision_encoder:

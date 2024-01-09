@@ -12,6 +12,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 import clip
+from transformers import AutoProcessor, CLIPVisionModel
 
 from brainmagick.bm.models.simpleconv import SimpleConv
 
