@@ -441,6 +441,12 @@ class TransformerBlock(nn.Module):
         self.mlp = FeedForward(emb_dim, ff_pdrop=p_drop)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            X ( b, d, t ): _description_
+        Returns:
+            X ( b, d, t ): _description_
+        """
         X = X.permute(0, 2, 1)
 
         if hasattr(self, "proj"):
