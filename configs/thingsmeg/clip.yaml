@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: 2_huggingface
+preproc_name: 1_paper # 2_huggingface
 
 thingsmeg_dir: /mnt/tsukuyomi/things-meg/
 meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
@@ -18,13 +18,13 @@ brain_resample_sfreq: 120 # Hz
 clamp_lim: 5.0 # Standard deviation
 
 # ==== Architecture ==== #
-F: 768 # CLIP embedding dimension
+F: 768 # 768 for OpenAI original / 1024 for Huggingface
 
 vision:
   pretrained: True
   model: ViT # For face.pretrained=False
-  pretrained_model: openai/clip-vit-base-patch16
-  # openai/clip-vit-base-patch16 (Huggingface) or ViT-L/14 (OpenAI)
+  pretrained_model: openai/clip-vit-large-patch14
+  # openai/clip-vit-large-patch14 (Huggingface) or ViT-L/14 (OpenAI)
   encoded: False # False is basically only for StyleGAN
   
 vision_encoder:
@@ -45,23 +45,24 @@ D2: 320
 D3: 2048
 K: 32
 spatial_attention: True
-conv_block: dilated_conv # dilated_conv or inception
-num_conv_blocks: 2
+block: transformer # dilated_conv or inception or transformer
+num_blocks: 2
 d_drop: 0.1 # Dropout rate for spatial-attention
 p_drop: 0.1 # Dropout rate for conv blocks
-downsample: False # Can be a list of bools with length num_conv_blocks
+downsample: False # Can be a list of bools with length num_blocks
 final_ksize: 1
 final_stride: 1
 temporal_aggregation: affine # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
 head_activation: True
 ksizes:
   conv_block: 3
-biases:
-  conv_block: True
-  conv_subj_sa: True
-  linear_reduc_time: True
+# biases:
+#   conv_block: True
+#   conv_subj_sa: True
+#   linear_reduc_time: True
+transformer_heads: 8
 
-vq: null # null / middle (after conv_blocks) / end
+vq: null # null / middle (after blocks) / end
 # Where of the model to apply vector quantization.
 vq_type: vqt_residual # original / affine (= vqtorch basic) / group / residual
 vq_aggregated: False
@@ -159,19 +160,22 @@ num_workers: 4
 seed: 1234
 cuda_id: 0
 
-sweep_count: 5
+sweep_count: 4
 sweep_config:
-  name: lambds_mse-head_null-vq
+  name: transformer_blocks
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    lambd:
-      values: [0.0, 0.25, 0.5, 0.75, 1.0]
+    transformer_heads:
+      values: [4, 8]
 
-    # vq:
-    #   values: [middle, null]
+    # lambd:
+    #   values: [0.0, 0.25, 0.5, 0.75, 1.0]
+
+    vq:
+      values: [null, middle]
       
     # vq_type:
     #   values: [vqt_affine, vqt_residual]
@@ -222,7 +226,7 @@ sweep_config:
     #   values: [True]
     # temporal_aggregation:
     #   values: [original, affine]
-    # num_conv_blocks:
+    # num_blocks:
     #   values: [5, 2] # 2
     # d_drop:
     #   values: [0.1, 0.3] # 0.3
@@ -262,12 +266,6 @@ sweep_config:
 
     # learn_temperature:
     #   values: [False]
-    # biases.conv_block:
-    #   values: [True, False]
-    # biases.conv_subj_sa:
-    #   values: [True, False]
-    # biases.linear_reduc_time:
-    #   values: [True, False]
 
 # ==== Evaluation ==== #
 eval:
