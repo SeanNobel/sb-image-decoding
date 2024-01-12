@@ -16,7 +16,6 @@ from nd.models.transformer import (
     FeedForward,
     PreNorm,
     Residual,
-    positional_encoding,
 )
 from nd.models.utils import DropBlock1D
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
@@ -426,7 +425,7 @@ class TransformerBlock(nn.Module):
         D2: int,
         n_heads: int,
         block_size: int,
-        pos_emb: Optional[str] = None,
+        pos_enc: Optional[str] = None,
         p_drop: float = 0.1,
     ):
         super().__init__()
@@ -437,15 +436,8 @@ class TransformerBlock(nn.Module):
         if k == 0:
             self.proj = nn.Linear(D1, emb_dim)
 
-        if pos_emb == "learn":
-            self.pos_emb = nn.Parameter(torch.zeros(1, block_size, emb_dim))
-        elif pos_emb == "sine":
-            self.register_buffer("pos_emb", positional_encoding(block_size, emb_dim))
-        else:
-            assert pos_emb is None
-
         self.attn = Residual(
-            PreNorm(SelfAttention(emb_dim, n_heads, block_size, do_mask=False), emb_dim)
+            PreNorm(SelfAttention(emb_dim, n_heads, block_size, pos_enc), emb_dim)
         )
 
         self.mlp = FeedForward(emb_dim, ff_pdrop=p_drop)
@@ -461,9 +453,6 @@ class TransformerBlock(nn.Module):
 
         if hasattr(self, "proj"):
             X = self.proj(X)
-
-        if hasattr(self, "pos_emb"):
-            X += self.pos_emb
 
         X = self.attn(X)
         X = self.mlp(X)
@@ -678,8 +667,8 @@ class BrainEncoder(nn.Module):
                     Inception1DBlock(k, drop_mode=args.drop_mode, **block_args),
                 )
             elif block == "transformer":
-                pos_emb = args.pos_emb if k == blocks.index("transformer") else None
-                cprint(f"Block{k}: transformer with pos_emb {pos_emb}", "magenta")
+                pos_enc = args.pos_enc if k == blocks.index("transformer") else None
+                cprint(f"Block{k}: transformer with pos_enc {pos_enc}", "magenta")
 
                 self.blocks.add_module(
                     f"block{k}",
@@ -688,7 +677,7 @@ class BrainEncoder(nn.Module):
                         n_heads=args.transformer_heads,
                         # TODO: TransformerBlocks after downsampling with ConvBlocks
                         block_size=init_temporal_dim,
-                        pos_emb=pos_emb,
+                        pos_enc=pos_enc,
                         **block_args,
                     ),
                 )
@@ -727,13 +716,11 @@ class BrainEncoder(nn.Module):
             self.temporal_aggregation = None
 
         if vq is not None:
-            dim = {"middle": D2, "end": D3}[vq]
+            dim = {"middle1": D1, "middle2": D2, "end": D3}[vq]
             self.vector_quantizer = get_vector_quantizer(args, dim)
 
-            self.alpha = args.vq_alpha
-
             if args.vq_aggregated:
-                assert not vq == "middle", "Cannot aggregate time in the middle of the model."  # fmt: skip
+                assert not "middle" in vq, "Cannot aggregate time in the middle of the model."  # fmt: skip
 
                 self.vector_quantizer = AggregatedVectorQuantizer(
                     args, dim, self.vector_quantizer, temporal_dim=temporal_dim
@@ -751,18 +738,19 @@ class BrainEncoder(nn.Module):
 
         X = self.subject_block(X, subject_idxs)
 
+        if self.vq == "middle1":
+            X, vq_loss, perplexity = self.vector_quantizer(X)
+
         X = self.blocks(X)
 
-        if self.vq == "middle":
+        if self.vq == "middle2":
             X, vq_loss, perplexity = self.vector_quantizer(X)
-            vq_loss = self.alpha * vq_loss
 
         X = F.gelu(self.conv_final1(X))
         # X = F.gelu(self.conv_final2(X))
 
         if self.vq == "end":
             X, vq_loss, perplexity = self.vector_quantizer(X)
-            vq_loss = self.alpha * vq_loss
 
         if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
