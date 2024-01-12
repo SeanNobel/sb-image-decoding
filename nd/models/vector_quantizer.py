@@ -38,6 +38,7 @@ def get_vector_quantizer(args, dim: int) -> nn.Module:
             embed_dim=dim,
             affine_lr=args.vq_affine_lr,
             use_ema=args.vq_use_ema,
+            alpha=args.vq_alpha,
             beta=args.vq_beta,
             gamma=args.vq_gamma,
             epsilon=args.vq_epsilon,
@@ -75,7 +76,7 @@ def get_vector_quantizer(args, dim: int) -> nn.Module:
         else:
             raise NotImplementedError(f"vq_type {args.vq_type} not implemented.")
 
-        return VQtorchWrapper(vq)
+        return VQtorchWrapper(vq, args.vq_alpha)
 
     elif args.vq_type.startswith("lu_"):  # lucidrains
         vq_args = {}
@@ -112,26 +113,28 @@ def get_vector_quantizer(args, dim: int) -> nn.Module:
         else:
             raise NotImplementedError(f"vq_type {args.vq_type} not implemented.")
 
-        return LucidrainsWrapper(vq, args.vq_groups)
+        return LucidrainsWrapper(vq, args.vq_alpha, args.vq_groups)
 
 
 class VQtorchWrapper(nn.Module):
-    def __init__(self, vq: VectorQuant) -> None:
+    def __init__(self, vq: VectorQuant, alpha: float) -> None:
         super().__init__()
 
         self.vq = vq
+        self.alpha = alpha
 
     def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
         z_q, vq_returns = self.vq(z_e)
 
-        return z_q, vq_returns["loss"], vq_returns["perplexity"]
+        return z_q, self.alpha * vq_returns["loss"], vq_returns["perplexity"]
 
 
 class LucidrainsWrapper(nn.Module):
-    def __init__(self, vq: ResidualVQ, codebook_size: int) -> None:
+    def __init__(self, vq: ResidualVQ, alpha: float, codebook_size: int) -> None:
         super().__init__()
 
         self.vq = vq
+        self.alpha = alpha
         self.codebook_size = codebook_size
 
     def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
@@ -157,7 +160,7 @@ class LucidrainsWrapper(nn.Module):
         # TODO: Calculate perplexity.
         perplexity = torch.tensor(0.0)
 
-        return z_q, loss, perplexity
+        return z_q, self.alpha * loss, perplexity
 
 
 class VectorQuantizer(nn.Module):
@@ -167,6 +170,7 @@ class VectorQuantizer(nn.Module):
         embed_dim: int,
         affine_lr: float = 0.0,
         use_ema: bool = False,
+        alpha: float = 1.0,
         beta: float = 0.25,
         gamma: float = 0.99,
         epsilon: float = 1e-5,
@@ -187,6 +191,7 @@ class VectorQuantizer(nn.Module):
         self.num_embeds = num_embeds
         self.embed_dim = embed_dim
         self.use_ema = use_ema
+        self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
         self.epsilon = epsilon
@@ -294,4 +299,4 @@ class VectorQuantizer(nn.Module):
         avg_probs = torch.mean(encodings, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
-        return z_q, vq_loss, perplexity
+        return z_q, self.alpha * vq_loss, perplexity
