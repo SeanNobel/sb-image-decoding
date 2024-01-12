@@ -198,16 +198,15 @@ def relative_positional_encoding(
     pe = torch.zeros(block_size, block_size, emb_dim)
 
     position = torch.arange(block_size)
-
-    relative_mat = (position[None] - position[:, None]).unsqueeze(-1)  # ( t, t, 1 )
-    relative_mat = relative_mat.clamp(-max_position, max_position) + max_position
+    position = (position[None] - position[:, None]).unsqueeze(-1)  # ( t, t, 1 )
+    position = position.clamp(-max_position, max_position) + max_position
 
     div_term = torch.exp(
         torch.arange(0, emb_dim, 2, dtype=torch.float) * -(math.log(10000.0) / emb_dim)
     )
     # ( d / 2 )
 
-    pe[:, :, 0::2] = torch.sin(relative_mat.float() * div_term)  # ( t, t, d / 2 )
-    pe[:, :, 1::2] = torch.cos(relative_mat.float() * div_term)
+    pe[:, :, 0::2] = torch.sin(position.float() * div_term)  # ( t, t, d / 2 )
+    pe[:, :, 1::2] = torch.cos(position.float() * div_term)
 
     return pe
