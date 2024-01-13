@@ -1,4 +1,5 @@
 import os, sys
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -46,35 +47,7 @@ from nd.utils.train_utils import Models, sequential_apply, count_parameters
 from nd.utils.plots import plot_latents_2d
 
 
-def train():
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
-    run_name = args.train_name
-
-    if sweep:
-        wandb.init(config=None)
-
-        run_name += "_" + "".join(
-            [
-                f"{k}-{v:.3f}_" if isinstance(v, float) else f"{k}-{v}_"
-                for k, v in wandb.config.items()
-            ]
-        )
-
-        wandb.run.name = run_name
-        args.__dict__.update(wandb.config)
-        cprint(wandb.config, "cyan")
-        wandb.config.update(args.__dict__)
-
-    run_dir = os.path.join("runs", args.dataset.lower(), run_name)
-    os.makedirs(run_dir, exist_ok=True)
-
-    device = f"cuda:{args.cuda_id}"
-
-    # -----------------------
-    #       Dataloader
-    # -----------------------
+def build_dataloaders(args, split=True):
     dataset = eval(f"{args.dataset}CLIPDataset")(args)
 
     if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
@@ -103,7 +76,6 @@ def train():
             )
         else:
             collate_fn = None
-
     else:
         train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
         test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
@@ -112,19 +84,105 @@ def train():
 
     loader_args = {
         "collate_fn": collate_fn,
-        "drop_last": True,
         "num_workers": args.num_workers,
         "pin_memory": True,
     }
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
-    )
-    test_loader = torch.utils.data.DataLoader(
-        dataset=test_set,
-        batch_size=len(test_set) if args.test_with_whole else args.batch_size,
-        shuffle=False,
-        **loader_args,
-    )
+    if split:
+        loader_args.update({"drop_last": True})
+
+        train_loader = torch.utils.data.DataLoader(
+            dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
+        )
+        test_loader = torch.utils.data.DataLoader(
+            dataset=test_set,
+            batch_size=len(test_set) if args.test_with_whole else args.batch_size,
+            shuffle=False,
+            **loader_args,
+        )
+
+        return train_loader, test_loader, dataset
+    else:
+        dataloader = torch.utils.data.DataLoader(
+            dataset=dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            drop_last=False,
+            **loader_args,
+        )
+
+        return dataloader, dataset
+
+
+def build_models(args, dataset, device):
+    if args.brain_encoder == "brain_encoder":
+        brain_encoder = BrainEncoder(
+            args,
+            subject_names=dataset.subject_names,
+            layout=eval(args.layout),
+            vq=args.vq,
+            blocks=args.blocks,
+            downsample=args.downsample,
+            temporal_aggregation=args.temporal_aggregation,
+        ).to(device)
+
+    elif args.brain_encoder == "eegnet":
+        brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
+
+    elif args.brain_encoder == "brainmagick":
+        brain_encoder = SimpleConv(
+            in_channels={"meg": args.num_channels},
+            out_channels=args.F,
+            n_subjects=len(dataset.subject_names),
+            **args.simpleconv,
+        )
+    else:
+        raise NotImplementedError
+
+    if args.vision.pretrained:
+        if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
+            vision_encoder, preprocess = clip.load(args.vision.pretrained_model)
+            vision_encoder = vision_encoder.eval().to(device)
+        else:
+            vision_encoder = None
+            preprocess = None
+    else:
+        vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
+        preprocess = None
+
+    return brain_encoder, vision_encoder, preprocess
+
+
+def train():
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    run_name = args.train_name
+
+    if sweep:
+        wandb.init(config=None)
+
+        run_name += "_" + "".join(
+            [
+                f"{k}-{v:.3f}_" if isinstance(v, float) else f"{k}-{v}_"
+                for k, v in wandb.config.items()
+            ]
+        )
+
+        wandb.run.name = run_name
+        args.__dict__.update(wandb.config)
+        cprint(wandb.config, "cyan")
+        wandb.config.update(args.__dict__)
+
+    run_dir = os.path.join("runs", args.dataset.lower(), run_name)
+    os.makedirs(run_dir, exist_ok=True)
+
+    device = f"cuda:{args.cuda_id}"
+
+    # -----------------------
+    #       Dataloader
+    # -----------------------
+    train_loader, test_loader, dataset = build_dataloaders(args)
 
     # ---------------
     #      Loss
@@ -151,43 +209,7 @@ def train():
     # ---------------------
     #        Models
     # ---------------------
-    vq_brain = args.vq is not None
-
-    if args.brain_encoder == "brain_encoder":
-        brain_encoder = BrainEncoder(
-            args,
-            subject_names=dataset.subject_names,
-            layout=eval(args.layout),
-            vq=args.vq,
-            blocks=args.blocks,
-            downsample=args.downsample,
-            temporal_aggregation=args.temporal_aggregation,
-        ).to(device)
-
-    elif args.brain_encoder == "eegnet":
-        brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
-
-    elif args.brain_encoder == "brainmagick":
-        brain_encoder = SimpleConv(
-            in_channels={"meg": args.num_channels},
-            out_channels=args.F,
-            n_subjects=len(dataset.subject_names),
-            **args.simpleconv,
-        )
-
-    else:
-        raise NotImplementedError
-
-    if args.vision.pretrained:
-        if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
-            vision_encoder, preprocess = clip.load(args.vision.pretrained_model)
-            vision_encoder = vision_encoder.eval().to(device)
-        else:
-            vision_encoder = None
-            preprocess = None
-    else:
-        vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
-        preprocess = None
+    brain_encoder, vision_encoder, preprocess = build_models(args, dataset, device)
 
     trained_models = Models(
         brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
@@ -230,6 +252,8 @@ def train():
     # -----------------------
     #     Strat training
     # -----------------------
+    vq_brain = args.vq is not None
+
     max_test_acc = 0.0
     no_best_counter = 0
 
