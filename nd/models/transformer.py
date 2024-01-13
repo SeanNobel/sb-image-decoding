@@ -1,7 +1,9 @@
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from typing import Optional
 
 
 class SelfAttention(nn.Module):
@@ -10,6 +12,7 @@ class SelfAttention(nn.Module):
         emb_dim: int,
         n_heads: int,
         block_size: int,
+        pos_enc: Optional[str],
         h_qk: int = 8,
         h_v: int = 8,
         do_mask: bool = False,
@@ -23,6 +26,22 @@ class SelfAttention(nn.Module):
         self.d_qk = emb_dim // h_qk
         self.d_v = emb_dim // h_v
         self.return_attn = return_attn
+
+        if pos_enc == "learn":
+            self.pos_enc = nn.Parameter(torch.zeros(1, block_size, emb_dim))
+        elif pos_enc == "sine_abs":
+            self.register_buffer("pos_enc", positional_encoding(block_size, emb_dim))
+        elif pos_enc == "sine_rel":
+            self.register_buffer(
+                "pos_enc_k", relative_positional_encoding(block_size, self.d_qk)
+            )
+            # ( t, t, d_qk )
+            self.register_buffer(
+                "pos_enc_v", relative_positional_encoding(block_size, self.d_v)
+            )
+            # ( t, t, d_v )
+        else:
+            assert pos_enc is None, f"Unknown positional encoding type: {pos_enc}"
 
         self.query = nn.Linear(emb_dim, self.n_head * self.d_qk)
         self.key = nn.Linear(emb_dim, self.n_head * self.d_qk)
@@ -42,15 +61,15 @@ class SelfAttention(nn.Module):
                 ),
             )
 
-        # FIXME: for visualization but there would be smarter ways.
-        self.att = None
-
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """_summary_
         Args:
-            x ( b, t, d ): _description_
+            X ( b, t, d ): _description_
         """
         b, t, d = X.size()
+
+        if hasattr(self, "pos_enc"):
+            X = X + self.pos_enc
 
         Q = self.query(X)  # ( b, t, n_head * d_qk )
         K = self.key(X)  # ( b, t, n_head * d_qk )
@@ -64,8 +83,15 @@ class SelfAttention(nn.Module):
         V = V.view(b, t, self.n_head, self.d_v).transpose(1, 2)
         # ( b, n_heads, t, d_v )
 
-        att = (Q @ K.transpose(-2, -1)) * (1.0 / math.sqrt(K.size(-1)))
+        att = Q @ K.transpose(-2, -1)
         # ( b, n_heads, t, d_k ) x ( b, n_heads, d_k, t ) -> ( b, n_heads, t, t )
+
+        if hasattr(self, "pos_enc_k"):
+            rel_qk_att = Q.transpose(1, 2) @ self.pos_enc_k.transpose(1, 2)
+            # ( b, t, n_heads, d_qk ) x ( t, d_qk, t ) -> ( b, t, n_heads, t )
+            att = att + rel_qk_att.transpose(1, 2)
+
+        att = att / math.sqrt(K.shape[-1])
 
         if self.do_mask:
             att = att.masked_fill(self.mask[:, :, :t, :t] == 0, float("-inf"))
@@ -74,19 +100,18 @@ class SelfAttention(nn.Module):
 
         att = self.attn_drop(att)
 
-        if self.return_attn:
-            return att
-
         y = att @ V
         # ( b, n_heads, t, t ) x ( b, n_heads, t, d_v ) -> ( b, n_heads, t, d_v )
+
+        if hasattr(self, "pos_enc_v"):
+            rel_qkv_att = att.transpose(1, 2) @ self.pos_enc_v
+            # ( b, t, n_heads, t ) x ( t, t, d_v ) -> ( b, t, n_heads, d_v )
+            y = y + rel_qkv_att.transpose(1, 2)
 
         y = y.transpose(1, 2).contiguous().view(b, t, self.n_head * self.d_v)
         # ( b, n_heads, t, d_v ) -> ( b, t, n_heads, d_v ) -> ( b, t, n_heads * d_v )
 
         y = self.proj_drop(self.proj(y))  # ( b, t, emb_dim )
-
-        # NOTE: For visualization.
-        self.att = att.detach().cpu().numpy()
 
         if self.return_attn:
             return y, att
@@ -148,7 +173,7 @@ def positional_encoding(block_size: int, emb_dim: int) -> torch.Tensor:
     assert emb_dim % 2 == 0, "Cannot use sin/cos positional encoding with odd dim"
 
     pe = torch.zeros(block_size, emb_dim)
-    position = torch.arange(0, block_size).unsqueeze(1)
+    position = torch.arange(block_size).unsqueeze(1)
     div_term = torch.exp(
         torch.arange(0, emb_dim, 2, dtype=torch.float) * -(math.log(10000.0) / emb_dim)
     )
@@ -157,3 +182,31 @@ def positional_encoding(block_size: int, emb_dim: int) -> torch.Tensor:
     pe[:, 1::2] = torch.cos(position.float() * div_term)
 
     return pe.unsqueeze(0)
+
+
+def relative_positional_encoding(
+    block_size: int, emb_dim: int, max_position: int = 256
+) -> torch.Tensor:
+    """Works only with self-attention. Needs block_size_q and block_size_k to work with cross-attention.
+    Args:
+        block_size (int): _description_
+        emb_dim (int): _description_
+        max_position (int, optional): _description_. Defaults to 256.
+    Returns:
+        pe ( block_size, block_size, emb_dim )
+    """
+    pe = torch.zeros(block_size, block_size, emb_dim)
+
+    position = torch.arange(block_size)
+    position = (position[None] - position[:, None]).unsqueeze(-1)  # ( t, t, 1 )
+    position = position.clamp(-max_position, max_position) + max_position
+
+    div_term = torch.exp(
+        torch.arange(0, emb_dim, 2, dtype=torch.float) * -(math.log(10000.0) / emb_dim)
+    )
+    # ( d / 2 )
+
+    pe[:, :, 0::2] = torch.sin(position.float() * div_term)  # ( t, t, d / 2 )
+    pe[:, :, 1::2] = torch.cos(position.float() * div_term)
+
+    return pe
