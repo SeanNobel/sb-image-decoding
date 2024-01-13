@@ -47,92 +47,17 @@ def infer(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    # if args.split in ["shallow", "mixed_shallow"]:
-    #     dataset = eval(f"{args.dataset}CLIPDataset")(args)
-
-    #     train_size = int(len(dataset.X) * args.train_ratio)
-    #     test_size = len(dataset.X) - train_size
-    #     train_set, test_set = torch.utils.data.random_split(
-    #         dataset,
-    #         lengths=[train_size, test_size],
-    #         generator=torch.Generator().manual_seed(args.seed),
-    #         # Must use the same seed as train
-    #     )
-
-    #     Y_ref = dataset.Y_ref
-
-    #     subject_names = dataset.subject_names
-
-    # else:
-    #     train_set = eval(f"{args.dataset}CLIPDataset")(args)
-    #     test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
-
-    #     test_size = len(test_set.X)
-
-    #     assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
-    #     Y_ref = train_set.Y_ref
-
-    #     subject_names = train_set.subject_names
-
-    # if len(Y_ref) > 0:
-    #     collate_fn = CollateFunctionForVideoHDF5(
-    #         Y_ref,
-    #         frame_size=args.vision_encoder.image_size,
-    #     )
-    # else:
-    #     collate_fn = None
-
-    # loader_args = {
-    #     "collate_fn": collate_fn,
-    #     "batch_size": args.batch_size,
-    #     "shuffle": False,  # This must be False to keep consistency between image embds and image idxs.
-    #     "drop_last": False,
-    #     "num_workers": 4,
-    #     "pin_memory": True,
-    # }
-    # train_loader = torch.utils.data.DataLoader(dataset=train_set, **loader_args)
-    # test_loader = torch.utils.data.DataLoader(dataset=test_set, **loader_args)
-
     dataloader, dataset = build_dataloaders(args, split=False)
 
     # ---------------------
     #        Models
     # ---------------------
-    # if not args.reduce_time:
-    #     brain_encoder = BrainEncoder(
-    #         args,
-    #         subject_names=subject_names,
-    #         layout=eval(args.layout),
-    #     ).to(device)
-
-    # else:
-    #     brain_encoder = BrainEncoderReduceTime(
-    #         args,
-    #         subject_names=subject_names,
-    #         layout=eval(args.layout),
-    #         time_multiplier=args.time_multiplier,
-    #     ).to(device)
-
     brain_encoder, vision_encoder, preprocess = build_models(args, dataset, device)
 
     brain_encoder.load_state_dict(
         torch.load(os.path.join(run_dir, "brain_encoder_best.pt"), map_location=device)
     )
     brain_encoder.eval()
-
-    # if args.vision.pretrained:
-    #     vision_encoder, preprocess = clip.load(
-    #         args.vision.pretrained_model, device=device
-    #     )
-    # else:
-    #     vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
-
-    #     vision_encoder.load_state_dict(
-    #         torch.load(
-    #             os.path.join(run_dir, "vision_encoder_best.pt"), map_location=device
-    #         )
-    #     )
-    #     vision_encoder.eval()
 
     if not args.vision.pretrained:
         vision_encoder.load_state_dict(
@@ -216,3 +141,90 @@ def run(_args: DictConfig) -> None:
 
 if __name__ == "__main__":
     run()
+
+    # Copy of previous eval_clip.py
+
+    # -----------------------
+    #       Dataloader
+    # -----------------------
+    # if args.split in ["shallow", "mixed_shallow"]:
+    #     dataset = eval(f"{args.dataset}CLIPDataset")(args)
+
+    #     train_size = int(len(dataset.X) * args.train_ratio)
+    #     test_size = len(dataset.X) - train_size
+    #     train_set, test_set = torch.utils.data.random_split(
+    #         dataset,
+    #         lengths=[train_size, test_size],
+    #         generator=torch.Generator().manual_seed(args.seed),
+    #         # Must use the same seed as train
+    #     )
+
+    #     Y_ref = dataset.Y_ref
+
+    #     subject_names = dataset.subject_names
+
+    # else:
+    #     train_set = eval(f"{args.dataset}CLIPDataset")(args)
+    #     test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
+
+    #     test_size = len(test_set.X)
+
+    #     assert len(train_set.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
+    #     Y_ref = train_set.Y_ref
+
+    #     subject_names = train_set.subject_names
+
+    # if len(Y_ref) > 0:
+    #     collate_fn = CollateFunctionForVideoHDF5(
+    #         Y_ref,
+    #         frame_size=args.vision_encoder.image_size,
+    #     )
+    # else:
+    #     collate_fn = None
+
+    # loader_args = {
+    #     "collate_fn": collate_fn,
+    #     "batch_size": args.batch_size,
+    #     "shuffle": False,  # This must be False to keep consistency between image embds and image idxs.
+    #     "drop_last": False,
+    #     "num_workers": 4,
+    #     "pin_memory": True,
+    # }
+    # train_loader = torch.utils.data.DataLoader(dataset=train_set, **loader_args)
+    # test_loader = torch.utils.data.DataLoader(dataset=test_set, **loader_args)
+
+    # ---------------------
+    #        Models
+    # ---------------------
+    # Brain
+
+    # if not args.reduce_time:
+    #     brain_encoder = BrainEncoder(
+    #         args,
+    #         subject_names=subject_names,
+    #         layout=eval(args.layout),
+    #     ).to(device)
+
+    # else:
+    #     brain_encoder = BrainEncoderReduceTime(
+    #         args,
+    #         subject_names=subject_names,
+    #         layout=eval(args.layout),
+    #         time_multiplier=args.time_multiplier,
+    #     ).to(device)
+
+    # Vision
+
+    # if args.vision.pretrained:
+    #     vision_encoder, preprocess = clip.load(
+    #         args.vision.pretrained_model, device=device
+    #     )
+    # else:
+    #     vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
+
+    #     vision_encoder.load_state_dict(
+    #         torch.load(
+    #             os.path.join(run_dir, "vision_encoder_best.pt"), map_location=device
+    #         )
+    #     )
+    #     vision_encoder.eval()

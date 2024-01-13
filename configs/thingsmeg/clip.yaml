@@ -161,9 +161,9 @@ num_workers: 4
 seed: 1234
 cuda_id: 1
 
-sweep_count: 1
+sweep_count: 3
 sweep_config:
-  name: sine-pos-enc-debug
+  name: clips
   method: grid
   metric:
     name: test_top5_acc
@@ -176,8 +176,8 @@ sweep_config:
     #     [dilated_conv, dilated_conv, transformer],
     #   ]
 
-    pos_enc:
-      values: [sine_abs]
+    # pos_enc:
+    #   values: [sine_abs]
     # transformer_heads:
     #   values: [4, 8]
 
@@ -221,8 +221,8 @@ sweep_config:
     # drop_mode:
     #   values: [dropblock, dropout1d, dropout]
 
-    # loss:
-    #   values: [circleclip]
+    loss:
+      values: [clip, cosfaceclip, circleclip]
     # nnclip_k:
     #   values: [4, 12]
     # nnclip_symmetric:
@@ -279,7 +279,7 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  pos_enc: sine_rel
+  pos_enc: sine_abs
   # vq: null
 
 save_vision: False

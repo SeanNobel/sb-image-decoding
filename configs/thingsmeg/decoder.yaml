@@ -7,7 +7,7 @@ clip_embeds_dir: data/clip_embds/thingsmeg/
 # CLIP
 large_test_set: True
 eval:
-  pos_enc: sine_rel
+  pos_enc: sine_abs
   # vq: null
 
 dataset: ThingsMEG
@@ -20,10 +20,10 @@ unet1:
   dim_mults: [1, 2, 4, 8]
 
 unet2:
-  dim: 16
+  dim: 32
   dim_mults: [1, 2, 4, 8, 16]
 
-image_embed_dim: 768
+embed_dim: 768
 channels: 3
 
 image_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
@@ -31,8 +31,9 @@ image_sizes: [128, 256] # First Unet up to 128px, then Unet up to 256px
 timesteps: 1000
 
 epochs: 800
-batch_size: 16
-accum_grad: False
+batch_size: 32
+sub_batch_size: 8
+# accum_grad: False
 lr: 3.0e-4
 wd: 1.0e-2
 ema_beta: 0.99
@@ -40,7 +41,7 @@ ema_update_after_step: 1000
 ema_update_every: 10
 
 cuda_id: 0
-num_workers: 64
+num_workers: 8 # 32
 seed: 1234
 log_level: INFO
 

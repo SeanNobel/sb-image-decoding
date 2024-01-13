@@ -1,12 +1,10 @@
 import os, sys
 import torch
+from torchvision.transforms.functional import to_tensor
 import numpy as np
-import clip
-import mne
+from PIL import Image
 import cv2
 from termcolor import cprint
-from glob import glob
-from natsort import natsorted
 from tqdm import tqdm
 from typing import Tuple, List
 import gc
@@ -233,9 +231,14 @@ class ThingsMEGDecoderDataset(torch.utils.data.Dataset):
         return len(self.Z)
 
     def __getitem__(self, i):
-        Y = cv2.resize(cv2.imread(self.Y_path[i]), (self.image_size, self.image_size))
-        Y = torch.from_numpy(Y).to(torch.float32).permute(2, 0, 1) / 255.0
-        return self.Z[i], Y
+        # _Y = cv2.resize(cv2.imread(self.Y_path[i]), (self.image_size, self.image_size))
+        # _Y = torch.from_numpy(_Y).to(torch.float32).permute(2, 0, 1) / 255.0
+
+        Y = Image.open(self.Y_path[i]).resize(
+            (self.image_size, self.image_size), Image.BILINEAR
+        )
+
+        return self.Z[i], to_tensor(Y)
 
     def _load_postproc_embeds(self, Z, Y_embeds) -> torch.Tensor:
         """_summary_
