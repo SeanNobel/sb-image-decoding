@@ -27,7 +27,7 @@ runs/*
 
 notebooks/*
 !notebooks/.gitkeep
-!notebooks/ica.ipynb
+# !notebooks/ica.ipynb
 
 driving_ica/
 
