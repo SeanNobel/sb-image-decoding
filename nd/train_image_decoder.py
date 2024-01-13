@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 
-from nd.datasets.datasets import NeuroDiffusionCLIPEmbImageDataset
+from nd.datasets import NeuroDiffusionCLIPEmbImageDataset, ThingsMEGDecoderDataset
 
 
 def train(args: DictConfig) -> None:
@@ -40,12 +40,24 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    train_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset, args.clip_train_name)
-    test_set = NeuroDiffusionCLIPEmbImageDataset(
-        args.dataset, args.clip_train_name, train=False
-    )
+    if args.dataset == "ThingsMEG":
+        dataset = ThingsMEGDecoderDataset(args)
 
-    loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
+        train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+        test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
+    else:
+        train_set = NeuroDiffusionCLIPEmbImageDataset(
+            args.dataset, args.clip_train_name
+        )
+        test_set = NeuroDiffusionCLIPEmbImageDataset(
+            args.dataset, args.clip_train_name, train=False
+        )
+
+    loader_args = {
+        "drop_last": True,
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+    }
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
@@ -178,8 +190,9 @@ def run(_args: DictConfig) -> None:
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-    with open_dict(args):
-        args.use_wandb = _args.use_wandb
+    if _args.use_wandb is not None:
+        with open_dict(args):
+            args.use_wandb = _args.use_wandb
 
     train(args)
 
