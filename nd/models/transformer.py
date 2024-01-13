@@ -12,7 +12,6 @@ class SelfAttention(nn.Module):
         emb_dim: int,
         n_heads: int,
         block_size: int,
-        pos_enc: Optional[str],
         h_qk: int = 8,
         h_v: int = 8,
         do_mask: bool = False,
@@ -26,22 +25,6 @@ class SelfAttention(nn.Module):
         self.d_qk = emb_dim // h_qk
         self.d_v = emb_dim // h_v
         self.return_attn = return_attn
-
-        if pos_enc == "learn":
-            self.pos_enc = nn.Parameter(torch.zeros(1, block_size, emb_dim))
-        elif pos_enc == "sine_abs":
-            self.register_buffer("pos_enc", positional_encoding(block_size, emb_dim))
-        elif pos_enc == "sine_rel":
-            self.register_buffer(
-                "pos_enc_k", relative_positional_encoding(block_size, self.d_qk)
-            )
-            # ( t, t, d_qk )
-            self.register_buffer(
-                "pos_enc_v", relative_positional_encoding(block_size, self.d_v)
-            )
-            # ( t, t, d_v )
-        else:
-            assert pos_enc is None, f"Unknown positional encoding type: {pos_enc}"
 
         self.query = nn.Linear(emb_dim, self.n_head * self.d_qk)
         self.key = nn.Linear(emb_dim, self.n_head * self.d_qk)
@@ -61,15 +44,19 @@ class SelfAttention(nn.Module):
                 ),
             )
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        X: torch.Tensor,
+        pos_enc_k: Optional[torch.Tensor] = None,
+        pos_enc_v: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """_summary_
         Args:
             X ( b, t, d ): _description_
         """
-        b, t, d = X.size()
+        assert not (pos_enc_k is None) ^ (pos_enc_v is None), "pos_enc_k and pos_enc_v must be both None or both not None"  # fmt: skip
 
-        if hasattr(self, "pos_enc"):
-            X = X + self.pos_enc
+        b, t, d = X.size()
 
         Q = self.query(X)  # ( b, t, n_head * d_qk )
         K = self.key(X)  # ( b, t, n_head * d_qk )
@@ -86,8 +73,8 @@ class SelfAttention(nn.Module):
         att = Q @ K.transpose(-2, -1)
         # ( b, n_heads, t, d_k ) x ( b, n_heads, d_k, t ) -> ( b, n_heads, t, t )
 
-        if hasattr(self, "pos_enc_k"):
-            rel_qk_att = Q.transpose(1, 2) @ self.pos_enc_k.transpose(1, 2)
+        if pos_enc_k is not None:
+            rel_qk_att = Q.transpose(1, 2) @ pos_enc_k.transpose(1, 2)
             # ( b, t, n_heads, d_qk ) x ( t, d_qk, t ) -> ( b, t, n_heads, t )
             att = att + rel_qk_att.transpose(1, 2)
 
@@ -103,8 +90,8 @@ class SelfAttention(nn.Module):
         y = att @ V
         # ( b, n_heads, t, t ) x ( b, n_heads, t, d_v ) -> ( b, n_heads, t, d_v )
 
-        if hasattr(self, "pos_enc_v"):
-            rel_qkv_att = att.transpose(1, 2) @ self.pos_enc_v
+        if pos_enc_v is not None:
+            rel_qkv_att = att.transpose(1, 2) @ pos_enc_v
             # ( b, t, n_heads, t ) x ( t, t, d_v ) -> ( b, t, n_heads, d_v )
             y = y + rel_qkv_att.transpose(1, 2)
 

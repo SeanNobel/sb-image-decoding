@@ -23,19 +23,19 @@ F: 768 # 768 for OpenAI original / 1024 for Huggingface
 vision:
   pretrained: True
   model: ViT # For face.pretrained=False
-  pretrained_model: openai/clip-vit-large-patch14
+  pretrained_model: ViT-L/14
   # openai/clip-vit-large-patch14 (Huggingface) or ViT-L/14 (OpenAI)
   encoded: False # False is basically only for StyleGAN
   
-vision_encoder:
-  image_size: ${image_size}
-  patch_size: 32
-  dim: ${F}
-  depth: 6
-  heads: 16
-  mlp_dim: 2048
-  dropout: 0.1
-  emb_dropout: 0.1
+# vision_encoder:
+#   image_size: ${image_size}
+#   patch_size: 32
+#   dim: ${F}
+#   depth: 6
+#   heads: 16
+#   mlp_dim: 2048
+#   dropout: 0.1
+#   emb_dropout: 0.1
 
 brain_encoder: brain_encoder
 
@@ -92,7 +92,7 @@ vq_num_quantizers: 1 # Number of quantizers to use
 
 drop_mode: dropout
 
-reduce_time: True
+reduce_time: False
 
 # ==== Loss ==== #
 loss: circleclip
@@ -159,11 +159,11 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 0
+cuda_id: 1
 
-sweep_count: 2
+sweep_count: 3
 sweep_config:
-  name: rel-pos-enc
+  name: clips
   method: grid
   metric:
     name: test_top5_acc
@@ -176,8 +176,8 @@ sweep_config:
     #     [dilated_conv, dilated_conv, transformer],
     #   ]
 
-    pos_enc:
-      values: [sine_rel, sine_abs]
+    # pos_enc:
+    #   values: [sine_abs]
     # transformer_heads:
     #   values: [4, 8]
 
@@ -221,8 +221,8 @@ sweep_config:
     # drop_mode:
     #   values: [dropblock, dropout1d, dropout]
 
-    # loss:
-    #   values: [circleclip]
+    loss:
+      values: [clip, cosfaceclip, circleclip]
     # nnclip_k:
     #   values: [4, 12]
     # nnclip_symmetric:
@@ -279,7 +279,9 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  seq_len: 0.5
+  pos_enc: sine_abs
+  # vq: null
 
+save_vision: False
 as_h5: True
 for_webdataset: False

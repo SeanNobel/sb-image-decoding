@@ -1,15 +1,15 @@
 import os, sys
 import torch
+from torchvision.transforms.functional import to_tensor
 import numpy as np
-import clip
-import mne
 from PIL import Image
+import cv2
 from termcolor import cprint
-from glob import glob
-from natsort import natsorted
 from tqdm import tqdm
 from typing import Tuple, List
 import gc
+
+from nd.utils.eval_utils import get_run_dir
 
 
 class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
@@ -17,16 +17,6 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         super().__init__()
 
         self.large_test_set = args.large_test_set
-
-        # categories = np.loadtxt(
-        #     os.path.join(args.metadata_dir, "Concept-specific/unique_id.csv"),
-        #     dtype=str,
-        # )
-        # category_idxs = np.loadtxt(
-        #     os.path.join(args.metadata_dir, "Concept-specific/image_concept_index.csv"),
-        #     dtype=int,
-        # )
-        # cprint(f"Categories: {categories.shape} | category indices: {category_idxs.shape}", "cyan")  # fmt: skip
 
         # NOTE: Some categories
         high_categories = np.loadtxt(
@@ -113,7 +103,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         gc.collect()
 
     def __len__(self) -> int:
-        return len(self.y)
+        return len(self.Y)
 
     def __getitem__(self, i):
         return self.X[i], self.Y[i], self.subject_idxs[i], self.y_idxs[i], self.categories[i], self.high_categories[i]  # fmt: skip
@@ -187,6 +177,85 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         high_categories = np.append(high_categories, high_categories.max())  # ( 1855, )
 
         return torch.from_numpy(high_categories)[categories]
+
+
+class ThingsMEGDecoderDataset(torch.utils.data.Dataset):
+    def __init__(self, args) -> None:
+        super().__init__()
+
+        self.image_size = args.image_sizes[-1]
+
+        preproc_dir = os.path.join(args.preprocessed_data_dir, args.preproc_name)
+        embeds_dir = os.path.join(args.clip_embeds_dir, *get_run_dir(args).split("/")[2:])  # fmt: skip
+
+        sample_attrs_paths = [
+            os.path.join(args.thingsmeg_dir, f"sourcedata/sample_attributes_P{i+1}.csv")
+            for i in range(4)
+        ]
+
+        Y_path_list = []
+        train_idxs_list = []
+        test_idxs_list = []
+        for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
+            # Image paths
+            Y_path_list.append(
+                np.loadtxt(
+                    os.path.join(preproc_dir, f"Images_P{subject_id+1}.txt"), dtype=str
+                )
+            )
+
+            sample_attrs = np.loadtxt(
+                sample_attrs_path, dtype=str, delimiter=",", skiprows=1
+            )
+            train_idxs, test_idxs = ThingsMEGCLIPDataset.make_split(
+                sample_attrs, large_test_set=args.large_test_set
+            )
+            idx_offset = len(sample_attrs) * subject_id
+            train_idxs_list.append(train_idxs + idx_offset)
+            test_idxs_list.append(test_idxs + idx_offset)
+
+        self.Y_path = np.concatenate(Y_path_list)  # ( 27048, )
+
+        self.train_idxs = torch.cat(train_idxs_list, dim=0)
+        self.test_idxs = torch.cat(test_idxs_list, dim=0)
+
+        # MEG embeddings
+        Z = torch.load(os.path.join(embeds_dir, "brain_mse_embeds.pt"))
+        Y_embeds = torch.load(os.path.join(embeds_dir, "vision_embeds.pt"))
+        self.Z = self._load_postproc_embeds(Z, Y_embeds)
+
+        del Z, Y_embeds, Y_path_list, train_idxs_list, test_idxs_list
+        gc.collect()
+
+    def __len__(self) -> int:
+        return len(self.Z)
+
+    def __getitem__(self, i):
+        # _Y = cv2.resize(cv2.imread(self.Y_path[i]), (self.image_size, self.image_size))
+        # _Y = torch.from_numpy(_Y).to(torch.float32).permute(2, 0, 1) / 255.0
+
+        Y = Image.open(self.Y_path[i]).resize(
+            (self.image_size, self.image_size), Image.BILINEAR
+        )
+
+        return self.Z[i], to_tensor(Y)
+
+    def _load_postproc_embeds(self, Z, Y_embeds) -> torch.Tensor:
+        """_summary_
+        Args:
+            Z ( 108192, F ): _description_
+            Y_embeds ( 108192, F ): _description_
+        Returns:
+            Z ( 108192, F ): z-score normalized and inverse z-score normalized Z.
+        """
+        Y_embeds = Y_embeds[self.train_idxs]
+        mean, std = Y_embeds.mean(dim=0), Y_embeds.std(dim=0)
+
+        # z-score normalize each feature across predictions
+        Z = (Z - Z.mean(dim=0)) / Z.std(dim=0)
+
+        # Inverse z-score normalize each feature across predictions
+        return Z * std + mean
 
 
 if __name__ == "__main__":

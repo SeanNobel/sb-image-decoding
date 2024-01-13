@@ -21,7 +21,6 @@ class VisionSaver:
     ) -> None:
         self.as_h5 = args.as_h5
         self.to_tensored = not args.vision.pretrained
-        size = args.vision_encoder.image_size
 
         # NOTE: Model will always reduce time if it's video.
         self.is_video = args.reduce_time
@@ -39,7 +38,6 @@ class VisionSaver:
             self.save_dir = self._update_save_dir(self.chunk_idx)
 
             self.save = self._save_for_webdataset
-
         else:
             if self.as_h5:
                 self.save_dir = save_dir
@@ -52,6 +50,7 @@ class VisionSaver:
 
             if self.as_h5:
                 name = "videos" if self.is_video else "images"
+                size = args.vision_encoder.image_size
                 shape = (channels, frames, size, size) if self.is_video else (channels, size, size)  # fmt: skip
 
                 # NOTE: h5 file contains many videos as a single file.
@@ -70,7 +69,6 @@ class VisionSaver:
     def _save(self, Y: torch.Tensor) -> None:
         if self.as_h5:
             self._save_as_h5(Y)
-
         else:
             for y in Y:
                 if not self.is_video:
@@ -244,12 +242,16 @@ def get_run_dir(args: DictConfig) -> str:
         run_dir: _description_
     """
     run_name = "".join(
-        [k + "-" + str(v) + "_" for k, v in sorted(collapse_nest(args.eval).items())]
+        [
+            f"{k}-{v:.3f}_" if isinstance(v, float) else f"{k}-{v}_"
+            for k, v in sorted(collapse_nest(args.eval).items())
+        ]
     )
     run_dir = os.path.join(
         "runs", args.dataset.lower(), f"{args.train_name}_{run_name}"
     )
-    assert os.path.exists(run_dir), "run_dir doesn't exist."
+
+    assert os.path.exists(run_dir), f"run_dir {run_dir} doesn't exist."
 
     return run_dir
 
@@ -284,9 +286,7 @@ def collapse_nest(args: DictConfig) -> dict:
     for k, v in args.copy().items():
         if isinstance(v, dict):
             for k_, v_ in v.items():
-                assert not isinstance(
-                    v_, dict
-                ), "collapse_nest() only works for 2-level nested dict."
+                assert not isinstance(v_, dict), "collapse_nest() only works for 2-level nested dict."  # fmt: skip
 
                 args.update({f"{k}.{k_}": v_})
 

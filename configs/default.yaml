@@ -1,4 +1,4 @@
 config_path: uhd/image.yaml
 
 sweep: False # For sweep (CLIP)
-use_wandb: False # For single run (prior, decoder)
+use_wandb: null # For single run (prior, decoder)

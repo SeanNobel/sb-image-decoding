@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 
 from dalle2_pytorch import Unet, Decoder, DecoderTrainer
 
-from nd.datasets.datasets import NeuroDiffusionCLIPEmbImageDataset
+from nd.datasets import NeuroDiffusionCLIPEmbImageDataset, ThingsMEGDecoderDataset
 
 
 def train(args: DictConfig) -> None:
@@ -40,12 +40,24 @@ def train(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    train_set = NeuroDiffusionCLIPEmbImageDataset(args.dataset, args.clip_train_name)
-    test_set = NeuroDiffusionCLIPEmbImageDataset(
-        args.dataset, args.clip_train_name, train=False
-    )
+    if args.dataset == "ThingsMEG":
+        dataset = ThingsMEGDecoderDataset(args)
 
-    loader_args = {"drop_last": True, "num_workers": 4, "pin_memory": True}
+        train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+        test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
+    else:
+        train_set = NeuroDiffusionCLIPEmbImageDataset(
+            args.dataset, args.clip_train_name
+        )
+        test_set = NeuroDiffusionCLIPEmbImageDataset(
+            args.dataset, args.clip_train_name, train=False
+        )
+
+    loader_args = {
+        "drop_last": True,
+        "num_workers": args.num_workers,
+        "pin_memory": True,
+    }
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
     )
@@ -58,20 +70,18 @@ def train(args: DictConfig) -> None:
     # ---------------------
     unet1 = Unet(
         dim=args.unet1.dim,
-        image_embed_dim=args.image_embed_dim,
-        # text_embed_dim=args.text_embed_dim,
-        channels=args.channels,
+        image_embed_dim=args.embed_dim,
+        cond_dim=128,
+        channels=3,
         dim_mults=tuple(args.unet1.dim_mults),
-        cond_on_text_encodings=False,
     ).to(device)
 
     unet2 = Unet(
         dim=args.unet2.dim,
-        image_embed_dim=args.image_embed_dim,
-        # text_embed_dim=args.text_embed_dim,
-        channels=args.channels,
+        image_embed_dim=args.embed_dim,
+        cond_dim=128,
+        channels=3,
         dim_mults=tuple(args.unet2.dim_mults),
-        cond_on_text_encodings=False,
     ).to(device)
 
     decoder = Decoder(
@@ -83,7 +93,7 @@ def train(args: DictConfig) -> None:
     # ---------------------
     #        Trainer
     # ---------------------
-    decoder_trainer = DecoderTrainer(
+    trainer = DecoderTrainer(
         decoder,
         lr=args.lr,
         wd=args.wd,
@@ -103,42 +113,39 @@ def train(args: DictConfig) -> None:
         test_losses_unet1 = []
         test_losses_unet2 = []
 
-        # diffusion_prior.train()
+        trainer.train()
         for Y_embed, Y in tqdm(train_loader):
             Y_embed, Y = Y_embed.to(device), Y.to(device)
 
-            loss_unet1 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=1)
-            # , max_batch_size=4)
-            decoder_trainer.update(1)
+            loss_unet1 = trainer(
+                image_embed=Y_embed,
+                image=Y,
+                unet_number=1,
+                max_batch_size=args.sub_batch_size,
+            )
+            trainer.update(1)
 
-            loss_unet2 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=2)
-            # , max_batch_size=4)
-            decoder_trainer.update(2)
+            loss_unet2 = trainer(
+                image_embed=Y_embed,
+                image=Y,
+                unet_number=2,
+                max_batch_size=args.sub_batch_size,
+            )
+            trainer.update(2)
 
             train_losses_unet1.append(loss_unet1)
             train_losses_unet2.append(loss_unet2)
 
-            # optimizer.zero_grad()
-
-            # loss.backward()
-
-            # optimizer.step()
-
-        # diffusion_prior.eval()
+        trainer.eval()
         for Y_embed, Y in test_loader:
             Y_embed, Y = Y_embed.to(device), Y.to(device)
 
-            # with torch.no_grad():
-            loss_unet1 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=1)
-            # , max_batch_size=4)
-
-            loss_unet2 = decoder_trainer(image_embed=Y_embed, image=Y, unet_number=2)
+            with torch.no_grad():
+                loss_unet1 = trainer(image_embed=Y_embed, image=Y, unet_number=1)
+                loss_unet2 = trainer(image_embed=Y_embed, image=Y, unet_number=2)
 
             test_losses_unet1.append(loss_unet1)
             test_losses_unet2.append(loss_unet2)
-
-            # test_top10_accs.append(test_top10_acc)
-            # test_top1_accs.append(test_top1_acc)
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
@@ -146,7 +153,6 @@ def train(args: DictConfig) -> None:
             f"avg train loss unet2: {np.mean(train_losses_unet2):.3f} | ",
             f"avg test loss unet1: {np.mean(test_losses_unet1):.3f} | ",
             f"avg test loss unet2: {np.mean(test_losses_unet2):.3f} | ",
-            # f"lr: {optimizer.param_groups[0]['lr']:.5f}",
         )
 
         if args.use_wandb:
@@ -156,12 +162,8 @@ def train(args: DictConfig) -> None:
                 "train_loss_unet2": np.mean(train_losses_unet2),
                 "test_loss_unet1": np.mean(test_losses_unet1),
                 "test_loss_unet2": np.mean(test_losses_unet2),
-                # "lrate": optimizer.param_groups[0]["lr"],
             }
             wandb.log(performance_now)
-
-        # if scheduler is not None:
-        #     scheduler.step()
 
         torch.save(decoder.state_dict(), os.path.join(run_dir, "decoder_last.pt"))
 
@@ -178,23 +180,11 @@ def run(_args: DictConfig) -> None:
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
     args = OmegaConf.load(os.path.join("configs", _args.config_path))
 
-    with open_dict(args):
-        args.use_wandb = _args.use_wandb
+    if _args.use_wandb is not None:
+        with open_dict(args):
+            args.use_wandb = _args.use_wandb
 
     train(args)
-
-    # sweep = _args.sweep
-
-    # if sweep:
-    #     sweep_config = OmegaConf.to_container(
-    #         args.sweep_config, resolve=True, throw_on_missing=True
-    #     )
-
-    #     sweep_id = wandb.sweep(sweep_config, project=args.project_name)
-
-    #     wandb.agent(sweep_id, train, count=args.sweep_count)
-
-    # else:
 
 
 if __name__ == "__main__":

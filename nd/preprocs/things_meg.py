@@ -191,6 +191,13 @@ def run(args: DictConfig) -> None:
                 else:
                     raise ValueError(f"Unknown image path type: {path}")
 
+            np.savetxt(
+                os.path.join(save_dir, f"Images_P{subject_id+1}.txt"),
+                y_list,
+                fmt="%s",
+                delimiter="\n",
+            )
+
             Y = encode_images(y_list, preprocess, clip_model, device)
 
             cprint(f"Images P{subject_id+1}: {Y.shape}", "cyan")

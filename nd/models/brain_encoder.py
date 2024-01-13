@@ -16,6 +16,8 @@ from nd.models.transformer import (
     FeedForward,
     PreNorm,
     Residual,
+    positional_encoding,
+    relative_positional_encoding,
 )
 from nd.models.utils import DropBlock1D
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
@@ -436,8 +438,24 @@ class TransformerBlock(nn.Module):
         if k == 0:
             self.proj = nn.Linear(D1, emb_dim)
 
+        if pos_enc == "learn":
+            self.pos_enc = nn.Parameter(torch.zeros(1, block_size, emb_dim))
+        elif pos_enc == "sine_abs":
+            self.register_buffer("pos_enc", positional_encoding(block_size, emb_dim))
+        elif pos_enc == "sine_rel":
+            self.register_buffer(
+                "pos_enc_k", relative_positional_encoding(block_size, self.d_qk)
+            )
+            # ( t, t, d_qk )
+            self.register_buffer(
+                "pos_enc_v", relative_positional_encoding(block_size, self.d_v)
+            )
+            # ( t, t, d_v )
+        else:
+            assert pos_enc is None, f"Unknown positional encoding type: {pos_enc}"
+
         self.attn = Residual(
-            PreNorm(SelfAttention(emb_dim, n_heads, block_size, pos_enc), emb_dim)
+            PreNorm(SelfAttention(emb_dim, n_heads, block_size), emb_dim)
         )
 
         self.mlp = FeedForward(emb_dim, ff_pdrop=p_drop)
@@ -454,7 +472,14 @@ class TransformerBlock(nn.Module):
         if hasattr(self, "proj"):
             X = self.proj(X)
 
-        X = self.attn(X)
+        if hasattr(self, "pos_enc"):
+            X = X + self.pos_enc
+
+        if hasattr(self, "pos_enc_k"):
+            X = self.attn(X, self.pos_enc_k, self.pos_enc_v)
+        else:
+            X = self.attn(X)
+
         X = self.mlp(X)
 
         return X.permute(0, 2, 1)
