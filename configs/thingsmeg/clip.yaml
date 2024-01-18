@@ -63,9 +63,9 @@ ksizes:
 transformer_heads: 4
 pos_enc: sine_abs # learn / sine_abs / sine_rel
 
-vq: null # null / middle1 (before blocks) / middle2 (after blocks) / end
 # Where of the model to apply vector quantization.
-vq_type: vqt_residual # original / affine (= vqtorch basic) / group / residual
+vq: null # null / middle1 (before blocks) / middle2 (after blocks) / end
+vq_type: lu_residual # original / affine (= vqtorch basic) / group / residual
 vq_aggregated: False
 vq_num_embeds: 2048
 vq_num_concepts: 32 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
@@ -88,14 +88,14 @@ vq_alternate: False # Whether to alternate between task loss and vq loss
 vq_groups: 4 # Number of groups for group VQ
 vq_share: True # If True, codebook is shared for each sub-vector.
 # lucidrains
-vq_num_quantizers: 1 # Number of quantizers to use
+vq_num_quantizers: 2 # Number of quantizers to use
 
 drop_mode: dropout
 
 reduce_time: False
 
 # ==== Loss ==== #
-loss: circleclip
+loss: clip # clip / circleclip / nnclip / clipclasscosface / clipclasscircle
 
 lambd: 0.75 # Weighting of CLIP and MSE loss
 
@@ -105,17 +105,19 @@ push_negative: False
 
 use_high_categories: False
 
-clip_temp_init: 5.0
+clip_temp_init: 5.0 # This value is exponentiated in the loss.
 clip_temp_learn: True
-clip_temp_min: 
-clip_temp_max: 
+clip_temp_min: null
+clip_temp_max: null
 
 clip_margin_init: 0.1
-clip_margin_learn: False
-clip_margin_min:
-clip_margin_max:
+clip_margin_learn: True
+clip_margin_min: null
+clip_margin_max: null
 
 cosface_alpha: 1.0
+
+circle_relax: 0.2
 
 nnclip_k: 10
 nnclip_symmetric: True
@@ -159,16 +161,24 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 1
+cuda_id: 0
 
-sweep_count: 3
+sweep_count: 9
 sweep_config:
-  name: clips
+  name: circleclip(+temp)_fixed-temps
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
+    clip_temp_learn:
+      values: [False]
+    clip_temp_init:
+      values: [2.2, 2.4, 2.6, 2.8, 3.0, 3.2, 3.4, 3.6, 3.8]
+
+    # circle_relax:
+    #   values: [0.2, 0.1, 0.0, -0.1]
+
     # blocks:
     #   values: [
     #     [dilated_conv, dilated_conv, transformer, transformer],
@@ -188,7 +198,9 @@ sweep_config:
     #   values: [null, middle1, middle2]
       
     # vq_type:
-    #   values: [vqt_affine, vqt_residual]
+    #   values: [lu_residual]
+    # vq_num_quantizers:
+    #   values: [1, 4, 16]
     # vq_groups:
     #   values: [8, 4]
     # vq_share:
@@ -207,22 +219,26 @@ sweep_config:
     # vq_replace_freq:
     #   values: [20]
 
+    loss:
+      values: [circleclip]
+
+    # clip_margin_init:
+    #   values: [0.1]
+    # clip_margin_learn:
+    #   values: [True]
+
     # use_high_categories:
     #   values: [False, True]
 
     # push_negative:
     #   values: [False, True]
 
-    # clip_margin_init:
-    #   values: [1.0, 10.0, 100.0]
     # cosface_alpha:
     #   values: [1.0]
 
     # drop_mode:
     #   values: [dropblock, dropout1d, dropout]
 
-    loss:
-      values: [clip, cosfaceclip, circleclip]
     # nnclip_k:
     #   values: [4, 12]
     # nnclip_symmetric:
@@ -237,7 +253,7 @@ sweep_config:
     # temporal_aggregation:
     #   values: [original, affine]
     # num_blocks:
-    #   values: [5, 2] # 2
+    #   values: [2, 4] # 2
     # d_drop:
     #   values: [0.1, 0.3] # 0.3
     #   # distribution: uniform
