@@ -35,7 +35,7 @@ def train(args: DictConfig) -> None:
     run_dir = os.path.join("runs/decoder", args.dataset.lower(), args.train_name)
     os.makedirs(run_dir, exist_ok=True)
 
-    device = f"cuda:{args.cuda_id}"
+    device = "cuda:0"
 
     # -----------------------
     #       Dataloader
