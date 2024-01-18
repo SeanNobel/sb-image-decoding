@@ -221,6 +221,26 @@ tmux kill-session -t train-video-decoder
 vi ~/.cache/huggingface/accelerate/default_config.yaml
 ```
 
+```yaml
+# ~/.cache/huggingface/accelerate/default_config.yaml
+compute_environment: LOCAL_MACHINE
+deepspeed_config:
+  deepspeed_config_file: /home/sensho/brain2face/dalle2-video/configs/deepspeed_config.json
+  zero3_init_flag: false
+distributed_type: DEEPSPEED
+downcast_bf16: 'no'
+machine_rank: 0
+main_training_function: main
+num_machines: 1
+num_processes: 4
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+```
+
 ## Finally, run the pipeline and generate images / videos from EEG
 
 ### Image

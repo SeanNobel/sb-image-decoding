@@ -39,9 +39,10 @@ from nd.models.classifier import DiagonalClassifier, LabelClassifier
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.loss import (
     CLIPLoss,
-    NearestNeighborCLIPLoss,
-    CosFaceCLIPLoss,
     CircleCLIPLoss,
+    CLIPWithClassCosFaceLoss,
+    CLIPWithClassCircleLoss,
+    NearestNeighborCLIPLoss,
 )
 from nd.utils.train_utils import Models, sequential_apply, count_parameters
 from nd.utils.plots import plot_latents_2d
@@ -189,16 +190,18 @@ def train():
     # ---------------
     if args.loss == "clip":
         loss_func = CLIPLoss(args).to(device)
+    elif args.loss == "circleclip":
+        loss_func = CircleCLIPLoss(args).to(device)
     elif args.loss == "nnclip":
         loss_func = NearestNeighborCLIPLoss(args).to(device)
-    elif args.loss == "cosfaceclip":
-        loss_func = CosFaceCLIPLoss(
+    elif args.loss == "clipclasscosface":
+        loss_func = CLIPWithClassCosFaceLoss(
             args,
             dataset.num_categories,
             dataset.num_high_categories if args.use_high_categories else None,
         ).to(device)
-    elif args.loss == "circleclip":
-        loss_func = CircleCLIPLoss(
+    elif args.loss == "clipclasscircle":
+        loss_func = CLIPWithClassCircleLoss(
             args,
             dataset.num_categories,
             dataset.num_high_categories if args.use_high_categories else None,
@@ -307,7 +310,7 @@ def train():
             else:
                 raise NotImplementedError
 
-            if isinstance(loss_func, CosFaceCLIPLoss):
+            if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                 if args.use_high_categories:
                     clip_loss = loss_func(Y, Z, classes, high_categories)
                 else:
@@ -415,7 +418,7 @@ def train():
                 else:
                     raise NotImplementedError
 
-                if isinstance(loss_func, CosFaceCLIPLoss):
+                if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                     if args.use_high_categories:
                         clip_loss = loss_func(Y, Z, classes, high_categories)
                     else:
@@ -462,7 +465,6 @@ def train():
                 "train_clip_loss": np.mean(train_clip_losses),
                 "test_clip_loss": np.mean(test_clip_losses),
                 "lrate": optimizer.param_groups[0]["lr"],
-                "temp": loss_func.temp.item(),
             }
 
             performance_now.update(
@@ -498,8 +500,17 @@ def train():
                     }
                 )
 
-            if isinstance(loss_func, CosFaceCLIPLoss):
+            if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                 performance_now.update({"margin": loss_func.margin.item()})
+
+            # if not isinstance(loss_func, CircleCLIPLoss):
+            performance_now.update({"temp": loss_func.temp.item()})
+
+            # FIXME: This doesn't work when args.blocks is a list of strings.
+            if args.blocks == "transformer" and args.pos_enc == "sine_abs":
+                performance_now.update(
+                    {"pos_scale": brain_encoder.blocks[0].pos_enc.scale.item()}
+                )
 
             wandb.log(performance_now)
 

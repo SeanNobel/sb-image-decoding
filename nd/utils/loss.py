@@ -124,7 +124,86 @@ class CLIPLoss(nn.Module):
             self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
 
 
-class CosFaceCLIPLoss(CLIPLoss):
+class CircleCLIPLoss(nn.Module):
+    def __init__(self, args) -> None:
+        super().__init__()
+
+        self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
+
+        # Temperature (scaler)
+        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
+        self.temp_min = args.clip_temp_min
+        self.temp_max = args.clip_temp_max
+        if not args.clip_temp_learn:
+            self.temp.requires_grad = False
+
+        self.m = args.circle_relax
+        self.o_p = 1 + self.m
+        self.o_n = -self.m
+        self.margin_p = 1 - self.m
+        self.margin_n = self.m
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        """_summary_
+        Args:
+            X ( b, (t,) f ): _description_
+            Y ( b, (t,) f ): _description_
+        Returns:
+            torch.Tensor: _description_
+        """
+        b = X.shape[0]
+
+        targets = torch.arange(b, device=X.device, requires_grad=False)
+        targets_onehot = F.one_hot(targets, num_classes=b).to(torch.float32)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)  # ( b, b )
+
+        similarity -= self._margin(targets_onehot)
+        similarity *= self._scaling(similarity, targets_onehot)
+        similarity *= torch.exp(self.temp)
+
+        return (
+            self.cross_entropy(similarity, targets)
+            + self.cross_entropy(similarity.T, targets)
+        ) / 2
+
+    def _scaling(
+        self, similarity: torch.Tensor, targets_onehot: torch.Tensor
+    ) -> torch.Tensor:
+        """_summary_
+        Args:
+            similarity ( b, b ): _description_
+            target_onehot ( b, b ): Float32 one-hot encoded.
+        Returns:
+            penalty ( b, b ): _description_
+        """
+        return torch.where(
+            targets_onehot == 1,
+            torch.relu(self.o_p - similarity),
+            torch.relu(similarity - self.o_n),
+        )
+
+    def _margin(self, targets_onehot: torch.Tensor) -> torch.Tensor:
+        """_summary_
+        Args:
+            targets_onehot ( b, b ): Float32 one-hot encoded.
+        Returns:
+            margin ( b, n_classes ): _description_
+        """
+        return torch.where(targets_onehot == 1, self.margin_p, self.margin_n)
+
+    def clamp_params(self) -> None:
+        if not (self.temp_min is None and self.temp_max is None):
+            self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
+
+
+class CLIPWithClassCosFaceLoss(CLIPLoss):
     def __init__(
         self, args, n_classes, n_high_categories: Optional[int] = None
     ) -> None:
@@ -200,8 +279,8 @@ class CosFaceCLIPLoss(CLIPLoss):
         sim_y = (sim_y - self._margin(classes_onehot)) * self._scaling(sim_y, classes_onehot)  # fmt: skip
 
         return (
-            self.cross_entropy(sim_x, classes) + self.cross_entropy(sim_y, classes) / 2
-        )
+            self.cross_entropy(sim_x, classes) + self.cross_entropy(sim_y, classes)
+        ) / 2
 
     def _scaling(self, *args, **kwargs) -> torch.Tensor:
         # FIXME: Probably exp is not needed, but keeping it for consistency.
@@ -223,7 +302,7 @@ class CosFaceCLIPLoss(CLIPLoss):
             self.margin.data.clamp_(min=self.margin_min, max=self.margin_max)
 
 
-class CircleCLIPLoss(CosFaceCLIPLoss):
+class CLIPWithClassCircleLoss(CLIPWithClassCosFaceLoss):
     def __init__(self, args, n_classes, n_high_categories) -> None:
         super().__init__(args, n_classes, n_high_categories)
 

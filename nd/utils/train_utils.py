@@ -48,7 +48,7 @@ class Models:
         return [
             key
             for key in new_params.keys()
-            if torch.equal(prev_params[key], new_params[key])
+            if torch.equal(prev_params[key], new_params[key]) and new_params[key].requires_grad  # fmt: skip
         ]
 
     def params_updated(self, show_non_updated: bool = True) -> bool:
@@ -60,10 +60,8 @@ class Models:
         )
         if len(non_updated_layers) > 0:
             if show_non_updated:
-                cprint(
-                    f"Following layers in brain encoder are not updated: {non_updated_layers}",
-                    "red",
-                )
+                cprint(f"Following layers in brain encoder are not updated: {non_updated_layers}","red")  # fmt: skip
+
             updated = False
         self.brain_encoder_params = new_params
 
@@ -74,10 +72,8 @@ class Models:
             )
             if len(non_updated_layers) > 0:
                 if show_non_updated:
-                    cprint(
-                        f"Following layers in vision encoder are not updated: {non_updated_layers}",
-                        "red",
-                    )
+                    cprint(f"Following layers in vision encoder are not updated: {non_updated_layers}","red")  # fmt: skip
+
                 updated = False
             self.vision_encoder_params = new_params
 

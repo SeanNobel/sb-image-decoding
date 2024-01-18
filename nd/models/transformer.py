@@ -155,20 +155,57 @@ class FeedForward(nn.Module):
         return self.net(X)
 
 
-def positional_encoding(block_size: int, emb_dim: int) -> torch.Tensor:
-    """Modified from: https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py"""
-    assert emb_dim % 2 == 0, "Cannot use sin/cos positional encoding with odd dim"
+class PositionalEncoding(nn.Module):
+    def __init__(
+        self,
+        block_size: int,
+        emb_dim: int,
+        pos_enc: str = "sine",
+        learn_pos_scale: bool = False,
+    ):
+        super().__init__()
 
-    pe = torch.zeros(block_size, emb_dim)
-    position = torch.arange(block_size).unsqueeze(1)
-    div_term = torch.exp(
-        torch.arange(0, emb_dim, 2, dtype=torch.float) * -(math.log(10000.0) / emb_dim)
-    )
+        self.block_size = block_size
+        self.emb_dim = emb_dim
+        self.pos_enc = pos_enc
 
-    pe[:, 0::2] = torch.sin(position.float() * div_term)
-    pe[:, 1::2] = torch.cos(position.float() * div_term)
+        if pos_enc == "learn":
+            self.pe = nn.Parameter(torch.zeros(block_size, emb_dim))
 
-    return pe.unsqueeze(0)
+        elif pos_enc == "sine":
+            assert (emb_dim % 2 == 0), "Cannot use sin/cos positional encoding with odd dim"  # fmt: skip
+
+            self.register_buffer(
+                "dims", torch.arange(0, emb_dim, 2, dtype=torch.float32)
+            )
+            self.register_buffer(
+                "position", torch.arange(block_size, dtype=torch.float32).unsqueeze(1)
+            )
+            self.scale = nn.Parameter(torch.tensor([1.0]))
+            if not learn_pos_scale:
+                self.scale.requires_grad = False
+        else:
+            raise NotImplementedError
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        if self.pos_enc == "learn":
+            pe = self.pe
+        elif self.pos_enc == "sine":
+            pe = self._sinusoidal_pe(X.device)
+
+        return X + pe.unsqueeze(0)
+
+    def _sinusoidal_pe(self, device) -> torch.Tensor:
+        pe = torch.zeros(self.block_size, self.emb_dim, device=device)
+
+        div_term = torch.exp(
+            self.dims * -(torch.log(self.scale * 10000.0) / self.emb_dim)
+        )
+
+        pe[:, 0::2] = torch.sin(self.position * div_term)
+        pe[:, 1::2] = torch.cos(self.position * div_term)
+
+        return pe
 
 
 def relative_positional_encoding(

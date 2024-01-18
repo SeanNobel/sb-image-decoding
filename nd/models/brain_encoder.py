@@ -16,12 +16,19 @@ from nd.models.transformer import (
     FeedForward,
     PreNorm,
     Residual,
-    positional_encoding,
+    PositionalEncoding,  # positional_encoding,
     relative_positional_encoding,
 )
 from nd.models.utils import DropBlock1D
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.train_utils import conv_output_size
+
+
+def is_in(s: Optional[str], _s: str) -> bool:
+    if s is None:
+        return False
+    else:
+        return _s in s
 
 
 class SpatialAttention(nn.Module):
@@ -438,10 +445,10 @@ class TransformerBlock(nn.Module):
         if k == 0:
             self.proj = nn.Linear(D1, emb_dim)
 
-        if pos_enc == "learn":
-            self.pos_enc = nn.Parameter(torch.zeros(1, block_size, emb_dim))
-        elif pos_enc == "sine_abs":
-            self.register_buffer("pos_enc", positional_encoding(block_size, emb_dim))
+        if is_in(pos_enc, "abs"):
+            self.pos_enc = PositionalEncoding(
+                block_size, emb_dim, pos_enc.split("_")[0]
+            )
         elif pos_enc == "sine_rel":
             self.register_buffer(
                 "pos_enc_k", relative_positional_encoding(block_size, self.d_qk)
@@ -473,7 +480,7 @@ class TransformerBlock(nn.Module):
             X = self.proj(X)
 
         if hasattr(self, "pos_enc"):
-            X = X + self.pos_enc
+            X = self.pos_enc(X)
 
         if hasattr(self, "pos_enc_k"):
             X = self.attn(X, self.pos_enc_k, self.pos_enc_v)
