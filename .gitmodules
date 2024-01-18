@@ -13,3 +13,6 @@
 [submodule "vector-quantize-pytorch"]
 	path = vector-quantize-pytorch
 	url = git@github.com:SeanNobel/vector-quantize-pytorch.git
+[submodule "U-ViT"]
+	path = U-ViT
+	url = git@github.com:SeanNobel/U-ViT.git
