@@ -631,7 +631,7 @@ class BrainEncoder(nn.Module):
     def __init__(
         self,
         args,
-        subject_names: List[str],
+        subjects: Union[int, List[str]],
         layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
         vq: Optional[str] = None,
         blocks: Union[str, List[str]] = "dilated_conv",
@@ -661,16 +661,19 @@ class BrainEncoder(nn.Module):
         self.unknown_subject = unknown_subject
 
         if layout == ch_locations_2d:
-            self.subject_block = SubjectBlock(args, len(subject_names), layout(args))
+            assert isinstance(subjects, int), "subjects should be int when using ch_locations_2d."  # fmt: skip
+            self.subject_block = SubjectBlock(args, subjects, layout(args))
 
         elif layout == DynamicChanLoc2d:
+            assert isinstance(subjects, list), "subjects should be list of str when using DynamicChanLoc2d."  # fmt: skip
+
             if args.spatial_attention:
                 self.subject_block = SubjectBlockSA(
-                    args, len(subject_names), layout(args, subject_names)
+                    args, len(subjects), layout(args, subjects)
                 )
             else:
                 self.subject_block = SubjectBlockConvDynamic(
-                    args, len(subject_names), layout(args, subject_names)
+                    args, len(subjects), layout(args, subjects)
                 )
         else:
             raise TypeError
@@ -794,3 +797,18 @@ class BrainEncoder(nn.Module):
             return X_clip, X_mse, vq_loss, perplexity
         else:
             return X_clip, X_mse
+
+    def encode(
+        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+    ) -> torch.Tensor:
+        if X.ndim == 2:
+            X = X.unsqueeze(0)
+
+            if subject_idxs is not None:
+                subject_idxs = subject_idxs.unsqueeze(0)
+
+        Z = self(X, subject_idxs)[0]
+
+        Z /= Z.norm(dim=-1, keepdim=True)
+
+        return Z.squeeze()
