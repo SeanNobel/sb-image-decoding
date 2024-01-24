@@ -1,5 +1,12 @@
 # neuro-diffusion
 
+## Train U-ViT using CLIP-pretrained brain encoder
+
+```bash
+cd U-ViT
+accelerate launch --multi_gpu --num_processes 4 --mixed_precision fp16 train_t2i_discrete.py --config=configs/thingsmeg_uvit_small.py
+```
+
 ## Overview
 
 <div align="center"><img src="assets/neuro-diffusion.jpeg" width=700></div>

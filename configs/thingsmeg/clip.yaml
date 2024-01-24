@@ -297,7 +297,8 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  pos_enc: sine_abs
+  loss: clip
+  # pos_enc: sine_abs
   # vq: null
 
 save_vision: False
