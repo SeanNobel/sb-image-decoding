@@ -16,3 +16,6 @@
 [submodule "U-ViT"]
 	path = U-ViT
 	url = git@github.com:SeanNobel/U-ViT.git
+[submodule "unidiffuser"]
+	path = unidiffuser
+	url = https://github.com/SeanNobel/unidiffuser.git
