@@ -1,8 +1,9 @@
 assets/*
 !assets/reports/
 !assets/god_channel_names.csv
-!assets/neuro-diffusion.jpeg
+!assets/neuro-diffusion.png
 !assets/original-model.png
+!assets/neuro-diffusion_old.jpeg
 
 generated/
 
@@ -17,6 +18,7 @@ data/*
 !data/.gitkeep
 
 outputs/
+out/
 
 *.out
 

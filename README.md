@@ -1,15 +1,49 @@
-# neuro-diffusion
+# NeuroDiffusion
 
-## Train U-ViT using CLIP-pretrained brain encoder
+### Multi-directional generation of images/videos, MEG/EEG, (and text) using diffusion models.
+
+## Overview
+
+<div align="center"><img src="assets/neuro-diffusion.png" width=90%></div>
+
+## THINGS-MEG
+
+### 0. Preprocess THINGS-MEG dataset
+
+```bash
+python nd/preprocs/things_meg.py
+```
+
+### 1. CLIP pretrain MEG encoder
+
+```bash
+python nd/train_clip.py config_path=thingsmeg/clip.yaml sweep=True
+```
+
+### 2. Train MEG decoder (optional if only doing MEG to image generation)
+
+```bash
+python nd/train_meg_decoder.py
+```
+
+### 3. Train [U-ViT](https://arxiv.org/abs/2209.12152)
 
 ```bash
 cd U-ViT
 accelerate launch --multi_gpu --num_processes 4 --mixed_precision fp16 train_t2i_discrete.py --config=configs/thingsmeg_uvit_small.py
 ```
 
+### 4. Sample from [UniDiffuser](https://arxiv.org/abs/2303.06555)
+
+```bash
+python nd/sample_b2i_unidiff.py
+```
+
+# Legacy
+
 ## Overview
 
-<div align="center"><img src="assets/neuro-diffusion.jpeg" width=700></div>
+<div align="center"><img src="assets/neuro-diffusion_old.jpeg" width=700></div>
 
 References
 
