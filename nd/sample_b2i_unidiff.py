@@ -1,4 +1,4 @@
-import os
+import os, sys
 import random
 import numpy as np
 import torch
@@ -6,9 +6,16 @@ import ml_collections
 import clip
 import einops
 import time
+from glob import glob
+from natsort import natsorted
+from termcolor import cprint
 from contextlib import contextmanager
 from torchvision import transforms
 from torchvision.utils import save_image, make_grid
+from functools import partial
+from hydra import initialize, compose
+import omegaconf
+from typing import Tuple, Any
 
 from absl import flags, app, logging
 from ml_collections import config_flags
@@ -17,7 +24,10 @@ import unidiffuser.utils as utils
 import unidiffuser.libs as libs
 from unidiffuser.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
 
+from nd.datasets import ThingsMEGCLIPDataset
 from nd.models.brain_encoder import BrainEncoder
+from nd.utils.layout import ch_locations_2d
+from nd.utils.eval_utils import get_run_dir
 
 
 def set_seed(seed: int):
@@ -89,7 +99,17 @@ class SamplerBase:
 
 
 class Brain2ImageSampler(SamplerBase):
-    def __init__(self, config):
+    def __init__(
+        self,
+        config: ml_collections.ConfigDict,
+        args: omegaconf.DictConfig,
+        dataset: Any,
+    ):
+        """
+        Args:
+            config: Configs related to U-ViT
+            args: Configs related to CLIP
+        """
         if config.get("benchmark", False):
             """cuDNN selects the fastest convolution algorithm after benchmarking them.
             This leads to non-deterministic results if the input size changes."""
@@ -108,12 +128,30 @@ class Brain2ImageSampler(SamplerBase):
         # U-ViT
         logging.info(f"Loading nnet from {self.config.nnet_path}")
         self.nnet = utils.get_nnet(**self.config.nnet)
+        # FIXME
         self.nnet.load_state_dict(torch.load(self.config.nnet_path, map_location="cpu"))
         self.nnet.to(self.device)
         self.nnet.eval()
 
         # TODO: load CLIP Brain Encoder
-        self.brain_encoder = None
+        subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
+        self.brain_encoder = BrainEncoder(
+            args,
+            subjects=subjects,
+            layout=eval(args.layout),
+            vq=args.vq,
+            blocks=args.blocks,
+            downsample=args.downsample,
+            temporal_aggregation=args.temporal_aggregation,
+        ).to(self.device)
+        self.brain_encoder.load_state_dict(
+            torch.load(
+                os.path.join(args.root, get_run_dir(args), "brain_encoder_best.pt"),
+                map_location=self.device,
+            )
+        )
+        self.brain_encoder.eval()
+
         # TODO: What is the null context for MEG?
         self.empty_context = None
 
@@ -126,10 +164,11 @@ class Brain2ImageSampler(SamplerBase):
             "ViT-B/32", device=self.device, jit=False
         )
 
-    def _prepare_contexts(self, prompts: torch.Tensor):
+    def _prepare_contexts(self, prompts: Tuple[torch.Tensor]):
         """_summary_
         Args:
-            prompts ( n, c, t ): MEG samples to sample images from.
+            prompts[0] ( n, c, t ): MEG samples to sample images from.
+            prompts[1] ( n, ): Subject indices.
         Returns:
             contexts ( n, 1?, F ): MEG embeddings.
                 TODO: Current brain encoder reduces temporal dimension, but that that could be restored.
@@ -138,7 +177,10 @@ class Brain2ImageSampler(SamplerBase):
         """
         resolution = self.config.z_shape[-1] * 8  # 512
 
-        contexts = self.brain_encoder.encode(prompts)
+        contexts = self.brain_encoder.encode(*prompts, device=self.device)
+        # FIXME: Brain encoder currently reduces temporal dimension, but U-ViT expects it.
+        contexts = contexts.unsqueeze(1)  # ( n, 1, F )
+
         img_contexts = torch.randn(
             self.n_samples, 2 * self.config.z_shape[0], *self.config.z_shape[1:]
         )
@@ -202,9 +244,9 @@ class Brain2ImageSampler(SamplerBase):
         clip_img_init = torch.randn(
             self.n_samples, 1, self.config.clip_img_dim, device=self.device
         )
-        brain_init = torch.randn_like(contexts, device=self.device)
+        # brain_init = torch.randn_like(contexts, device=self.device)
 
-        x_init = self.combine(z_init, clip_img_init)
+        x_init = self._combine(z_init, clip_img_init)
 
         noise_schedule = NoiseScheduleVP(
             schedule="discrete",
@@ -212,7 +254,10 @@ class Brain2ImageSampler(SamplerBase):
         )
 
         dpm_solver = DPM_Solver(
-            self._b2i_nnet, noise_schedule, predict_x0=True, thresholding=False
+            partial(self._b2i_nnet, brain=contexts.to(self.device)),
+            noise_schedule,
+            predict_x0=True,
+            thresholding=False,
         )
 
         with torch.no_grad(), torch.autocast(device_type=self.device), timer(
@@ -228,11 +273,11 @@ class Brain2ImageSampler(SamplerBase):
 
         return z, clip_img
 
-    def sample(self, prompts: torch.Tensor):
+    def sample(self, prompts: Tuple[torch.Tensor]):
         logging.info(self.config.sample)
         logging.info(f"N={self.N}")
 
-        self.n_samples = prompts.shape[0]
+        self.n_samples = prompts[0].shape[0]
 
         contexts, img_contexts, clip_imgs = self._prepare_contexts(prompts)
 
@@ -257,37 +302,47 @@ class Brain2ImageSampler(SamplerBase):
 # fmt: off
 FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file(
-    "config", "configs/sample_unidiffuser.py", "Configuration.", lock_config=False)
-flags.DEFINE_string("nnet_path", "models/uvit_v1.pth", "The nnet to evaluate.")
+    "config", "configs/sample_unidiffuser.py", "Configuration.", lock_config=False
+)
+
+nnet_dir = "U-ViT/workdir/thingsmeg_uvit_small/default/ckpts"
+nnet_path = natsorted(glob(os.path.join(nnet_dir, "*.ckpt")))[-1]
+nnet_path = os.path.join(nnet_path, "nnet.pth")
+cprint(nnet_path, "cyan")
+flags.DEFINE_string("nnet_path", nnet_path, "The nnet to evaluate.")
+
 flags.DEFINE_string("output_path", "out", "dir to write results to")
-flags.DEFINE_string("prompt", "an elephant under the sea", "the prompt for text-to-image generation and text variation")
-flags.DEFINE_string("img", "assets/space.jpg", "the image path for image-to-text generation and image variation")
 flags.DEFINE_integer("n_samples", 1, "the number of samples to generate")
 flags.DEFINE_integer("nrow", 4, "number of images displayed in each row of the grid")
-flags.DEFINE_string("mode", None,
-                    "type of generation, one of t2i / i2t / joint / i / t / i2t2i/ t2i2t\n"
-                    "t2i: text to image\n"
-                    "i2t: image to text\n"
-                    "joint: joint generation of text and image\n"
-                    "i: only generate image\n"
-                    "t: only generate text\n"
-                    "i2t2i: image variation, first image to text, then text to image\n"
-                    "t2i2t: text variation, first text to image, the image to text\n"
-                    )
+flags.DEFINE_string("mode", "b2i", "mode of sampling. this script is fixed to brain2image.")
+# flags.DEFINE_string("prompt", "an elephant under the sea", "the prompt for text-to-image generation and text variation")
+# flags.DEFINE_string("img", "assets/space.jpg", "the image path for image-to-text generation and image variation")
 
 
 def main(argv):
     config = FLAGS.config
     config.nnet_path = FLAGS.nnet_path
     config.output_path = FLAGS.output_path
-    config.prompt = FLAGS.prompt
+    # config.prompt = FLAGS.prompt
     config.nrow = min(FLAGS.nrow, FLAGS.n_samples)
-    config.img = FLAGS.img
+    # config.img = FLAGS.img
     config.n_samples = FLAGS.n_samples
     config.mode = FLAGS.mode
     
-    sampler = Brain2ImageSampler(config)
-    sampler.sample()
+    # Configs related to CLIP
+    with initialize(version_base=None, config_path="../configs/thingsmeg"):
+        args = compose(config_name="clip.yaml")
+        
+    dataset = ThingsMEGCLIPDataset(args)
+        
+    sampler = Brain2ImageSampler(config, args, dataset)
+    
+    train_prompts = (
+        dataset.X[dataset.train_idxs][:config.n_samples],
+        dataset.subject_idxs[dataset.train_idxs][:config.n_samples]
+    )
+    
+    sampler.sample(train_prompts)
 
 if __name__ == "__main__":
     app.run(main)
