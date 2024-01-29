@@ -799,9 +799,15 @@ class BrainEncoder(nn.Module):
             return X_clip, X_mse
 
     def encode(
-        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
+        self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor], device=None
     ) -> torch.Tensor:
-        if X.ndim == 2:
+        if device is not None:
+            orig_device = X.device
+            X, subject_idxs = X.to(device), subject_idxs.to(device)
+
+        single = X.dim == 2
+
+        if single:
             X = X.unsqueeze(0)
 
             if subject_idxs is not None:
@@ -811,4 +817,10 @@ class BrainEncoder(nn.Module):
 
         Z /= Z.norm(dim=-1, keepdim=True)
 
-        return Z.squeeze()
+        if device is not None:
+            Z = Z.to(orig_device)
+
+        if single:
+            Z = Z.squeeze(0)
+
+        return Z
