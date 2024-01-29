@@ -251,7 +251,8 @@ def get_run_dir(args: DictConfig) -> str:
         "runs", args.dataset.lower(), f"{args.train_name}_{run_name}"
     )
 
-    assert os.path.exists(run_dir), f"run_dir {run_dir} doesn't exist."
+    # FIXME
+    # assert os.path.exists(run_dir), f"run_dir {run_dir} doesn't exist."
 
     return run_dir
 

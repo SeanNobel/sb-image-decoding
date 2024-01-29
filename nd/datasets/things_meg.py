@@ -16,6 +16,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
     def __init__(self, args) -> None:
         super().__init__()
 
+        self.num_subjects = 4
         self.large_test_set = args.large_test_set
 
         # NOTE: Some categories
@@ -32,7 +33,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
 
         sample_attrs_paths = [
             os.path.join(args.thingsmeg_dir, f"sourcedata/sample_attributes_P{i+1}.csv")
-            for i in range(4)
+            for i in range(self.num_subjects)
         ]
 
         X_list = []
@@ -94,7 +95,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
 
         cprint(f"X: {self.X.shape} | Y: {self.Y.shape} | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
 
-        self.subject_names = [f"s0{i+1}" for i in range(4)]
+        # self.subject_names = [f"s0{i+1}" for i in range(4)]
 
         if args.chance:
             self.X = self.X[torch.randperm(len(self.X))]

@@ -7,7 +7,9 @@ meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
 things_dir: /mnt/tsukuyomi/things/osfstorage/THINGS/
 images_dir: ${things_dir}Images/
 metadata_dir: ${things_dir}Metadata/
-preprocessed_data_dir: data/preprocessed/thingsmeg/
+
+root: /home/sensho/brain2face/
+preprocessed_data_dir: ${root}/data/preprocessed/thingsmeg/
 
 skip_meg: True
 skip_images: False
@@ -135,7 +137,7 @@ seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
 dataset: ThingsMEG
 # image_size: 256
 
-montage_path: nd/utils/montages/things_meg.npy
+montage_path: ${root}nd/utils/montages/things_meg.npy
 layout: ch_locations_2d # DynamicChanLoc2d
 
 large_test_set: True
@@ -295,7 +297,8 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  pos_enc: sine_abs
+  loss: clip
+  # pos_enc: sine_abs
   # vq: null
 
 save_vision: False
