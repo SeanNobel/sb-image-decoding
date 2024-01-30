@@ -10,7 +10,7 @@ from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
-from nd.models.vector_quantizer import get_vector_quantizer, VectorQuantizer
+from nd.models.vector_quantizer import get_vector_quantizer, AggregatedVectorQuantizer
 from nd.models.transformer import (
     SelfAttention,
     FeedForward,
@@ -19,7 +19,9 @@ from nd.models.transformer import (
     PositionalEncoding,  # positional_encoding,
     relative_positional_encoding,
 )
+from nd.models.dann import DANN
 from nd.models.utils import DropBlock1D
+from nd.models.subject_sa import SubjectBlockSA, SubjectBlockConvDynamic
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.train_utils import conv_output_size
 
@@ -126,40 +128,6 @@ class SpatialDropout(nn.Module):
         return X
 
 
-class SubjectSpatialAttention(nn.Module):
-    def __init__(self, args, loc: np.ndarray):
-        super().__init__()
-
-        self.num_channels = loc.shape[0]
-
-        self.spatial_attention = SpatialAttention(args, loc)
-
-        self.conv = nn.Conv1d(
-            in_channels=args.D1,
-            out_channels=args.D1,
-            kernel_size=1,
-            stride=1,
-            bias=True,  # args.biases.conv_subj_sa,
-        )
-
-    def forward(self, X):
-        """
-        Args:
-            X: ( 1, channels (+pad), timesteps )
-        """
-        X, pad = torch.split(
-            X, [self.num_channels, X.shape[1] - self.num_channels], dim=1
-        )
-        assert pad.sum() == 0
-
-        X = self.spatial_attention(X)
-
-        X = self.conv(X)
-        # X = self.conv2(X)
-
-        return X
-
-
 class SubjectBlock(nn.Module):
     def __init__(self, args, num_subjects: int, loc: np.ndarray):
         super().__init__()
@@ -215,113 +183,6 @@ class SubjectBlock(nn.Module):
             X = torch.stack(
                 [self.subject_layer[i](X) for i in range(self.num_subjects)]
             ).mean(dim=0)
-
-        return X
-
-
-class SubjectBlockConvDynamic(nn.Module):
-    def __init__(self, args, num_subjects: int, layouts: DynamicChanLoc2d) -> None:
-        super().__init__()
-
-        self.num_subjects = num_subjects
-        self.num_channels = [
-            layouts.get_loc(i).shape[0] for i in range(self.num_subjects)
-        ]
-
-        self.subject_layer = nn.ModuleList(
-            [
-                nn.Conv1d(
-                    in_channels=self.num_channels[i],
-                    out_channels=args.D1,
-                    kernel_size=1,
-                    bias=False,
-                    stride=1,
-                )
-                for i in range(self.num_subjects)
-            ]
-        )
-
-    def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor) -> torch.Tensor:
-        X = torch.cat(
-            [
-                self.subject_layer[i](
-                    torch.split(
-                        x,
-                        [self.num_channels[i], x.shape[0] - self.num_channels[i]],
-                        dim=0,
-                    )[0].unsqueeze(dim=0)
-                )
-                for i, x in zip(subject_idxs, X)
-            ]
-        )
-
-        return X
-
-
-class SubjectBlockSA(nn.Module):
-    """Applies Spatial Attention to each subject separately"""
-
-    def __init__(self, args, num_subjects: int, layouts: DynamicChanLoc2d) -> None:
-        super().__init__()
-
-        self.layouts = layouts
-        self.num_subjects = num_subjects
-
-        self.subject_layer = nn.ModuleList(
-            [
-                SubjectSpatialAttention(args, self.layouts.get_loc(i))
-                for i in range(self.num_subjects)
-            ]
-        )
-
-        self.conv = nn.Conv1d(
-            in_channels=args.D1,
-            out_channels=args.D1,
-            kernel_size=1,
-            stride=1,
-            bias=True,  # args.biases.conv_block,
-        )
-
-    def forward(
-        self,
-        X: torch.Tensor,
-        subject_idxs: torch.Tensor,
-        subbatch: bool = False,
-    ) -> torch.Tensor:
-        """Currently SubjectBlockSA doesn't allow unknown subject.
-        TODO: think of how to incorporate unknown layout.
-        NOTE: X dim=1 is zero-padded depending on its original channel numbers.
-        FIXME: inputting samples with batch_size=1 might make learning unstable.
-        """
-        if subbatch:
-            X = torch.cat(
-                [
-                    self.subject_layer[i](X[subject_idxs == i])
-                    for i in range(self.num_subjects)
-                ]
-            )
-
-            regather_idxs = []
-            for i in range(len(subject_idxs)):
-                prev, after = torch.tensor_split(subject_idxs, [i])
-                after = after[1:]
-                regather_idxs.append(
-                    (prev <= subject_idxs[i]).sum() + (after < subject_idxs[i]).sum()
-                )
-            regather_idxs = torch.tensor(regather_idxs).to(X.device)
-
-            X = torch.index_select(X, dim=0, index=regather_idxs)
-
-        else:
-            # Sequential batch size = 1 input to each subject layer
-            X = torch.cat(
-                [
-                    self.subject_layer[i](x.unsqueeze(dim=0))
-                    for i, x in zip(subject_idxs, X)
-                ]
-            )
-
-        X = self.conv(X)
 
         return X
 
@@ -590,43 +451,6 @@ class TemporalAggregation(nn.Module):
         return self.layers(X)  # ( b, F * multiplier )
 
 
-class AggregatedVectorQuantizer(nn.Module):
-    def __init__(
-        self,
-        args,
-        embed_dim: int,
-        vector_quantizer: VectorQuantizer,  # or VectorQuant
-        temporal_dim: int,
-    ) -> None:
-        super().__init__()
-
-        num_concepts = args.vq_num_concepts
-
-        self.aggregator = nn.Sequential(
-            TemporalAggregation(
-                args, temporal_dim, embed_dim=embed_dim, multiplier=num_concepts
-            ),
-            nn.Unflatten(dim=1, unflattened_size=(embed_dim, num_concepts)),
-        )
-
-        self.vector_quantizer = vector_quantizer
-
-        self.mlp_projector = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(embed_dim * num_concepts, embed_dim),
-            nn.GELU(),
-        )
-
-    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
-        X = self.aggregator(X)
-
-        X, vq_loss, perplexity = self.vector_quantizer(X)
-
-        X = self.mlp_projector(X)
-
-        return X, vq_loss, perplexity
-
-
 class BrainEncoder(nn.Module):
     def __init__(
         self,
@@ -637,13 +461,19 @@ class BrainEncoder(nn.Module):
         blocks: Union[str, List[str]] = "dilated_conv",
         downsample: Union[bool, List[bool]] = False,
         temporal_aggregation: Optional[str] = None,
+        dann: bool = False,
         unknown_subject: bool = False,
     ) -> None:
         super().__init__()
 
+        self.vq = vq
+        self.dann = dann
+        self.unknown_subject = unknown_subject
+
         D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
         init_temporal_dim = int(args.seq_len * args.brain_resample_sfreq)
         num_blocks = args.num_blocks
+        num_subjects = subjects if isinstance(subjects, int) else len(subjects)
 
         if isinstance(blocks, str):
             blocks = [blocks] * num_blocks
@@ -657,24 +487,19 @@ class BrainEncoder(nn.Module):
         else:
             assert len(downsample) == num_blocks, "downsample and num_blocks should have the same length."  # fmt: skip
 
-        self.vq = vq
-        self.unknown_subject = unknown_subject
-
         if layout == ch_locations_2d:
-            assert isinstance(subjects, int), "subjects should be int when using ch_locations_2d."  # fmt: skip
-            self.subject_block = SubjectBlock(args, subjects, layout(args))
+            self.subject_block = SubjectBlock(
+                args, num_subjects if not self.dann else 1, layout(args)
+            )
 
         elif layout == DynamicChanLoc2d:
             assert isinstance(subjects, list), "subjects should be list of str when using DynamicChanLoc2d."  # fmt: skip
+            assert not self.dann, "Cannot unify inputs from dynamic channel locations."
 
             if args.spatial_attention:
-                self.subject_block = SubjectBlockSA(
-                    args, len(subjects), layout(args, subjects)
-                )
+                self.subject_block = SubjectBlockSA(args, len(subjects), layout(args, subjects))  # fmt: skip
             else:
-                self.subject_block = SubjectBlockConvDynamic(
-                    args, len(subjects), layout(args, subjects)
-                )
+                self.subject_block = SubjectBlockConvDynamic(args, len(subjects), layout(args, subjects))  # fmt: skip
         else:
             raise TypeError
 
@@ -722,25 +547,17 @@ class BrainEncoder(nn.Module):
             if downsample[k]:
                 self.blocks.add_module(f"downsample{k}", Downsample1D(D2))
 
-        self.conv_final1 = nn.Conv1d(
+        self.conv_final = nn.Conv1d(
             in_channels=D2,
-            # out_channels=2 * self.D2,
             out_channels=D3,
             kernel_size=args.final_ksize,
             stride=args.final_stride,
         )
-        # self.conv_final2 = nn.Conv1d(
-        #     in_channels=2 * self.D2,
-        #     out_channels=self.F,
-        #     kernel_size=args.final_ksize,
-        #     stride=args.final_stride,
-        # )
 
         temporal_dim = conv_output_size(
             init_temporal_dim,
             ksize=args.final_ksize,
             stride=args.final_stride,
-            # repetition=4 if args.temporal_aggregation == "original" else 2,
             repetition=3 if args.temporal_aggregation == "original" else 1,
             downsample=sum(downsample),
         )
@@ -758,10 +575,17 @@ class BrainEncoder(nn.Module):
                 assert not "middle" in vq, "Cannot aggregate time in the middle of the model."  # fmt: skip
 
                 self.vector_quantizer = AggregatedVectorQuantizer(
-                    args, dim, self.vector_quantizer, temporal_dim=temporal_dim
+                    args,
+                    TemporalAggregation,
+                    dim,
+                    self.vector_quantizer,
+                    temporal_dim=temporal_dim,
                 )
 
                 self.temporal_aggregation = None
+
+        if self.dann:
+            self.dann_head = DANN(in_dim=D3, num_domains=num_subjects, scale=args.dann_scale)  # fmt: skip
 
         self.clip_head = nn.Sequential(nn.LayerNorm(D3), nn.GELU(), nn.Linear(D3, F))
         self.mse_head = nn.Sequential(nn.LayerNorm(D3), nn.GELU(), nn.Linear(D3, F))
@@ -771,7 +595,9 @@ class BrainEncoder(nn.Module):
     ) -> torch.Tensor:
         assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject."  # fmt: skip
 
-        X = self.subject_block(X, subject_idxs)
+        X = self.subject_block(
+            X, subject_idxs if not self.dann else torch.zeros_like(subject_idxs)
+        )
 
         if self.vq == "middle1":
             X, vq_loss, perplexity = self.vector_quantizer(X)
@@ -781,8 +607,7 @@ class BrainEncoder(nn.Module):
         if self.vq == "middle2":
             X, vq_loss, perplexity = self.vector_quantizer(X)
 
-        X = F.gelu(self.conv_final1(X))
-        # X = F.gelu(self.conv_final2(X))
+        X = F.gelu(self.conv_final(X))
 
         if self.vq == "end":
             X, vq_loss, perplexity = self.vector_quantizer(X)
@@ -790,13 +615,21 @@ class BrainEncoder(nn.Module):
         if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
 
-        X_clip = self.clip_head(X)
-        X_mse = self.mse_head(X)
+        Z_clip = self.clip_head(X)
+        Z_mse = self.mse_head(X)
+
+        ret_dict = {"Z_clip": Z_clip, "Z_mse": Z_mse}
 
         if self.vq is not None:
-            return X_clip, X_mse, vq_loss, perplexity
-        else:
-            return X_clip, X_mse
+            ret_dict.update({"vq_loss": vq_loss, "perplexity": perplexity})
+
+        if self.dann:
+            subject_pred = self.dann_head(X)
+            adv_loss = F.cross_entropy(subject_pred, subject_idxs.to(X.device))
+
+            ret_dict.update({"adv_loss": adv_loss})
+
+        return ret_dict
 
     def encode(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor], device=None
