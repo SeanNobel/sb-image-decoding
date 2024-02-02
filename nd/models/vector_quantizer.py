@@ -300,3 +300,41 @@ class VectorQuantizer(nn.Module):
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
         return z_q, self.alpha * vq_loss, perplexity
+
+
+class AggregatedVectorQuantizer(nn.Module):
+    def __init__(
+        self,
+        args,
+        TemporalAggregation,
+        embed_dim: int,
+        vector_quantizer: VectorQuantizer,  # or VectorQuant
+        temporal_dim: int,
+    ) -> None:
+        super().__init__()
+
+        num_concepts = args.vq_num_concepts
+
+        self.aggregator = nn.Sequential(
+            TemporalAggregation(
+                args, temporal_dim, embed_dim=embed_dim, multiplier=num_concepts
+            ),
+            nn.Unflatten(dim=1, unflattened_size=(embed_dim, num_concepts)),
+        )
+
+        self.vector_quantizer = vector_quantizer
+
+        self.mlp_projector = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(embed_dim * num_concepts, embed_dim),
+            nn.GELU(),
+        )
+
+    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
+        X = self.aggregator(X)
+
+        X, vq_loss, perplexity = self.vector_quantizer(X)
+
+        X = self.mlp_projector(X)
+
+        return X, vq_loss, perplexity

@@ -28,16 +28,6 @@ vision:
   pretrained_model: ViT-L/14
   # openai/clip-vit-large-patch14 (Huggingface) or ViT-L/14 (OpenAI)
   encoded: False # False is basically only for StyleGAN
-  
-# vision_encoder:
-#   image_size: ${image_size}
-#   patch_size: 32
-#   dim: ${F}
-#   depth: 6
-#   heads: 16
-#   mlp_dim: 2048
-#   dropout: 0.1
-#   emb_dropout: 0.1
 
 brain_encoder: brain_encoder
 
@@ -58,10 +48,6 @@ temporal_aggregation: affine # original or affine or pool. This is somewhat over
 head_activation: True
 ksizes:
   conv_block: 3
-# biases:
-#   conv_block: True
-#   conv_subj_sa: True
-#   linear_reduc_time: True
 transformer_heads: 4
 pos_enc: sine_abs # learn / sine_abs / sine_rel
 
@@ -91,6 +77,9 @@ vq_groups: 4 # Number of groups for group VQ
 vq_share: True # If True, codebook is shared for each sub-vector.
 # lucidrains
 vq_num_quantizers: 2 # Number of quantizers to use
+
+dann: True
+dann_scale: 1.0
 
 drop_mode: dropout
 
@@ -129,7 +118,6 @@ nnclip_alpha: 0.5
 # ==== Training ==== #
 project_name: nd_things_clip
 train_name: large_test
-# debug: False
 
 # seq_onset: 0.0
 seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
@@ -165,18 +153,21 @@ num_workers: 4
 seed: 1234
 cuda_id: 0
 
-sweep_count: 9
+sweep_count: 2
 sweep_config:
-  name: circleclip(+temp)_fixed-temps
+  name: dann-init
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    clip_temp_learn:
-      values: [False]
-    clip_temp_init:
-      values: [2.2, 2.4, 2.6, 2.8, 3.0, 3.2, 3.4, 3.6, 3.8]
+    dann:
+      values: [False, True]
+
+    # clip_temp_learn:
+    #   values: [False]
+    # clip_temp_init:
+    #   values: [2.2, 2.4, 2.6, 2.8, 3.0, 3.2, 3.4, 3.6, 3.8]
 
     # circle_relax:
     #   values: [0.2, 0.1, 0.0, -0.1]
@@ -221,8 +212,8 @@ sweep_config:
     # vq_replace_freq:
     #   values: [20]
 
-    loss:
-      values: [circleclip]
+    # loss:
+    #   values: [circleclip]
 
     # clip_margin_init:
     #   values: [0.1]
@@ -297,7 +288,8 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  loss: clip
+  dann: False
+  # loss: clip
   # pos_enc: sine_abs
   # vq: null
 

@@ -116,14 +116,17 @@ def build_dataloaders(args, split=True):
 
 def build_models(args, dataset, device):
     if args.brain_encoder == "brain_encoder":
+        subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
+
         brain_encoder = BrainEncoder(
             args,
-            subject_names=dataset.subject_names,
+            subjects=subjects,
             layout=eval(args.layout),
             vq=args.vq,
             blocks=args.blocks,
             downsample=args.downsample,
             temporal_aggregation=args.temporal_aggregation,
+            dann=args.dann,
         ).to(device)
 
     elif args.brain_encoder == "eegnet":
@@ -264,9 +267,11 @@ def train():
         train_clip_losses = []
         train_mse_losses = []
         train_vq_losses = []
+        train_adv_losses = []
         test_clip_losses = []
         test_mse_losses = []
         test_vq_losses = []
+        test_adv_losses = []
         train_topk_accs = []
         test_topk_accs = []
         train_perplexities = []
@@ -277,6 +282,9 @@ def train():
         train_Z_list = []
         train_categories_list = []
 
+        # -----------------------
+        #       Train step
+        # -----------------------
         trained_models.train()
         if args.accum_grad:
             optimizer.zero_grad()
@@ -298,10 +306,14 @@ def train():
                 Y = vision_encoder(Y)
 
             if isinstance(brain_encoder, BrainEncoder):
+                ret_dict = brain_encoder(X, subject_idxs)
+
+                Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
                 if vq_brain:
-                    Z, Z_mse, vq_loss, perplexity = brain_encoder(X, subject_idxs)
-                else:
-                    Z, Z_mse = brain_encoder(X, subject_idxs)
+                    vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]
+
+                if args.dann:
+                    adv_loss = ret_dict["adv_loss"]
 
             elif isinstance(brain_encoder, EEGNetDeep):
                 assert not vq_brain, "EEGNetDeep doesn't support vector quantization."
@@ -328,6 +340,9 @@ def train():
             if vq_brain and not args.vq_alternate:
                 loss = loss + vq_loss
 
+            if args.dann:
+                loss = loss + adv_loss
+
             with torch.no_grad():
                 if isinstance(train_classifier, DiagonalClassifier):
                     topk_accs, _ = train_classifier(Z, Y)
@@ -345,6 +360,9 @@ def train():
             if vq_brain:
                 train_vq_losses.append(vq_loss.item())
                 train_perplexities.append(perplexity.item())
+
+            if args.dann:
+                train_adv_losses.append(adv_loss.item())
 
             if args.accum_grad:
                 loss.backward()
@@ -371,6 +389,9 @@ def train():
 
         _ = trained_models.params_updated()
 
+        # -----------------------
+        #       Test step
+        # -----------------------
         trained_models.eval()
         for batch in tqdm(test_loader, desc="Test"):
             X, Y, subject_idxs, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
@@ -409,10 +430,18 @@ def train():
                 )
 
                 if isinstance(brain_encoder, BrainEncoder):
+                    ret_dict = Z
+
+                    Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
                     if vq_brain:
-                        Z, Z_mse, vq_loss, perplexity = Z
-                    else:
-                        Z, Z_mse = Z
+                        vq_loss, perplexity = (
+                            ret_dict["vq_loss"],
+                            ret_dict["perplexity"],
+                        )
+
+                    if args.dann:
+                        adv_loss = ret_dict["adv_loss"]
+
                 elif isinstance(brain_encoder, EEGNetDeep):
                     Z_mse = None
                 else:
@@ -425,6 +454,9 @@ def train():
                         clip_loss = loss_func(Y, Z, classes)
                 else:
                     clip_loss = loss_func(Y, Z)
+
+                if Z_mse is not None:
+                    mse_loss = F.mse_loss(Y, Z_mse, reduction=args.reduction)
 
                 if isinstance(test_classifier, DiagonalClassifier):
                     topk_accs, _ = test_classifier(
@@ -445,9 +477,13 @@ def train():
                 test_mse_losses.append(
                     F.mse_loss(Y, Z_mse, reduction=args.reduction).item()
                 )
+
             if vq_brain:
                 test_vq_losses.append(vq_loss.item())
                 test_perplexities.append(perplexity.item())
+
+            if args.dann:
+                test_adv_losses.append(adv_loss.item())
 
         train_topk_accs = np.stack(train_topk_accs)
         test_topk_accs = np.stack(test_topk_accs)
@@ -500,6 +536,14 @@ def train():
                     }
                 )
 
+            if args.dann:
+                performance_now.update(
+                    {
+                        "train_adv_loss": np.mean(train_adv_losses),
+                        "test_adv_loss": np.mean(test_adv_losses),
+                    }
+                )
+
             if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                 performance_now.update({"margin": loss_func.margin.item()})
 
@@ -534,15 +578,13 @@ def train():
                 plot_latents_2d(
                     np.concatenate(train_Y_list),
                     np.concatenate(train_categories_list),
-                    epoch=epoch,
-                    save_dir=os.path.join(run_dir, "plots/image_latents"),
+                    save_path=os.path.join(run_dir, f"plots/image_latents/epoch{epoch}.png"),  # fmt: skip
                 )
             if epoch % 50 == 0:
                 plot_latents_2d(
                     np.concatenate(train_Z_list),
                     np.concatenate(train_categories_list),
-                    epoch=epoch,
-                    save_dir=os.path.join(run_dir, "plots/ecog_latents"),
+                    save_path=os.path.join(run_dir, f"plots/ecog_latents/epoch{epoch}.png"),  # fmt: skip
                 )
 
         if no_best_counter > args.patience:

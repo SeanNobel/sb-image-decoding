@@ -168,9 +168,12 @@ def sequential_apply(
     if isinstance(output[0], torch.Tensor):
         return torch.cat(output).to(orig_device)
 
-    elif isinstance(output[0], tuple):
-        out_list = []
-        for _output in zip(*output):
+    elif isinstance(output[0], dict):
+        stacked_dict = {}
+
+        for key in output[0].keys():
+            _output = [_dict[key] for _dict in output]
+
             if _output[0].ndim == 0:
                 _output = torch.stack(_output)
 
@@ -179,11 +182,11 @@ def sequential_apply(
                 elif reduction == "sum":
                     _output = _output.sum()
 
-                out_list.append(_output)
+                stacked_dict.update({key: _output})
             else:
-                out_list.append(torch.cat(_output))
+                stacked_dict.update({key: torch.cat(_output)})
 
-        return tuple(out_list)
+        return stacked_dict
     else:
         raise ValueError(f"Unknown output type: {type(output[0])}")
 

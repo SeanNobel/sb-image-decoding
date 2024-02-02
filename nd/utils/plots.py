@@ -11,8 +11,7 @@ matplotlib.use("Agg")
 def plot_latents_2d(
     latents: np.ndarray,
     classes: np.ndarray,
-    epoch: int,
-    save_dir: str,
+    save_path: str,
     cmap: str = "gist_rainbow",
 ) -> None:
     """
@@ -34,6 +33,6 @@ def plot_latents_2d(
         ax.scatter(*latents_reduced.T, c=classes, cmap=cmap)
         ax.set_title(f"t-SNE (perplexity={perplexity})")
 
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    fig.savefig(os.path.join(save_dir, f"epoch{epoch}.png"))
+    if not os.path.exists(os.path.dirname(save_path)):
+        os.makedirs(os.path.dirname(save_path))
+    fig.savefig(save_path)
