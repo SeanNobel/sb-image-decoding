@@ -9,8 +9,15 @@ from tqdm import tqdm
 from typing import Optional, List, Callable, Union, Tuple
 
 
+def all_equal(list_: List[np.ndarray]) -> bool:
+    """Check if all elements in the list are equal."""
+    return np.all([np.array_equal(p, list_[0]) for p in list_])
+
+
 def sequential_load(
-    data: h5py._hl.dataset.Dataset, bufsize: int, preproc_func: Optional[Callable] = None
+    data: h5py._hl.dataset.Dataset,
+    bufsize: int,
+    preproc_func: Optional[Callable] = None,
 ) -> Union[np.ndarray, torch.Tensor]:
     """h5 EEG files are sometimes too large (~500GB) to load at once.
     Args:
@@ -51,7 +58,7 @@ def crop_and_segment(x: np.ndarray, segment_len: int) -> np.ndarray:
     # Crop
     crop_len = x.shape[0] % segment_len
     if crop_len > 0:
-        x = x[: -crop_len]  # ( ~100000, * )
+        x = x[:-crop_len]  # ( ~100000, * )
 
     # Segment
     x = x.reshape(-1, segment_len, *x.shape[1:])
@@ -108,7 +115,7 @@ def get_uhd_data_paths(
 
         # NOTE: Loosely ensuring that the video is not a copied one or something
         video_path = glob(dirname + "/*[0-9].mov") + glob(dirname + "/*[0-9].mkv")
-        eeg_path = glob(dirname + "/EEG_try*139.h5") + glob(dirname + "/EEG_try*139.xdf")
+        eeg_path = glob(dirname + "/EEG_try*139.h5") + glob(dirname + "/EEG_try*139.xdf")  # fmt: skip
 
         if len(video_path) == 1 and len(eeg_path) == 1:
             cprint(f"USED: {sync_path}", color="cyan")
@@ -175,9 +182,7 @@ def get_face2brain_data_paths(
             video_paths.append(video_path)
             eeg_paths.append(eeg_path[0])
         else:
-            cprint(
-                f"SKIPPED: {len(eeg_path)} corresponding EEG data found.", color="yellow"
-            )
+            cprint(f"SKIPPED: {len(eeg_path)} corresponding EEG data found.",color="yellow")  # fmt: skip
             continue
 
     assert len(video_paths) == len(eeg_paths) == len(video_times_paths)
