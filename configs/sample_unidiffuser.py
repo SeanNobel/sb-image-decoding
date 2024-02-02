@@ -11,7 +11,7 @@ def get_config():
 
     config.seed = 1234
     config.pred = "noise_pred"
-    config.z_shape = (4, 64, 64)  # ( c' , h' , w' )
+    config.z_shape = (4, 32, 32)  # ( c' , h' , w' )
     config.clip_img_dim = 768  # 512
     config.clip_text_dim = 768
     config.text_dim = 768  # 64  # reduce dimension
@@ -31,9 +31,9 @@ def get_config():
         img_size=32,  # 64,
         in_chans=4,
         patch_size=2,
-        embed_dim=512,  # 1536,
-        depth=12,  # 30,
-        num_heads=8,  # 24,
+        embed_dim=1024,  # 1536,
+        depth=20,  # 30,
+        num_heads=16,  # 24,
         mlp_ratio=4,
         qkv_bias=False,
         pos_drop_rate=0.0,

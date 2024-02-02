@@ -15,7 +15,7 @@ from torchvision.utils import save_image, make_grid
 from functools import partial
 from hydra import initialize, compose
 import omegaconf
-from typing import Tuple, Any
+from typing import Tuple, Any, Union, List
 
 from absl import flags, app, logging
 from ml_collections import config_flags
@@ -23,6 +23,7 @@ from ml_collections import config_flags
 import unidiffuser.utils as utils
 import unidiffuser.libs as libs
 from unidiffuser.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
+from uvit.datasets import ThingsMEGDatabase
 
 from nd.datasets import ThingsMEGCLIPDataset
 from nd.models.brain_encoder import BrainEncoder
@@ -103,7 +104,7 @@ class Brain2ImageSampler(SamplerBase):
         self,
         config: ml_collections.ConfigDict,
         args: omegaconf.DictConfig,
-        dataset: Any,
+        num_subjects: int,
     ):
         """
         Args:
@@ -134,10 +135,9 @@ class Brain2ImageSampler(SamplerBase):
         self.nnet.eval()
 
         # TODO: load CLIP Brain Encoder
-        subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
         self.brain_encoder = BrainEncoder(
             args,
-            subjects=subjects,
+            subjects=num_subjects,
             layout=eval(args.layout),
             vq=args.vq,
             blocks=args.blocks,
@@ -302,17 +302,16 @@ class Brain2ImageSampler(SamplerBase):
 # fmt: off
 FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file(
-    "config", "configs/sample_unidiffuser.py", "Configuration.", lock_config=False
+    "config", "uvit/configs/thingsmeg_uvit_small.py", "Configuration.", lock_config=False
 )
-
-nnet_dir = "U-ViT/workdir/thingsmeg_uvit_small/default/ckpts"
+nnet_dir = "uvit/workdir/thingsmeg_uvit_small/default/ckpts"
 nnet_path = natsorted(glob(os.path.join(nnet_dir, "*.ckpt")))[-1]
 nnet_path = os.path.join(nnet_path, "nnet.pth")
 cprint(nnet_path, "cyan")
 flags.DEFINE_string("nnet_path", nnet_path, "The nnet to evaluate.")
 
 flags.DEFINE_string("output_path", "out", "dir to write results to")
-flags.DEFINE_integer("n_samples", 1, "the number of samples to generate")
+flags.DEFINE_integer("n_samples", 4, "the number of samples to generate")
 flags.DEFINE_integer("nrow", 4, "number of images displayed in each row of the grid")
 flags.DEFINE_string("mode", "b2i", "mode of sampling. this script is fixed to brain2image.")
 # flags.DEFINE_string("prompt", "an elephant under the sea", "the prompt for text-to-image generation and text variation")
@@ -329,18 +328,23 @@ def main(argv):
     config.n_samples = FLAGS.n_samples
     config.mode = FLAGS.mode
     
+    config.autoencoder.pretrained_path = os.path.join("uvit", config.autoencoder.pretrained_path)
+    
     # Configs related to CLIP
     with initialize(version_base=None, config_path="../configs/thingsmeg"):
         args = compose(config_name="clip.yaml")
         
-    dataset = ThingsMEGCLIPDataset(args)
+    dataset = ThingsMEGDatabase(args)
+    num_subjects = dataset.num_subjects if hasattr(dataset, "num_subjects") else len(dataset.subject_names) # fmt: skip
         
-    sampler = Brain2ImageSampler(config, args, dataset)
+    sampler = Brain2ImageSampler(config, args, num_subjects)
     
     train_prompts = (
-        dataset.X[dataset.train_idxs][:config.n_samples],
-        dataset.subject_idxs[dataset.train_idxs][:config.n_samples]
+        dataset.X[dataset.train_idxs][0], # ( num_subjects, 271, 169 )
+        torch.arange(num_subjects)
     )
+    
+    filename = dataset.Y_paths[dataset.train_idxs][0]
     
     sampler.sample(train_prompts)
 
