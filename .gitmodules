@@ -14,7 +14,7 @@
 	path = vector-quantize-pytorch
 	url = git@github.com:SeanNobel/vector-quantize-pytorch.git
 [submodule "U-ViT"]
-	path = U-ViT
+	path = uvit
 	url = git@github.com:SeanNobel/U-ViT.git
 [submodule "unidiffuser"]
 	path = unidiffuser
