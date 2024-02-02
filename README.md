@@ -26,11 +26,18 @@ python nd/train_clip.py config_path=thingsmeg/clip.yaml sweep=True
 python nd/train_meg_decoder.py
 ```
 
-### 3. Train [U-ViT](https://arxiv.org/abs/2209.12152)
+### 3-1. Extract THINGS-MEG features
 
 ```bash
-cd U-ViT
-accelerate launch --multi_gpu --num_processes 4 --mixed_precision fp16 train_t2i_discrete.py --config=configs/thingsmeg_uvit_small.py
+cd U-ViT/
+python scripts/extract_thingsmeg_features.py
+```
+
+### 3-2. Train [U-ViT](https://arxiv.org/abs/2209.12152)
+
+```bash
+cd U-ViT/
+accelerate launch --multi_gpu --num_processes 4 --mixed_precision fp16 train_t2i_discrete.py --config=configs/thingsmeg_uvit_large.py --config.train.name=test
 ```
 
 ### 4. Sample from [UniDiffuser](https://arxiv.org/abs/2303.06555)
