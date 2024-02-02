@@ -37,7 +37,7 @@ def infer(args: DictConfig) -> None:
     torch.manual_seed(args.seed)
 
     run_dir = get_run_dir(args)
-    cprint(f"Using model paramas in: {run_dir}", "cyan")
+    cprint(f"Using model params in: {run_dir}", "cyan")
 
     save_dir = os.path.join("data", "clip_embds", *run_dir.split("/")[1:])
     os.makedirs(save_dir, exist_ok=True)

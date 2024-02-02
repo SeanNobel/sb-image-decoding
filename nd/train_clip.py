@@ -578,15 +578,13 @@ def train():
                 plot_latents_2d(
                     np.concatenate(train_Y_list),
                     np.concatenate(train_categories_list),
-                    epoch=epoch,
-                    save_dir=os.path.join(run_dir, "plots/image_latents"),
+                    save_path=os.path.join(run_dir, f"plots/image_latents/epoch{epoch}.png"),  # fmt: skip
                 )
             if epoch % 50 == 0:
                 plot_latents_2d(
                     np.concatenate(train_Z_list),
                     np.concatenate(train_categories_list),
-                    epoch=epoch,
-                    save_dir=os.path.join(run_dir, "plots/ecog_latents"),
+                    save_path=os.path.join(run_dir, f"plots/ecog_latents/epoch{epoch}.png"),  # fmt: skip
                 )
 
         if no_best_counter > args.patience:
