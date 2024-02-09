@@ -3,6 +3,7 @@ Here I use the preprocessed data in Hebart et al., 2023. It looks that scaling a
 is performed but clamping is not, which is different from the Meta paper. I resample the data from 200Hz
 to 120Hz as in the Meta paper.
 """
+
 import os, sys
 import numpy as np
 import mne
@@ -18,6 +19,8 @@ from omegaconf import DictConfig
 
 from transformers import AutoProcessor, CLIPVisionModel
 import clip
+
+from uvit.libs import clip as uvit_clip
 
 from nd.utils.brain_preproc import scale_clamp
 from nd.utils.train_utils import sequential_apply
@@ -124,6 +127,12 @@ def run(args: DictConfig) -> None:
     for subject_id, (meg_path, sample_attrs_path) in enumerate(zip(meg_paths, sample_attrs_paths)):  # fmt: skip
         cprint(f"==== Processing subject {subject_id+1} ====", "cyan")
 
+        sample_attrs = np.loadtxt(
+            sample_attrs_path, dtype=str, delimiter=",", skiprows=1
+        )
+
+        device = f"cuda:{args.cuda_id}"
+
         # -----------------
         #        MEG
         # -----------------
@@ -154,8 +163,6 @@ def run(args: DictConfig) -> None:
         #      Images
         # -----------------
         if args.vision.pretrained and not args.skip_images:
-            device = f"cuda:{args.cuda_id}"
-
             if args.vision.pretrained_model.startswith("ViT-"):
                 clip_model, preprocess = clip.load(args.vision.pretrained_model)
                 clip_model = clip_model.eval().to(device)
@@ -167,10 +174,6 @@ def run(args: DictConfig) -> None:
                 raise ValueError(
                     f"Unknown pretrained CLIP type: {args.vision.pretrained_model}"
                 )
-
-            sample_attrs = np.loadtxt(
-                sample_attrs_path, dtype=str, delimiter=",", skiprows=1
-            )
 
             y_list = []
             for path in sample_attrs[:, 8]:
@@ -203,6 +206,44 @@ def run(args: DictConfig) -> None:
             cprint(f"Images P{subject_id+1}: {Y.shape}", "cyan")
 
             torch.save(Y, os.path.join(save_dir, f"Images_P{subject_id+1}.pt"))
+
+        # -----------------
+        #      Texts
+        # -----------------
+        if not args.skip_texts:
+            clip_text = uvit_clip.FrozenCLIPEmbedder()
+            clip_text.eval()
+            clip_text.to(device)
+
+            categories = np.loadtxt(
+                os.path.join(args.things_dir, "things_concepts.tsv"),
+                dtype=str,
+                delimiter="\t",
+                skiprows=1,
+                usecols=0,
+            )
+            categories = [
+                categories[i] if i != 1854 else ""
+                for i in sample_attrs[:, 2].astype(int) - 1
+            ]
+
+            texts = []
+            for category in categories:
+                if category == "":
+                    texts.append("")
+                else:
+                    if category.startswith(("a", "e", "i", "o", "u")) and category not in ["unicycle", "uniform", "urinal"]:  # fmt: skip
+                        texts.append(f"A photo of an {category}")
+                    else:
+                        texts.append(f"A photo of a {category}")
+
+            contexts = torch.cat(
+                [clip_text.encode(text) for text in tqdm(texts, desc="Encoding texts")]
+            )
+
+            cprint(f"Texts P{subject_id+1}: {contexts.shape}", "cyan")
+
+            torch.save(contexts, os.path.join(save_dir, f"Texts_P{subject_id+1}.pt"))
 
 
 if __name__ == "__main__":
