@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
 from time import time
 from tqdm import tqdm
 from termcolor import cprint
@@ -118,16 +119,7 @@ def build_models(args, dataset, device):
     if args.brain_encoder == "brain_encoder":
         subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
 
-        brain_encoder = BrainEncoder(
-            args,
-            subjects=subjects,
-            layout=eval(args.layout),
-            vq=args.vq,
-            blocks=args.blocks,
-            downsample=args.downsample,
-            temporal_aggregation=args.temporal_aggregation,
-            dann=args.dann,
-        ).to(device)
+        brain_encoder = BrainEncoder(args, subjects=subjects).to(device)
 
     elif args.brain_encoder == "eegnet":
         brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
@@ -331,7 +323,11 @@ def train():
                 clip_loss = loss_func(Y, Z)
 
             if Z_mse is not None:
-                mse_loss = F.mse_loss(Y, Z_mse, reduction=args.reduction)
+                mse_loss = F.mse_loss(
+                    rearrange(Y, "b d t -> b (d t)"),
+                    rearrange(Z_mse, "b d t -> b (d t)"),
+                    reduction=args.reduction,
+                )
 
                 loss = args.lambd * clip_loss + (1 - args.lambd) * mse_loss
             else:
@@ -456,7 +452,11 @@ def train():
                     clip_loss = loss_func(Y, Z)
 
                 if Z_mse is not None:
-                    mse_loss = F.mse_loss(Y, Z_mse, reduction=args.reduction)
+                    mse_loss = F.mse_loss(
+                        rearrange(Y, "b d t -> b (d t)"),
+                        rearrange(Z_mse, "b d t -> b (d t)"),
+                        reduction=args.reduction,
+                    )
 
                 if isinstance(test_classifier, DiagonalClassifier):
                     topk_accs, _ = test_classifier(
@@ -472,11 +472,6 @@ def train():
             test_clip_losses.append(clip_loss.item())
             test_mse_losses.append(mse_loss.item())
             test_topk_accs.append(topk_accs)
-
-            if Z_mse is not None:
-                test_mse_losses.append(
-                    F.mse_loss(Y, Z_mse, reduction=args.reduction).item()
-                )
 
             if vq_brain:
                 test_vq_losses.append(vq_loss.item())
