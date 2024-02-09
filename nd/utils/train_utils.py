@@ -109,7 +109,7 @@ class Models:
 def sequential_apply(
     X: Union[torch.Tensor, np.ndarray],
     # NOTE: nn.Module is a hint for general DNNs. Callable is a hint for CLIP encoder
-    model: Union[transforms.Compose, nn.Module, Callable],
+    fn: Union[transforms.Compose, nn.Module, Callable],
     batch_size: int,
     device: Optional[str] = None,
     subject_idxs: Optional[torch.Tensor] = None,
@@ -127,11 +127,11 @@ def sequential_apply(
     """
     # NOTE: This is for torchvision transforms, which doesn't accept a batch of samples.
     # A bit of messy implementation.
-    if isinstance(model, transforms.Compose) and isinstance(X, np.ndarray):
+    if isinstance(fn, transforms.Compose) and isinstance(X, np.ndarray):
         # NOTE: np.split needs number of subarrays, while torch.split needs the size of chunks.
         return torch.cat(
             [
-                model(Image.fromarray(_X.squeeze())).unsqueeze(0)
+                fn(Image.fromarray(_X.squeeze())).unsqueeze(0)
                 for _X in np.split(X, X.shape[0])
             ]
         )
@@ -145,17 +145,17 @@ def sequential_apply(
     if batch_size == X.shape[0]:
         # assert isinstance(X, torch.Tensor) and isinstance(model, nn.Module)
         if subject_idxs is None:
-            return model(X.to(device)).to(orig_device)
+            return fn(X.to(device)).to(orig_device)
         else:
-            return model(X.to(device), subject_idxs.to(device)).to(orig_device)
+            return fn(X.to(device), subject_idxs.to(device)).to(orig_device)
 
     if subject_idxs is None:
         output = [
-            model(_X.to(device)) for _X in tqdm(torch.split(X, batch_size), desc=desc)
+            fn(_X.to(device)) for _X in tqdm(torch.split(X, batch_size), desc=desc)
         ]
     else:
         output = [
-            model(_X.to(device), _subject_idxs.to(device))
+            fn(_X.to(device), _subject_idxs.to(device))
             for _X, _subject_idxs in tqdm(
                 zip(
                     torch.split(X, batch_size),
