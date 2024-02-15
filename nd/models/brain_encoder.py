@@ -405,12 +405,13 @@ class TemporalAggregation(nn.Module):
         temporal_dim: int,
         embed_dim: Optional[int] = None,
         multiplier: int = 1,
-        expand: int = 1,
     ) -> None:
         super().__init__()
 
         if embed_dim is None:
             embed_dim = args.D3
+
+        # FIXME: Other than affine may not be working
 
         if args.temporal_aggregation == "original":
             self.layers = OriginalAggregator(args, temporal_dim, multiplier)
@@ -418,32 +419,29 @@ class TemporalAggregation(nn.Module):
             """Modified from: https://ai.meta.com/static-resource/image-decoding"""
             self.layers = nn.Sequential()
 
+            # NOTE: conv_final corresponds to linear projection in the paper as long as the kernel size and stride are 1
             self.layers.add_module(
                 "linear_projection",
-                nn.Conv1d(
-                    in_channels=embed_dim,
-                    out_channels=embed_dim * expand * multiplier,
-                    kernel_size=1,
-                ),
+                nn.Conv1d(in_channels=embed_dim, out_channels=embed_dim, kernel_size=1),
             )
 
             if args.temporal_aggregation == "affine":
-                self.layers.add_module(
-                    "temporal_aggregation", nn.Linear(temporal_dim, 1)
-                )
+                self.layers.add_module("temporal_agg", nn.Linear(temporal_dim, multiplier))  # fmt: skip
             elif args.temporal_aggregation == "pool":
-                self.layers.add_module("temporal_aggregation", nn.AdaptiveAvgPool1d(1))
+                self.layers.add_module("temporal_agg", nn.AdaptiveAvgPool1d(1))
             else:
                 raise NotImplementedError()
 
+            # NOTE: MLP projectors are provided for CLIP and MSE
             self.layers.add_module(
                 "mlp_projector",
                 nn.Sequential(
-                    nn.Flatten(),
-                    # nn.Linear(args.F * 4 * multiplier, args.F * 2 * multiplier),
-                    # nn.GELU(),
-                    nn.Linear(embed_dim * expand * multiplier, embed_dim * multiplier),
+                    Rearrange("b c t -> b (c t)"),
+                    nn.Linear(embed_dim * multiplier, embed_dim * multiplier * 2),
                     nn.GELU(),
+                    nn.Linear(embed_dim * multiplier * 2, embed_dim * multiplier),
+                    nn.GELU(),
+                    Rearrange("b (c t) -> b c t", c=embed_dim),
                 ),
             )
 
@@ -453,27 +451,35 @@ class TemporalAggregation(nn.Module):
 
 class BrainEncoder(nn.Module):
     def __init__(
-        self,
-        args,
-        subjects: Union[int, List[str]],
-        layout: Union[Callable, DynamicChanLoc2d] = ch_locations_2d,
-        vq: Optional[str] = None,
-        blocks: Union[str, List[str]] = "dilated_conv",
-        downsample: Union[bool, List[bool]] = False,
-        temporal_aggregation: Optional[str] = None,
-        dann: bool = False,
-        unknown_subject: bool = False,
+        self, args, subjects: Union[int, List[str]], unknown_subject: bool = False
     ) -> None:
         super().__init__()
 
-        self.vq = vq
-        self.dann = dann
+        # Parameters
+        self.vq = args.vq
+        self.ignore_subjects = args.ignore_subjects or args.dann
         self.unknown_subject = unknown_subject
 
         D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
-        init_temporal_dim = int(args.seq_len * args.brain_resample_sfreq)
-        num_blocks = args.num_blocks
-        num_subjects = subjects if isinstance(subjects, int) else len(subjects)
+        init_temporal_dim: int = int(args.seq_len * args.brain_resample_sfreq)
+        num_clip_tokens: int = args.num_clip_tokens
+        num_blocks: int = args.num_blocks
+        num_subjects: int = subjects if isinstance(subjects, int) else len(subjects)
+        layout: Union[ch_locations_2d, DynamicChanLoc2d] = eval(args.layout)
+        spatial_attention: bool = args.spatial_attention
+        pos_enc: str = args.pos_enc
+        blocks: Union[str, List[str]] = args.blocks
+        conv_block_ksize: int = args.ksizes.conv_block
+        downsample: Union[bool, List[bool]] = args.downsample
+        temporal_agg: str = args.temporal_aggregation
+        transformer_heads: int = args.transformer_heads
+        p_drop: float = args.p_drop
+        drop_mode: str = args.drop_mode
+        final_ksize: int = args.final_ksize
+        final_stride: int = args.final_stride
+        vq_aggregated: bool = args.vq_aggregated
+        dann: bool = args.dann
+        dann_scale: float = args.dann_scale
 
         if isinstance(blocks, str):
             blocks = [blocks] * num_blocks
@@ -489,21 +495,21 @@ class BrainEncoder(nn.Module):
 
         if layout == ch_locations_2d:
             self.subject_block = SubjectBlock(
-                args, num_subjects if not self.dann else 1, layout(args)
+                args, num_subjects if not self.ignore_subjects else 1, layout(args)
             )
 
         elif layout == DynamicChanLoc2d:
             assert isinstance(subjects, list), "subjects should be list of str when using DynamicChanLoc2d."  # fmt: skip
-            assert not self.dann, "Cannot unify inputs from dynamic channel locations."
+            assert not self.ignore_subjects, "Cannot ignore subjects when channel locations are different among them."  # fmt: skip
 
-            if args.spatial_attention:
+            if spatial_attention:
                 self.subject_block = SubjectBlockSA(args, len(subjects), layout(args, subjects))  # fmt: skip
             else:
                 self.subject_block = SubjectBlockConvDynamic(args, len(subjects), layout(args, subjects))  # fmt: skip
         else:
             raise TypeError
 
-        block_args = {"D1": D1, "D2": D2, "p_drop": args.p_drop}
+        block_args = {"D1": D1, "D2": D2, "p_drop": p_drop}
         self.blocks = nn.Sequential()
 
         for k, block in enumerate(blocks):
@@ -514,8 +520,8 @@ class BrainEncoder(nn.Module):
                     f"block{k}",
                     ConvBlock(
                         k,
-                        ksize=args.ksizes.conv_block,
-                        drop_mode=args.drop_mode,
+                        ksize=conv_block_ksize,
+                        drop_mode=drop_mode,
                         **block_args,
                     ),
                 )
@@ -524,20 +530,20 @@ class BrainEncoder(nn.Module):
 
                 self.blocks.add_module(
                     f"block{k}",
-                    Inception1DBlock(k, drop_mode=args.drop_mode, **block_args),
+                    Inception1DBlock(k, drop_mode=drop_mode, **block_args),
                 )
             elif block == "transformer":
-                pos_enc = args.pos_enc if k == blocks.index("transformer") else None
-                cprint(f"Block{k}: transformer with pos_enc {pos_enc}", "magenta")
+                pe = pos_enc if k == blocks.index("transformer") else None
+                cprint(f"Block{k}: transformer with pos_enc {pe}", "magenta")
 
                 self.blocks.add_module(
                     f"block{k}",
                     TransformerBlock(
                         k,
-                        n_heads=args.transformer_heads,
+                        n_heads=transformer_heads,
                         # TODO: TransformerBlocks after downsampling with ConvBlocks
                         block_size=init_temporal_dim,
-                        pos_enc=pos_enc,
+                        pos_enc=pe,
                         **block_args,
                     ),
                 )
@@ -550,29 +556,31 @@ class BrainEncoder(nn.Module):
         self.conv_final = nn.Conv1d(
             in_channels=D2,
             out_channels=D3,
-            kernel_size=args.final_ksize,
-            stride=args.final_stride,
+            kernel_size=final_ksize,
+            stride=final_stride,
         )
 
         temporal_dim = conv_output_size(
             init_temporal_dim,
-            ksize=args.final_ksize,
-            stride=args.final_stride,
-            repetition=3 if args.temporal_aggregation == "original" else 1,
+            ksize=final_ksize,
+            stride=final_stride,
+            repetition=3 if temporal_agg == "original" else 1,
             downsample=sum(downsample),
         )
 
-        if temporal_aggregation is not None:
-            self.temporal_aggregation = TemporalAggregation(args, temporal_dim)
+        if temporal_agg is not None:
+            self.temporal_aggregation = TemporalAggregation(
+                args, temporal_dim, multiplier=num_clip_tokens
+            )
         else:
             self.temporal_aggregation = None
 
-        if vq is not None:
-            dim = {"middle1": D1, "middle2": D2, "end": D3}[vq]
+        if self.vq is not None:
+            dim = {"middle1": D1, "middle2": D2, "end": D3}[self.vq]
             self.vector_quantizer = get_vector_quantizer(args, dim)
 
-            if args.vq_aggregated:
-                assert not "middle" in vq, "Cannot aggregate time in the middle of the model."  # fmt: skip
+            if vq_aggregated:
+                assert not "middle" in self.vq, "Cannot aggregate time in the middle of the model."  # fmt: skip
 
                 self.vector_quantizer = AggregatedVectorQuantizer(
                     args,
@@ -584,11 +592,11 @@ class BrainEncoder(nn.Module):
 
                 self.temporal_aggregation = None
 
-        if self.dann:
-            self.dann_head = DANN(in_dim=D3, num_domains=num_subjects, scale=args.dann_scale)  # fmt: skip
+        if dann:
+            self.dann_head = DANN(in_dim=D3, num_domains=num_subjects, scale=dann_scale)  # fmt: skip
 
-        self.clip_head = nn.Sequential(nn.LayerNorm(D3), nn.GELU(), nn.Linear(D3, F))
-        self.mse_head = nn.Sequential(nn.LayerNorm(D3), nn.GELU(), nn.Linear(D3, F))
+        self.clip_head = nn.Sequential(nn.LayerNorm([D3, num_clip_tokens]), nn.GELU(), nn.Conv1d(D3, F, 1))  # fmt: skip
+        self.mse_head = nn.Sequential(nn.LayerNorm([D3, num_clip_tokens]), nn.GELU(), nn.Conv1d(D3, F, 1))  # fmt: skip
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
@@ -596,7 +604,7 @@ class BrainEncoder(nn.Module):
         assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject."  # fmt: skip
 
         X = self.subject_block(
-            X, subject_idxs if not self.dann else torch.zeros_like(subject_idxs)
+            X, subject_idxs if not self.ignore_subjects else torch.zeros_like(subject_idxs)  # fmt: skip
         )
 
         if self.vq == "middle1":
@@ -623,7 +631,7 @@ class BrainEncoder(nn.Module):
         if self.vq is not None:
             ret_dict.update({"vq_loss": vq_loss, "perplexity": perplexity})
 
-        if self.dann:
+        if hasattr(self, "dann_head"):
             subject_pred = self.dann_head(X)
             adv_loss = F.cross_entropy(subject_pred, subject_idxs.to(X.device))
 

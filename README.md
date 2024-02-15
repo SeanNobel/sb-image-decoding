@@ -29,7 +29,7 @@ python nd/train_meg_decoder.py
 ### 3-1. Extract THINGS-MEG features
 
 ```bash
-cd U-ViT/
+cd uvit
 python scripts/extract_thingsmeg_features.py
 ```
 

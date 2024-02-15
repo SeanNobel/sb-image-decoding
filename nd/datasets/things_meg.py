@@ -50,11 +50,31 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             )
             # ( 27048, 271, segment_len )
 
-            # Images
-            Y = torch.load(os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt"))
-            if Y.ndim == 3:
-                Y = Y[:, 0]  # Take CLS token
+            # Images (or Texts)
+            if args.align_to == "vision":
+                Y = torch.load(os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt"), map_location="cpu")  # fmt: skip
+            elif args.align_to == "text":
+                Y = torch.load(os.path.join(preproc_dir, f"Texts_P{subject_id+1}.pt"), map_location="cpu")  # fmt: skip
+            else:
+                raise ValueError(f"Invalid align_to: {args.align_to}")
+
+            if Y.ndim == 2:
+                assert args.num_clip_tokens == 1, "num_clip_tokens > 1 is specified, but the embessings don't have temporal dimension."  # fmt: skip
+                assert not args.align_tokens == "all", "align_tokens is specified as 'all', but the embessings don't have temporal dimension."  # fmt: skip
+
+                Y = Y.unsqueeze(1)
+            else:
+                if args.align_tokens == "mean":
+                    assert args.num_clip_tokens == 1
+                    Y = Y.mean(dim=1, keepdim=True)
+                elif args.align_tokens == "cls":
+                    assert args.num_clip_tokens == 1
+                    Y = Y[:, :1]
+                else:
+                    assert args.align_tokens == "all"
+
             Y_list.append(Y.clone())
+            del Y; gc.collect()  # fmt: skip
 
             # Indexes
             sample_attrs = np.loadtxt(
