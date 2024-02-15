@@ -31,8 +31,8 @@ def calc_similarity(
             # similarity[i] = (Z[i] @ Y.T) / torch.clamp((Z[i].norm() * Y.norm(dim=1)), min=1e-8)
             similarity[i] = Z[i] @ Y.T
 
-        if pbar:
-            pbar.update(1)
+            if pbar:
+                pbar.update(1)
     else:
         Z = rearrange(Z, "b f -> b 1 f")
         Y = rearrange(Y, "b f -> 1 b f")
