@@ -9,10 +9,11 @@ images_dir: ${things_dir}Images/
 metadata_dir: ${things_dir}Metadata/
 
 root: /home/sensho/brain2face/
-preprocessed_data_dir: ${root}/data/preprocessed/thingsmeg/
+preprocessed_data_dir: ${root}data/preprocessed/thingsmeg/
 
 skip_meg: True
 skip_images: False
+skip_texts: True
 
 # brain_filter_low: 0.1 # Hz
 # brain_filter_high: 250 # Hz
@@ -21,6 +22,11 @@ clamp_lim: 5.0 # Standard deviation
 
 # ==== Architecture ==== #
 F: 768 # 768 for OpenAI original / 1024 for Huggingface
+
+num_clip_tokens: 1
+
+align_to: vision # vision / text
+align_tokens: cls # all / cls / mean
 
 vision:
   pretrained: True
@@ -37,6 +43,7 @@ D2: 320
 D3: 2048
 K: 32
 spatial_attention: True
+ignore_subjects: False
 blocks: transformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
 num_blocks: 2
 d_drop: 0.1 # Dropout rate for spatial-attention
@@ -78,7 +85,7 @@ vq_share: True # If True, codebook is shared for each sub-vector.
 # lucidrains
 vq_num_quantizers: 2 # Number of quantizers to use
 
-dann: True
+dann: False
 dann_scale: 1.0
 
 drop_mode: dropout
@@ -153,16 +160,19 @@ num_workers: 4
 seed: 1234
 cuda_id: 0
 
-sweep_count: 2
+sweep_count: 1
 sweep_config:
-  name: dann-init
+  name: check
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    dann:
-      values: [False, True]
+    # ignore_subjects:
+    #   values: [False, True]
+
+    # dann:
+    #   values: [False, True]
 
     # clip_temp_learn:
     #   values: [False]
@@ -188,12 +198,12 @@ sweep_config:
     #   values: [0.0, 0.25, 0.5, 0.75, 1.0]
 
     # vq:
-    #   values: [null, middle1, middle2]
+    #   values: [middle1, middle2]
       
     # vq_type:
     #   values: [lu_residual]
     # vq_num_quantizers:
-    #   values: [1, 4, 16]
+    #   values: [16, 32]
     # vq_groups:
     #   values: [8, 4]
     # vq_share:
@@ -212,8 +222,8 @@ sweep_config:
     # vq_replace_freq:
     #   values: [20]
 
-    # loss:
-    #   values: [circleclip]
+    loss:
+      values: [clip]
 
     # clip_margin_init:
     #   values: [0.1]
@@ -245,8 +255,8 @@ sweep_config:
     #   values: [True]
     # temporal_aggregation:
     #   values: [original, affine]
-    # num_blocks:
-    #   values: [2, 4] # 2
+    num_blocks:
+      values: [2]
     # d_drop:
     #   values: [0.1, 0.3] # 0.3
     #   # distribution: uniform
@@ -288,7 +298,8 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  dann: False
+  num_blocks: 4
+  vq_num_quantizers: 16
   # loss: clip
   # pos_enc: sine_abs
   # vq: null
