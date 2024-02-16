@@ -19,3 +19,6 @@
 [submodule "unidiffuser"]
 	path = unidiffuser
 	url = https://github.com/SeanNobel/unidiffuser.git
+[submodule "fairseq"]
+	path = fairseq
+	url = https://github.com/pytorch/fairseq
