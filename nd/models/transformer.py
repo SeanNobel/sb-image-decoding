@@ -181,9 +181,9 @@ class PositionalEncoding(nn.Module):
             self.register_buffer(
                 "position", torch.arange(block_size, dtype=torch.float32).unsqueeze(1)
             )
-            self.scale = nn.Parameter(torch.tensor([1.0]))
-            if not learn_pos_scale:
-                self.scale.requires_grad = False
+            self.scale = torch.tensor([1.0])
+            if learn_pos_scale:
+                self.scale = nn.Parameter(self.scale)
         else:
             raise NotImplementedError
 
@@ -191,6 +191,7 @@ class PositionalEncoding(nn.Module):
         if self.pos_enc == "learn":
             pe = self.pe
         elif self.pos_enc == "sine":
+            # NOTE: Keeping PE method in forward for scale learning.
             pe = self._sinusoidal_pe(X.device)
 
         return X + pe.unsqueeze(0)
@@ -199,7 +200,7 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros(self.block_size, self.emb_dim, device=device)
 
         div_term = torch.exp(
-            self.dims * -(torch.log(self.scale * 10000.0) / self.emb_dim)
+            self.dims * -(torch.log(self.scale.to(device) * 10000.0) / self.emb_dim)
         )
 
         pe[:, 0::2] = torch.sin(self.position * div_term)

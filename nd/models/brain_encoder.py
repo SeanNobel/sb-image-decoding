@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio as ta
+from einops import rearrange
 from einops.layers.torch import Rearrange
 from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
@@ -428,7 +429,7 @@ class TemporalAggregation(nn.Module):
             if args.temporal_aggregation == "affine":
                 self.layers.add_module("temporal_agg", nn.Linear(temporal_dim, multiplier))  # fmt: skip
             elif args.temporal_aggregation == "pool":
-                self.layers.add_module("temporal_agg", nn.AdaptiveAvgPool1d(1))
+                self.layers.add_module("temporal_agg", nn.AdaptiveAvgPool1d(multiplier))
             else:
                 raise NotImplementedError()
 
@@ -436,17 +437,31 @@ class TemporalAggregation(nn.Module):
             self.layers.add_module(
                 "mlp_projector",
                 nn.Sequential(
-                    Rearrange("b c t -> b (c t)"),
-                    nn.Linear(embed_dim * multiplier, embed_dim * multiplier * 2),
+                    Rearrange("b d t -> b (d t)"),
+                    nn.Linear(embed_dim * multiplier, embed_dim * multiplier),
                     nn.GELU(),
-                    nn.Linear(embed_dim * multiplier * 2, embed_dim * multiplier),
-                    nn.GELU(),
-                    Rearrange("b (c t) -> b c t", c=embed_dim),
+                    Rearrange("b (d t) -> b d t", d=embed_dim),
                 ),
             )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         return self.layers(X)  # ( b, F * multiplier )
+
+
+class MLPHead(nn.Module):
+    def __init__(self, in_dim: int, out_dim: int, t: int) -> None:
+        super().__init__()
+
+        self.net = nn.Sequential(
+            Rearrange("b d t -> b (d t)"),
+            nn.LayerNorm([in_dim * t]),
+            nn.GELU(),
+            nn.Linear(in_dim * t, out_dim * t),
+            Rearrange("b (d t) -> b d t", d=out_dim),
+        )
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        return self.net(X)
 
 
 class BrainEncoder(nn.Module):
@@ -595,8 +610,8 @@ class BrainEncoder(nn.Module):
         if dann:
             self.dann_head = DANN(in_dim=D3, num_domains=num_subjects, scale=dann_scale)  # fmt: skip
 
-        self.clip_head = nn.Sequential(nn.LayerNorm([D3, num_clip_tokens]), nn.GELU(), nn.Conv1d(D3, F, 1))  # fmt: skip
-        self.mse_head = nn.Sequential(nn.LayerNorm([D3, num_clip_tokens]), nn.GELU(), nn.Conv1d(D3, F, 1))  # fmt: skip
+        self.clip_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
+        self.mse_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
@@ -645,6 +660,7 @@ class BrainEncoder(nn.Module):
         subject_idxs: Optional[torch.Tensor],
         return_mse: bool = True,
         normalize: bool = True,
+        swap_dims: bool = False,
         stats: Optional[Tuple[float]] = None,
         device=None,
     ) -> torch.Tensor:
@@ -653,7 +669,6 @@ class BrainEncoder(nn.Module):
             X, subject_idxs = X.to(device), subject_idxs.to(device)
 
         single = X.dim == 2
-
         if single:
             X = X.unsqueeze(0)
 
@@ -661,7 +676,10 @@ class BrainEncoder(nn.Module):
                 subject_idxs = subject_idxs.unsqueeze(0)
 
         Z = self(X, subject_idxs)
-        Z = Z[1] if return_mse else Z[0]
+        Z = Z["Z_mse"] if return_mse else Z["Z_clip"]
+
+        _, d, t = Z.shape
+        Z = rearrange(Z, "b d t -> b (d t)")
 
         if normalize:
             Z /= Z.norm(dim=-1, keepdim=True)
@@ -671,6 +689,11 @@ class BrainEncoder(nn.Module):
             Z = (Z - Z.mean()) / Z.std()
             mean, std = stats
             Z = Z * std + mean
+
+        Z = rearrange(Z, "b (d t) -> b d t", d=d)
+
+        if swap_dims:
+            Z = rearrange(Z, "b d t -> b t d")
 
         if device is not None:
             Z = Z.to(orig_device)
