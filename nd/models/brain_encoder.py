@@ -11,6 +11,9 @@ from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
+from fairseq.fairseq.modules.conformer_layer import ConformerEncoderLayer
+from fairseq.fairseq.modules import RelPositionalEncoding
+
 from nd.models.vector_quantizer import get_vector_quantizer, AggregatedVectorQuantizer
 from nd.models.transformer import (
     SelfAttention,
@@ -301,7 +304,6 @@ class TransformerBlock(nn.Module):
     ):
         super().__init__()
 
-        self.k = k
         emb_dim = D2
 
         if k == 0:
@@ -352,6 +354,64 @@ class TransformerBlock(nn.Module):
         X = self.mlp(X)
 
         return X.permute(0, 2, 1)
+
+
+class ConformerBlock(nn.Module):
+    def __init__(
+        self,
+        k: int,
+        D1: int,
+        D2: int,
+        n_heads: int,
+        depthwise_ksize: int,
+        activation_fn: str = "swish",
+        attn_type: Optional[str] = "espnet",
+        pos_enc_type: str = "abs",
+        temporal_dim: Optional[int] = None,
+        p_drop: float = 0.1,
+    ):
+        super().__init__()
+
+        emb_dim = D2
+
+        if k == 0:
+            self.proj = nn.Conv1d(D1, emb_dim, kernel_size=1)
+
+        if pos_enc_type == "rel_pos":
+            self.rel_pos = RelPositionalEncoding(temporal_dim, emb_dim)
+
+        self.attn = ConformerEncoderLayer(
+            embed_dim=emb_dim,
+            ffn_embed_dim=emb_dim * 4,
+            attention_heads=n_heads,
+            dropout=p_drop,
+            use_fp16=False,
+            depthwise_conv_kernel_size=depthwise_ksize,
+            activation_fn=activation_fn,
+            attn_type=attn_type,
+            pos_enc_type=pos_enc_type,
+        )
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            X ( b, c, t ): _description_
+        Returns:
+            X ( b, c, t ): _description_
+        """
+        if hasattr(self, "proj"):
+            X = self.proj(X)
+
+        X = rearrange(X, "b c t -> t b c")
+
+        if hasattr(self, "rel_pos"):
+            positions = self.rel_pos(X)
+        else:
+            positions = None
+
+        X, _ = self.attn(X, encoder_padding_mask=None, position_emb=positions)
+
+        return rearrange(X, "t b c -> b c t")
 
 
 class Downsample1D(nn.Module):
@@ -484,7 +544,8 @@ class BrainEncoder(nn.Module):
         spatial_attention: bool = args.spatial_attention
         pos_enc: str = args.pos_enc
         blocks: Union[str, List[str]] = args.blocks
-        conv_block_ksize: int = args.ksizes.conv_block
+        conv_block_ksize: int = args.conv_block_ksize
+        depthwise_ksize: int = args.depthwise_ksize
         downsample: Union[bool, List[bool]] = args.downsample
         temporal_agg: str = args.temporal_aggregation
         transformer_heads: int = args.transformer_heads
@@ -559,6 +620,21 @@ class BrainEncoder(nn.Module):
                         # TODO: TransformerBlocks after downsampling with ConvBlocks
                         block_size=init_temporal_dim,
                         pos_enc=pe,
+                        **block_args,
+                    ),
+                )
+            elif block == "conformer":
+                pe = {"sine_abs": "abs", "sine_rel": "rel_pos", "rotary": "rope"}[pos_enc]  # fmt: skip
+                cprint(f"Block{k}: conformer", "magenta")
+
+                self.blocks.add_module(
+                    f"block{k}",
+                    ConformerBlock(
+                        k,
+                        n_heads=transformer_heads,
+                        depthwise_ksize=depthwise_ksize,
+                        pos_enc_type=pe,
+                        temporal_dim=init_temporal_dim,
                         **block_args,
                     ),
                 )
