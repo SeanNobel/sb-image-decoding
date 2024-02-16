@@ -28,6 +28,8 @@ python nd/train_meg_decoder.py
 
 ### 3-1. Extract THINGS-MEG features
 
+- Edit `eval` item of `clip.yaml` first.
+
 ```bash
 cd uvit
 python scripts/extract_thingsmeg_features.py
