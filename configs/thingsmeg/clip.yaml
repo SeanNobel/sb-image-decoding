@@ -44,8 +44,8 @@ D3: 2048
 K: 32
 spatial_attention: True
 ignore_subjects: False
-blocks: transformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
-num_blocks: 4
+blocks: conformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
+num_blocks: 2
 d_drop: 0.1 # Dropout rate for spatial-attention
 p_drop: 0.1 # Dropout rate for conv blocks
 downsample: False # Can be a list of bools with length num_blocks
@@ -53,13 +53,13 @@ final_ksize: 1
 final_stride: 1
 temporal_aggregation: affine # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
 head_activation: True
-ksizes:
-  conv_block: 3
+conv_block_ksize: 3
+depthwise_ksize: 31
 transformer_heads: 4
-pos_enc: sine_abs # learn / sine_abs / sine_rel
+pos_enc: sine_abs # learn / sine_abs / sine_rel / rotary
 
 # Where of the model to apply vector quantization.
-vq: middle1 # null / middle1 (before blocks) / middle2 (after blocks) / end
+vq: null # null / middle1 (before blocks) / middle2 (after blocks) / end
 vq_type: lu_residual # original / affine (= vqtorch basic) / group / residual
 vq_aggregated: False
 vq_num_embeds: 2048
@@ -158,16 +158,30 @@ plot_latents: False
 
 num_workers: 4
 seed: 1234
-cuda_id: 0
+cuda_id: 1
 
-sweep_count: 1
+sweep_count: 4
 sweep_config:
-  name: check
+  name: conformer
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
+    depthwise_ksize:
+      values: [31, 17, 9, 5]
+    
+    pos_enc:
+      value: sine_rel
+
+    # vq:
+    #   values: [middle1]
+    # vq_type:
+    #   values: [lu_residual]
+
+    # num_blocks:
+    #   values: [4]
+
     # ignore_subjects:
     #   values: [False, True]
 
@@ -189,19 +203,12 @@ sweep_config:
     #     [dilated_conv, dilated_conv, transformer],
     #   ]
 
-    # pos_enc:
-    #   values: [sine_abs]
     # transformer_heads:
     #   values: [4, 8]
 
     # lambd:
     #   values: [0.0, 0.25, 0.5, 0.75, 1.0]
 
-    vq:
-      values: [middle1]
-      
-    vq_type:
-      values: [lu_residual]
     # vq_num_quantizers:
     #   values: [16, 32]
     # vq_groups:
@@ -255,8 +262,7 @@ sweep_config:
     #   values: [True]
     # temporal_aggregation:
     #   values: [original, affine]
-    num_blocks:
-      values: [4]
+
     # d_drop:
     #   values: [0.1, 0.3] # 0.3
     #   # distribution: uniform
