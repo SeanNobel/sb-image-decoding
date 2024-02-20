@@ -18,6 +18,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
 
         self.num_subjects = 4
         self.large_test_set = args.large_test_set
+        self.num_clip_tokens = args.num_clip_tokens
 
         # NOTE: Some categories
         high_categories = np.loadtxt(
@@ -51,27 +52,25 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             # ( 27048, 271, segment_len )
 
             # Images (or Texts)
+            vision_path = os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt")
+            text_path = os.path.join(preproc_dir, f"Texts_P{subject_id+1}.pt")
             if args.align_to == "vision":
-                Y = torch.load(os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt"), map_location="cpu")  # fmt: skip
+                Y = self._extract_tokens(
+                    torch.load(vision_path, map_location="cpu"), tokens=args.align_tokens,  # fmt: skip
+                )
             elif args.align_to == "text":
-                Y = torch.load(os.path.join(preproc_dir, f"Texts_P{subject_id+1}.pt"), map_location="cpu")  # fmt: skip
+                Y = self._extract_tokens(
+                    torch.load(text_path, map_location="cpu"), tokens=args.align_tokens
+                )
+            elif args.align_to == "vision+text":
+                Y = self._extract_tokens(
+                    torch.load(vision_path, map_location="cpu"), tokens=args.align_tokens[0],  # fmt: skip
+                )
+                Y += self._extract_tokens(
+                    torch.load(text_path, map_location="cpu"), tokens=args.align_tokens[1],  # fmt: skip
+                )
             else:
                 raise ValueError(f"Invalid align_to: {args.align_to}")
-
-            if Y.ndim == 2:
-                assert args.num_clip_tokens == 1, "num_clip_tokens > 1 is specified, but the embessings don't have temporal dimension."  # fmt: skip
-                assert not args.align_tokens == "all", "align_tokens is specified as 'all', but the embessings don't have temporal dimension."  # fmt: skip
-
-                Y = Y.unsqueeze(1)
-            else:
-                if args.align_tokens == "mean":
-                    assert args.num_clip_tokens == 1
-                    Y = Y.mean(dim=1, keepdim=True)
-                elif args.align_tokens == "cls":
-                    assert args.num_clip_tokens == 1
-                    Y = Y[:, :1]
-                else:
-                    assert args.align_tokens == "all"
 
             Y_list.append(Y.clone())
             del Y; gc.collect()  # fmt: skip
@@ -122,6 +121,24 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
 
         del X_list, Y_list, categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
         gc.collect()
+
+    def _extract_tokens(self, Y: torch.Tensor, tokens: str) -> torch.Tensor:
+        if Y.ndim == 2:
+            assert self.num_clip_tokens == 1, "num_clip_tokens > 1 is specified, but the embessings don't have temporal dimension."  # fmt: skip
+            assert not tokens == "all", "align_tokens is specified as 'all', but the embessings don't have temporal dimension."  # fmt: skip
+
+            Y = Y.unsqueeze(1)
+        else:
+            if tokens == "mean":
+                assert self.num_clip_tokens == 1
+                Y = Y.mean(dim=1, keepdim=True)
+            elif tokens == "cls":
+                assert self.num_clip_tokens == 1
+                Y = Y[:, :1]
+            else:
+                assert tokens == "all"
+
+        return Y
 
     def __len__(self) -> int:
         return len(self.Y)

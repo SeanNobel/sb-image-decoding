@@ -9,21 +9,58 @@ import numpy as np
 import mne
 import torch
 from PIL import Image
+import csv
+from sklearn.utils import gen_batches
 from functools import partial
 from termcolor import cprint
 from natsort import natsorted
 from tqdm import tqdm
-from typing import Tuple, List
+from typing import List, Dict
 import hydra
 from omegaconf import DictConfig
 
-from transformers import AutoProcessor, CLIPVisionModel
+from transformers import (
+    AutoProcessor,
+    CLIPVisionModel,
+    BlipProcessor,
+    BlipForConditionalGeneration,
+)
 import clip
 
 from uvit.libs import clip as uvit_clip
 
 from nd.utils.brain_preproc import scale_clamp
 from nd.utils.train_utils import sequential_apply
+
+
+@torch.no_grad()
+def caption_images(y_list: List[str], processor, model, device) -> Dict[str, str]:
+    """
+    Generates captions for images using Salesforce/blip-image-captioning-large.
+    Returns a dict of captions sorted by image names.
+    """
+    y_list = natsorted(y_list)
+
+    num_samples = len(y_list)
+    batch_size = 128
+    pbar = tqdm(total=num_samples, desc="Generating captions (this is run only once)")
+    slice = gen_batches(num_samples, batch_size)
+
+    texts_dict = {}
+    for _slice in slice:
+        y_sublist = y_list[_slice]
+        images = [Image.open(y).convert("RGB") for y in y_sublist]
+
+        inputs = processor(images, return_tensors="pt").to(device)
+        outputs = model.generate(**inputs).cpu()
+        texts = [processor.decode(out, skip_special_tokens=True) for out in outputs]
+        texts_dict.update(
+            {os.path.splitext(os.path.basename(y))[0]: t for y, t in zip(y_sublist, texts)}  # fmt: skip
+        )
+
+        pbar.update(len(y_sublist))
+
+    return texts_dict
 
 
 @torch.no_grad()
@@ -162,44 +199,45 @@ def run(args: DictConfig) -> None:
         # -----------------
         #      Images
         # -----------------
-        if args.vision.pretrained and not args.skip_images:
-            if args.vision.pretrained_model.startswith("ViT-"):
-                clip_model, preprocess = clip.load(args.vision.pretrained_model)
-                clip_model = clip_model.eval().to(device)
-
-            elif args.vision.pretrained_model.startswith("openai/"):
-                clip_model = CLIPVisionModel.from_pretrained(args.vision.pretrained_model).to(device)  # fmt: skip
-                preprocess = AutoProcessor.from_pretrained(args.vision.pretrained_model)
-            else:
-                raise ValueError(
-                    f"Unknown pretrained CLIP type: {args.vision.pretrained_model}"
+        y_list = []
+        for path in sample_attrs[:, 8]:
+            if "images_meg" in path:
+                y_list.append(
+                    os.path.join(args.images_dir, "/".join(path.split("/")[1:]))
                 )
-
-            y_list = []
-            for path in sample_attrs[:, 8]:
-                if "images_meg" in path:
-                    y_list.append(
-                        os.path.join(args.images_dir, "/".join(path.split("/")[1:]))
+            elif "images_test_meg" in path:
+                y_list.append(
+                    os.path.join(
+                        args.images_dir,
+                        "_".join(os.path.basename(path).split("_")[:-1]),
+                        os.path.basename(path),
                     )
-                elif "images_test_meg" in path:
-                    y_list.append(
-                        os.path.join(
-                            args.images_dir,
-                            "_".join(os.path.basename(path).split("_")[:-1]),
-                            os.path.basename(path),
-                        )
-                    )
-                elif "images_catch_meg" in path:
-                    y_list.append(os.path.join(args.images_dir, "black.jpg"))
-                else:
-                    raise ValueError(f"Unknown image path type: {path}")
+                )
+            elif "images_catch_meg" in path:
+                y_list.append(os.path.join(args.images_dir, "black.jpg"))
+            else:
+                raise ValueError(f"Unknown image path type: {path}")
 
+        if args.vision.pretrained and not args.skip_images:
             np.savetxt(
                 os.path.join(save_dir, f"Images_P{subject_id+1}.txt"),
                 y_list,
                 fmt="%s",
                 delimiter="\n",
             )
+
+            if subject_id == 0:
+                if args.vision.pretrained_model.startswith("ViT-"):
+                    clip_model, preprocess = clip.load(args.vision.pretrained_model)
+                    clip_model = clip_model.eval().to(device)
+
+                elif args.vision.pretrained_model.startswith("openai/"):
+                    clip_model = CLIPVisionModel.from_pretrained(args.vision.pretrained_model).to(device)  # fmt: skip
+                    preprocess = AutoProcessor.from_pretrained(
+                        args.vision.pretrained_model
+                    )
+                else:
+                    raise ValueError(f"Unknown pretrained CLIP type: {args.vision.pretrained_model}")  # fmt: skip
 
             Y = encode_images(y_list, preprocess, clip_model, device)
 
@@ -211,10 +249,6 @@ def run(args: DictConfig) -> None:
         #      Texts
         # -----------------
         if not args.skip_texts:
-            clip_text = uvit_clip.FrozenCLIPEmbedder()
-            clip_text.eval()
-            clip_text.to(device)
-
             categories = np.loadtxt(
                 os.path.join(args.things_dir, "things_concepts.tsv"),
                 dtype=str,
@@ -227,15 +261,37 @@ def run(args: DictConfig) -> None:
                 for i in sample_attrs[:, 2].astype(int) - 1
             ]
 
-            texts = []
-            for category in categories:
-                if category == "":
-                    texts.append("")
-                else:
-                    if category.startswith(("a", "e", "i", "o", "u")) and category not in ["unicycle", "uniform", "urinal"]:  # fmt: skip
-                        texts.append(f"A photo of an {category}")
+            if subject_id == 0:
+                clip_text = uvit_clip.FrozenCLIPEmbedder()
+                clip_text.eval()
+                clip_text.to(device)
+
+                if args.caption:
+                    caption_model = "Salesforce/blip-image-captioning-large"
+                    processor = BlipProcessor.from_pretrained(caption_model)
+                    model = BlipForConditionalGeneration.from_pretrained(caption_model).to(device)  # fmt: skip
+
+                    # NOTE: returns dict of captions sorted by image names.
+                    texts_dict = caption_images(y_list, processor, model, device)
+
+                    with open(os.path.join(save_dir, f"Captions.csv"), "w") as f:  # fmt: skip
+                        writer = csv.writer(f)
+                        writer.writerows([[t, c] for t, c in texts_dict.items()])
+
+            if args.caption:
+                texts = [
+                    texts_dict[os.path.splitext(os.path.basename(y))[0]] for y in y_list
+                ]
+            else:
+                texts = []
+                for category in categories:
+                    if category == "":
+                        texts.append("")
                     else:
-                        texts.append(f"A photo of a {category}")
+                        if category.startswith(("a", "e", "i", "o", "u")) and category not in ["unicycle", "uniform", "urinal"]:  # fmt: skip
+                            texts.append(f"A photo of an {category}")
+                        else:
+                            texts.append(f"A photo of a {category}")
 
             contexts = torch.cat(
                 [clip_text.encode(text) for text in tqdm(texts, desc="Encoding texts")]
