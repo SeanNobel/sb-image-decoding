@@ -32,13 +32,13 @@ python nd/train_meg_decoder.py
 
 ```bash
 cd uvit
-python scripts/extract_thingsmeg_features.py
+python scripts/extract_thingsmeg_feature.py
 ```
 
 ### 3-2. Train [U-ViT](https://arxiv.org/abs/2209.12152)
 
 ```bash
-cd U-ViT/
+cd uvit
 accelerate launch --multi_gpu --num_processes 4 --mixed_precision fp16 train_t2i_discrete.py --config=configs/thingsmeg_uvit_large.py --config.train.name=test
 ```
 

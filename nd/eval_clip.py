@@ -39,7 +39,9 @@ def infer(args: DictConfig) -> None:
     run_dir = get_run_dir(args)
     cprint(f"Using model params in: {run_dir}", "cyan")
 
-    save_dir = os.path.join("data", "clip_embds", *run_dir.split("/")[1:])
+    save_dir = os.path.join(
+        "data", "clip_embds", *run_dir.split("/")[1:], "unnormalized"
+    )
     os.makedirs(save_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -93,33 +95,39 @@ def infer(args: DictConfig) -> None:
         else:
             Y = vision_encoder(Y)
 
-        Z = brain_encoder(X, subject_idxs)
-        Z, Z_mse, _, _ = *Z, *[None] * (4 - len(Z))
+        Z = brain_encoder.encode(
+            X, subject_idxs, normalize=False, swap_dims=True, return_mse=False
+        )
+        Z_mse = brain_encoder.encode(
+            X, subject_idxs, normalize=False, swap_dims=True, return_mse=True
+        )
+        # Z, Z_mse, _, _ = *Z, *[None] * (4 - len(Z))
 
         assert Z.shape == Y.shape, f"Z.shape: {Z.shape}, Y.shape: {Y.shape}"
 
-        has_time = Z.ndim == 3
-        if has_time:
-            b, d, t = Z.shape
+        # has_time = Z.ndim == 3
+        # if has_time:
+        #     b, d, t = Z.shape
 
-            Z = Z.reshape(b, -1)
-            Z_mse = Z_mse.reshape(b, -1)
-            Y = Y.reshape(b, -1)
-        else:
-            assert Z.ndim == 2, f"Z.ndim: {Z.ndim}"
+        #     Z = Z.reshape(b, -1)
+        #     Z_mse = Z_mse.reshape(b, -1)
+        #     Y = Y.reshape(b, -1)
+        # else:
+        #     assert Z.ndim == 2, f"Z.ndim: {Z.ndim}"
 
-        Z /= Z.norm(dim=-1, keepdim=True)
-        Z_mse /= Z_mse.norm(dim=-1, keepdim=True)
-        Y /= Y.norm(dim=-1, keepdim=True)
+        # Z /= Z.norm(dim=-1, keepdim=True)
+        # Z_mse /= Z_mse.norm(dim=-1, keepdim=True)
+        # Y /= Y.norm(dim=-1, keepdim=True)
 
-        if has_time:
-            Z = Z.reshape(b, d, t)
-            Z_mse = Z_mse.reshape(b, d, t)
-            Y = Y.reshape(b, d, t)
+        # if has_time:
+        #     Z = Z.reshape(b, d, t)
+        #     Z_mse = Z_mse.reshape(b, d, t)
+        #     Y = Y.reshape(b, d, t)
 
-        Z_list.append(Z.cpu())
-        Z_mse_list.append(Z_mse.cpu())
-        Y_list.append(Y.cpu())
+        b = Z.shape[0]
+        Z_list.append(Z.reshape(b, -1).cpu())
+        Z_mse_list.append(Z_mse.reshape(b, -1).cpu())
+        Y_list.append(Y.reshape(b, -1).cpu())
 
     torch.save(torch.cat(Z_list), os.path.join(save_dir, "brain_clip_embeds.pt"))
     torch.save(torch.cat(Z_mse_list), os.path.join(save_dir, "brain_mse_embeds.pt"))

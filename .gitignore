@@ -7,6 +7,7 @@ assets/*
 
 generated/
 
+nd/models/wav2vec2.py
 nd/models/_spatial_attn_impls.py
 nd/models/lightning/
 
