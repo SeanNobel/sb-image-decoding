@@ -19,6 +19,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         self.num_subjects = 4
         self.large_test_set = args.large_test_set
         self.num_clip_tokens = args.num_clip_tokens
+        self.load_each_sample = args.align_tokens == "all"
 
         # NOTE: Some categories
         high_categories = np.loadtxt(
@@ -30,7 +31,7 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             skiprows=1,
         )  # ( 1854, 27 )
 
-        preproc_dir = os.path.join(args.preprocessed_data_dir, args.preproc_name)
+        self.preproc_dir = os.path.join(args.preprocessed_data_dir, args.preproc_name)
 
         sample_attrs_paths = [
             os.path.join(args.thingsmeg_dir, f"sourcedata/sample_attributes_P{i+1}.csv")
@@ -47,33 +48,34 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
             # MEG
             X_list.append(
-                torch.load(os.path.join(preproc_dir, f"MEG_P{subject_id+1}.pt"))
+                torch.load(os.path.join(self.preproc_dir, f"MEG_P{subject_id+1}.pt"))
             )
             # ( 27048, 271, segment_len )
 
             # Images (or Texts)
-            vision_path = os.path.join(preproc_dir, f"Images_P{subject_id+1}.pt")
-            text_path = os.path.join(preproc_dir, f"Texts_P{subject_id+1}.pt")
-            if args.align_to == "vision":
-                Y = self._extract_tokens(
-                    torch.load(vision_path, map_location="cpu"), tokens=args.align_tokens,  # fmt: skip
-                )
-            elif args.align_to == "text":
-                Y = self._extract_tokens(
-                    torch.load(text_path, map_location="cpu"), tokens=args.align_tokens
-                )
-            elif args.align_to == "vision+text":
-                Y = self._extract_tokens(
-                    torch.load(vision_path, map_location="cpu"), tokens=args.align_tokens[0],  # fmt: skip
-                )
-                Y += self._extract_tokens(
-                    torch.load(text_path, map_location="cpu"), tokens=args.align_tokens[1],  # fmt: skip
-                )
-            else:
-                raise ValueError(f"Invalid align_to: {args.align_to}")
+            if not self.load_each_sample:
+                vision_path = os.path.join(self.preproc_dir, f"Images_P{subject_id+1}.pt")  # fmt: skip
+                text_path = os.path.join(self.preproc_dir, f"Texts_P{subject_id+1}.pt")
+                if args.align_to == "vision":
+                    Y = self._extract_tokens(
+                        torch.load(vision_path, map_location="cpu"), tokens=args.align_tokens,  # fmt: skip
+                    )
+                elif args.align_to == "text":
+                    Y = self._extract_tokens(
+                        torch.load(text_path, map_location="cpu"),
+                        tokens=args.align_tokens,
+                    )
+                elif args.align_to == "vision+text":
+                    Y = self._extract_tokens(
+                        torch.load(vision_path, map_location="cpu"), tokens=args.align_tokens[0],  # fmt: skip
+                    )
+                    Y += self._extract_tokens(
+                        torch.load(text_path, map_location="cpu"), tokens=args.align_tokens[1],  # fmt: skip
+                    )
+                else:
+                    raise ValueError(f"Invalid align_to: {args.align_to}")
 
-            Y_list.append(Y.clone())
-            del Y; gc.collect()  # fmt: skip
+                Y_list.append(Y)
 
             # Indexes
             sample_attrs = np.loadtxt(
@@ -95,8 +97,12 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
             train_idxs_list.append(train_idxs + idx_offset)
             test_idxs_list.append(test_idxs + idx_offset)
 
+        assert len(set([len(X) for X in X_list])) == 1
+        self.num_samples = len(X_list[0])
+
         self.X = torch.cat(X_list, dim=0)
-        self.Y = torch.cat(Y_list, dim=0)
+        if len(Y_list) > 0:
+            self.Y = torch.cat(Y_list, dim=0)
         self.subject_idxs = torch.cat(subject_idxs_list, dim=0)
 
         self.categories = torch.cat(categories_list) - 1
@@ -112,7 +118,8 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         self.train_idxs = torch.cat(train_idxs_list, dim=0)
         self.test_idxs = torch.cat(test_idxs_list, dim=0)
 
-        cprint(f"X: {self.X.shape} | Y: {self.Y.shape} | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
+        Y_shape = self.Y.shape if hasattr(self, "Y") else "to be loaded in __getitem__"
+        cprint(f"X: {self.X.shape} | Y: {Y_shape} | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
 
         # self.subject_names = [f"s0{i+1}" for i in range(4)]
 
@@ -121,6 +128,17 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
 
         del X_list, Y_list, categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
         gc.collect()
+
+    @property
+    def test_Y(self) -> torch.Tensor:
+        if hasattr(self, "Y"):
+            return torch.index_select(self.Y, 0, self.test_idxs)
+        else:
+            return torch.stack([self._load_sample(i) for i in self.test_idxs])
+
+    @property
+    def test_categories(self) -> torch.Tensor:
+        return torch.index_select(self.categories, 0, self.test_idxs)
 
     def _extract_tokens(self, Y: torch.Tensor, tokens: str) -> torch.Tensor:
         if Y.ndim == 2:
@@ -141,10 +159,21 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         return Y
 
     def __len__(self) -> int:
-        return len(self.Y)
+        return len(self.X)
 
     def __getitem__(self, i):
-        return self.X[i], self.Y[i], self.subject_idxs[i], self.y_idxs[i], self.categories[i], self.high_categories[i]  # fmt: skip
+        Y = self.Y[i] if hasattr(self, "Y") else self._load_sample(i)
+
+        return self.X[i], Y, self.subject_idxs[i], self.y_idxs[i], self.categories[i], self.high_categories[i]  # fmt: skip
+
+    def _load_sample(self, i: int, sample_type: str = "Images") -> torch.Tensor:
+        path = os.path.join(
+            self.preproc_dir,
+            f"{sample_type}_P{self.subject_idxs[i] + 1}",
+            f"{i % self.num_samples}.npy",
+        )
+
+        return torch.from_numpy(np.load(path)).to(torch.float32)
 
     @staticmethod
     def make_split(
