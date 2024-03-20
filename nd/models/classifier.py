@@ -7,7 +7,7 @@ from PIL import Image
 from tqdm import tqdm
 from einops import rearrange
 from termcolor import cprint
-from typing import List
+from typing import List, Optional
 import gc
 
 from nd.utils.loss import calc_similarity, top_k_accuracy
@@ -59,19 +59,26 @@ class LabelClassifier(nn.Module):
         # ( 9600, )
         # NOTE: torch.unique has no return_index option
         test_y_idxs, arg_unique = np.unique(test_y_idxs, return_index=True)
+        arg_unique = torch.from_numpy(arg_unique)
         # ( 2400, )
         self.test_y_idxs = torch.from_numpy(test_y_idxs)
 
-        self.Y = torch.index_select(dataset.Y, 0, dataset.test_idxs)
-        self.Y = torch.index_select(self.Y, 0, torch.from_numpy(arg_unique))
+        self.Y = torch.index_select(dataset.test_Y, 0, arg_unique)
         # ( 2400, F )
+        self.categories = torch.index_select(dataset.test_categories, 0, arg_unique)
 
         self.Y = self.Y.to(device)
+        self.categories = self.categories.to(device)
         self.test_y_idxs = self.test_y_idxs.to(device)
 
     @torch.no_grad()
     def forward(
-        self, Z: torch.Tensor, y_idxs: torch.Tensor, sequential: bool = False
+        self,
+        Z: torch.Tensor,
+        y_idxs: torch.Tensor,
+        y_encoder: Optional[nn.Module],
+        sequential: bool = False,
+        return_sim: bool = False,
     ) -> np.ndarray:
         """_summary_
 
@@ -82,7 +89,11 @@ class LabelClassifier(nn.Module):
         Returns:
             torch.Tensor: _description_
         """
-        similarity = calc_similarity(Z, self.Y, sequential)  # ( 2400, b )
+        Y = y_encoder.encode(self.Y) if y_encoder is not None else self.Y
+
+        similarity = calc_similarity(Z, Y, sequential)  # ( 2400, b )
+        if return_sim:
+            return similarity
 
         labels = y_idxs == self.test_y_idxs.unsqueeze(1)  # ( 2400, b )
         assert torch.all(labels.sum(dim=0) == 1)
