@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops.layers.torch import Rearrange
 
 
 class DropBlock1D(nn.Module):
@@ -37,3 +38,50 @@ class DropBlock1D(nn.Module):
             block_mask = block_mask[:, :, :-1]
 
         return 1 - block_mask.squeeze(1)
+
+
+class MLPTemporalReducer(nn.Module):
+    def __init__(self, in_tokens: int, out_tokens: int):
+        super().__init__()
+
+        # self.net = nn.Sequential(
+        #     Rearrange("b t d -> b d t"),
+        #     nn.Linear(in_tokens, 512),
+        #     nn.LayerNorm(512),
+        #     nn.GELU(),
+        #     nn.Linear(512, 128),
+        #     nn.LayerNorm(128),
+        #     nn.GELU(),
+        #     nn.Linear(128, out_tokens),
+        #     Rearrange("b d t -> b t d"),
+        # )
+        self.net = nn.Sequential(
+            Rearrange("b t d -> b d t"),
+            nn.Linear(in_tokens, out_tokens),
+            Rearrange("b d t -> b t d"),
+        )
+
+    def forward(self, X):
+        return self.net(X)
+
+    def encode(self, X):
+        return self(X)
+
+
+class MLP(nn.Module):
+    def __init__(self, in_dim: int, out_dim: int):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            Rearrange("b t d -> b (t d)"),
+            nn.Linear(in_dim, in_dim // 4),
+            nn.LayerNorm(in_dim // 4),
+            nn.GELU(),
+            nn.Linear(in_dim // 4, out_dim),
+        )
+
+    def forward(self, X):
+        return self.net(X)
+
+    def encode(self, X):
+        return self(X)

@@ -2,8 +2,14 @@ import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
+from einops import rearrange
+from einops.layers.torch import Rearrange
+from typing import Tuple, Optional
 from termcolor import cprint
+
+from fairseq.fairseq.modules import (
+    GumbelVectorQuantizer as GumbelVectorQuantizerFairseq,
+)
 
 from vqtorch.nn import (
     VectorQuant,
@@ -24,14 +30,18 @@ from vector_quantize_pytorch import (
 )
 
 
-def get_vector_quantizer(args, dim: int) -> nn.Module:
+def get_vector_quantizer(args, dim: int, beta: Optional[float] = None) -> nn.Module:
     """_summary_
     Args:
         args (_type_): _description_
         dim (int): Embedding dimension.
+        beta (float): How much to weight encoder regularization term against codebook loss.
     Returns:
         nn.Module: _description_
     """
+    if beta is None:
+        beta = args.vq_beta
+
     if args.vq_type == "original":
         return VectorQuantizer(
             num_embeds=args.vq_num_embeds,
@@ -39,7 +49,7 @@ def get_vector_quantizer(args, dim: int) -> nn.Module:
             affine_lr=args.vq_affine_lr,
             use_ema=args.vq_use_ema,
             alpha=args.vq_alpha,
-            beta=args.vq_beta,
+            beta=beta,
             gamma=args.vq_gamma,
             epsilon=args.vq_epsilon,
         )
@@ -47,7 +57,7 @@ def get_vector_quantizer(args, dim: int) -> nn.Module:
         vq_args = {
             "feature_size": dim,
             "num_codes": args.vq_num_embeds,
-            "beta": 1 - args.vq_beta,
+            "beta": 1 - beta,
             "kmeans_init": args.vq_kmeans_init,
             "norm": args.vq_norm,
             "cb_norm": args.vq_cb_norm,
@@ -114,6 +124,9 @@ def get_vector_quantizer(args, dim: int) -> nn.Module:
             raise NotImplementedError(f"vq_type {args.vq_type} not implemented.")
 
         return LucidrainsWrapper(vq, args.vq_alpha, args.vq_groups)
+
+    elif args.vq_type == "gumbel":
+        return GumbelVectorQuantizer(args, dim=dim)
 
 
 class VQtorchWrapper(nn.Module):
@@ -302,6 +315,184 @@ class VectorQuantizer(nn.Module):
         return z_q, self.alpha * vq_loss, perplexity
 
 
+class GumbelVectorQuantizerV2(GumbelVectorQuantizerFairseq):
+    def __init__(
+        self,
+        args,
+        dim: Optional[int] = None,
+        in_tokens: int = 1,
+        out_tokens: int = 1,
+        time_first: bool = False,
+    ) -> None:
+        if dim is None:
+            dim = args.F
+
+        self.gumbel_temp = args.gumbel_init_temp
+        self.alpha = args.vq_alpha
+
+        super().__init__(
+            dim=dim,
+            num_vars=args.vq_num_embeds // args.vq_groups,
+            temp=(args.gumbel_init_temp, args.gumbel_min_temp, args.gumbel_temp_decay),
+            groups=args.vq_groups,
+            combine_groups=False,
+            vq_dim=dim,
+            time_first=time_first,
+        )
+
+        if in_tokens != out_tokens:
+            if time_first:
+                self.temporal_reducer = nn.Sequential(
+                    Rearrange("b t d -> b d t"),
+                    nn.Linear(in_tokens, out_tokens),
+                    Rearrange("b d t -> b t d"),
+                )
+            else:
+                self.temporal_reducer = nn.Linear(in_tokens, out_tokens)
+
+    def forward(self, z_e: torch.Tensor) -> Tuple[torch.Tensor]:
+        """
+        Args:
+            z_e ( b, t, d ) or ( b, d, t ): hidden states from the model.
+        Returns:
+
+        """
+        ret_dict = super().forward(z_e)
+        z_q, self.gumbel_temp = ret_dict["x"], ret_dict["temp"]
+
+        # Not entirely sure if this is the diversity loss.
+        # https://github.com/facebookresearch/fairseq/blob/main/fairseq/models/wav2vec/wav2vec2.py#L822-L825
+        perplexity = ret_dict["prob_perplexity"]
+        diversity_loss = (ret_dict["num_vars"] - perplexity) / ret_dict["num_vars"]  # fmt: skip
+
+        if hasattr(self, "temporal_reducer"):
+            z_q = self.temporal_reducer(z_q)
+
+        return {
+            "Z": z_q,
+            "div_loss": self.alpha * diversity_loss,
+            "perplexity": perplexity,
+        }
+
+    def encode(self, z_e: torch.Tensor) -> torch.Tensor:
+        return self(z_e)["x"]
+
+
+class GumbelVectorQuantizer(nn.Module):
+    """https://github.com/HarunoriKawano/Wav2vec2.0/blob/main/model/gumbel_vector_quantizer.py"""
+
+    def __init__(
+        self,
+        args,
+        in_tokens: int = 1,
+        out_tokens: int = 1,
+        time_first: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.num_groups: int = args.vq_groups  # g
+        self.gumbel_temp: float = args.gumbel_init_temp
+        self.min_temp: float = args.gumbel_min_temp
+        self.temp_decay: float = args.gumbel_temp_decay
+        self.time_first: bool = time_first
+
+        num_embeds: int = args.vq_num_embeds // args.vq_groups  # v (per group)
+        embed_dim: int = args.F
+
+        assert embed_dim % self.num_groups == 0, "Embedding dimension must be divisible by the number of groups."  # fmt: skip
+
+        self.weight_proj = nn.Linear(embed_dim, self.num_groups * num_embeds)
+        nn.init.normal_(self.weight_proj.weight, mean=0, std=1)
+        nn.init.zeros_(self.weight_proj.bias)
+
+        self.code_book = nn.Parameter(
+            torch.FloatTensor(1, self.num_groups, num_embeds, embed_dim // self.num_groups)  # fmt: skip
+        )
+        nn.init.uniform_(self.code_book)
+        # ( 1, g, v, d // g )
+
+        if in_tokens != out_tokens:
+            self.temporal_reducer = nn.Sequential(
+                Rearrange("b t d -> b d t"),
+                nn.Linear(in_tokens, out_tokens),
+                Rearrange("b d t -> b t d"),
+            )
+
+    def update_gumbel_temp(self) -> None:
+        self.gumbel_temp = max(self.min_temp, self.gumbel_temp * self.temp_decay)
+
+    def forward(
+        self, hidden_states: torch.Tensor, lengths: Optional[torch.Tensor] = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            hidden_states ( b, t, d ) or ( b, d, t ): hidden states from the model.
+            lengths ( b, ): lengths of the sequences in the batch.
+        Returns:
+            code_vectors ( b, t, d ) or ( b, d, t ): quantized hidden states.
+            perplexity ( b, v ): perplexity of the code vectors.
+        """
+        if not self.time_first:
+            hidden_states = rearrange(hidden_states, "b d t -> b t d")
+
+        b, t, _ = hidden_states.shape
+
+        hidden_states = self.weight_proj(hidden_states)  # ( b, t, g * v )
+
+        hidden_states = hidden_states.view(b * t * self.num_groups, -1)
+        # ( b * t * g, v )
+
+        code_vector_probs = F.gumbel_softmax(
+            hidden_states.float(), tau=self.gumbel_temp, hard=True
+        ).type_as(hidden_states)
+
+        code_vector_soft_dist = torch.softmax(
+            hidden_states.view(b, t, self.num_groups, -1).float(), dim=-1
+        )
+        # ( b, t, g, v )
+        perplexity = self._compute_perplexity(code_vector_soft_dist, lengths).mean()
+
+        code_vector_probs = code_vector_probs.view(b * t, self.num_groups, -1).unsqueeze(-1)  # fmt: skip
+        # ( b * t, g, v, 1 )
+
+        code_vectors = code_vector_probs * self.code_book  # ( b * t, g, v, d // g )
+        code_vectors = code_vectors.sum(-2).view(b, t, -1)  # ( b, t, d )
+
+        if hasattr(self, "temporal_reducer"):
+            code_vectors = self.temporal_reducer(code_vectors)  # ( b, 1, d )
+
+        if not self.time_first:
+            code_vectors = rearrange(code_vectors, "b t d -> b d t")
+
+        return {"Z": code_vectors, "perplexity": perplexity}
+
+    @staticmethod
+    def _compute_perplexity(
+        probs: torch.Tensor, lengths: Optional[torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Args:
+            probs ( b, t, g, v ): probabilities of the code vectors.
+            lengths ( b, ): lengths of the sequences in the batch.
+        Returns:
+            torch.Tensor with shape ( g, v )
+        """
+        if lengths is not None:
+            where_calculate_probs = torch.arange(
+                probs.size(1), device=probs.device
+            ).unsqueeze(0) < lengths.unsqueeze(-1)
+
+            probs = probs[where_calculate_probs == 1]
+
+        num_values = probs.size(0)
+        perplexity = probs.sum(0) / num_values
+
+        return perplexity
+
+    def encode(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return self(hidden_states)["Z"]
+
+
 class AggregatedVectorQuantizer(nn.Module):
     def __init__(
         self,
@@ -338,3 +529,26 @@ class AggregatedVectorQuantizer(nn.Module):
         X = self.mlp_projector(X)
 
         return X, vq_loss, perplexity
+
+
+class LatentsQuantizer(nn.Module):
+    def __init__(self, args) -> None:
+        super().__init__()
+
+        input_len: int = args.num_clip_tokens
+        expand: int = args.vq_num_concepts
+
+        self.expander = nn.Conv1d(input_len, expand * input_len, kernel_size=1)
+
+        self.quantizer = get_vector_quantizer(args, dim=args.F, beta=0.0)
+
+        self.projector = nn.Conv1d(expand * input_len, input_len, kernel_size=1)
+
+    def forward(self, X: torch.Tensor) -> Tuple[torch.Tensor]:
+        X = self.expander(X)
+
+        X, vq_loss, perplexity = self.quantizer(X)
+
+        X = self.projector(X)
+
+        return {"X": X, "vq_loss": vq_loss, "perplexity": perplexity}
