@@ -27,26 +27,43 @@ from nd.datasets.datasets import (
     NeuroDiffusionCLIPDatasetBase,
 )
 from nd.datasets.things_meg import ThingsMEGCLIPDataset
-from nd.models.brain_encoder import BrainEncoder
-from nd.models.eeg_net import EEGNetDeep
-from nd.models.vision_encoders import (
+from nd.models import (
+    BrainEncoderBase,
+    BrainEncoder,
+    Wav2Vec2ConformerSpatialMixer,
+    EEGNetDeep,
     ViT,
     ViViT,
     ViViTReduceTime,
     Unet3DEncoder,
     OpenFaceMapper,
+    DiagonalClassifier,
+    LabelClassifier,
+    LatentsQuantizer,
+    GumbelVectorQuantizer,
+    GumbelVectorQuantizerV2,
+    MLPTemporalReducer,
+    MLP,
 )
-from nd.models.classifier import DiagonalClassifier, LabelClassifier
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.loss import (
     CLIPLoss,
+    KLRegCLIPLoss,
+    OrthoRegCLIPLoss,
+    LargeEntropyCLIPLoss,
+    AdaptiveCLIPLoss,
+    AdditionalPositivesCLIPLoss,
+    CosFaceCLIPLoss,
+    ArcFaceCLIPLoss,
+    AdaptiveMarginCLIPLoss,
     CircleCLIPLoss,
+    GeometricCLIPLoss,
     CLIPWithClassCosFaceLoss,
     CLIPWithClassCircleLoss,
     NearestNeighborCLIPLoss,
 )
 from nd.utils.train_utils import Models, sequential_apply, count_parameters
-from nd.utils.plots import plot_latents_2d
+from nd.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categories
 
 
 def build_dataloaders(args, split=True):
@@ -88,9 +105,10 @@ def build_dataloaders(args, split=True):
         "collate_fn": collate_fn,
         "num_workers": args.num_workers,
         "pin_memory": True,
+        "drop_last": False,
     }
     if split:
-        loader_args.update({"drop_last": True})
+        # loader_args.update({"drop_last": True})
 
         train_loader = torch.utils.data.DataLoader(
             dataset=train_set, batch_size=args.batch_size, shuffle=True, **loader_args
@@ -108,7 +126,7 @@ def build_dataloaders(args, split=True):
             dataset=dataset,
             batch_size=args.batch_size,
             shuffle=False,
-            drop_last=False,
+            # drop_last=False,
             **loader_args,
         )
 
@@ -116,10 +134,13 @@ def build_dataloaders(args, split=True):
 
 
 def build_models(args, dataset, device):
-    if args.brain_encoder == "brain_encoder":
-        subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
+    subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
 
+    if args.brain_encoder == "brain_encoder":
         brain_encoder = BrainEncoder(args, subjects=subjects).to(device)
+
+    elif args.brain_encoder == "wav2vec2":
+        brain_encoder = Wav2Vec2ConformerSpatialMixer(args, subjects=subjects).to(device)  # fmt: skip
 
     elif args.brain_encoder == "eegnet":
         brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
@@ -134,18 +155,77 @@ def build_models(args, dataset, device):
     else:
         raise NotImplementedError
 
+    vision_encoder, preprocess = None, None
+
     if args.vision.pretrained:
         if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
             vision_encoder, preprocess = clip.load(args.vision.pretrained_model)
             vision_encoder = vision_encoder.eval().to(device)
-        else:
-            vision_encoder = None
-            preprocess = None
+
+        elif args.vision_quantize:
+            assert args.vq is None, "Not expecting quantizing both vision and brain."  # fmt: skip
+
+            vision_encoder = GumbelVectorQuantizer(
+                args,
+                in_tokens=args.orig_clip_tokens,
+                out_tokens=args.num_clip_tokens,
+                time_first=True,
+            ).to(device)
+
+        elif args.orig_clip_tokens != args.num_clip_tokens:
+            vision_encoder = MLPTemporalReducer(
+                args.orig_clip_tokens, args.num_clip_tokens
+            ).to(device)
+
+        elif args.F == 2:
+            vision_encoder = MLP(args.orig_F, 2).to(device)
     else:
         vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
-        preprocess = None
 
     return brain_encoder, vision_encoder, preprocess
+
+
+def build_loss(args, dataset, device):
+    if args.loss == "clip":
+        loss_func = CLIPLoss(args).to(device)
+    elif args.loss == "klclip":
+        loss_func = KLRegCLIPLoss(args, alpha=args.klclip_alpha).to(device)
+    elif args.loss == "orclip":
+        loss_func = OrthoRegCLIPLoss(args, alpha=args.orclip_alpha).to(device)
+    elif args.loss == "leclip":
+        loss_func = LargeEntropyCLIPLoss(args, alpha=args.leclip_alpha).to(device)
+    elif args.loss == "adaptiveclip":
+        loss_func = AdaptiveCLIPLoss(args).to(device)
+    elif args.loss == "apclip":
+        loss_func = AdditionalPositivesCLIPLoss(args).to(device)
+    elif args.loss == "cosfaceclip":
+        loss_func = CosFaceCLIPLoss(args).to(device)
+    elif args.loss == "arcfaceclip":
+        loss_func = ArcFaceCLIPLoss(args).to(device)
+    elif args.loss == "amclip":
+        loss_func = AdaptiveMarginCLIPLoss(args).to(device)
+    elif args.loss == "circleclip":
+        loss_func = CircleCLIPLoss(args).to(device)
+    elif args.loss == "geomclip":
+        loss_func = GeometricCLIPLoss(args).to(device)
+    elif args.loss == "nnclip":
+        loss_func = NearestNeighborCLIPLoss(args).to(device)
+    elif args.loss == "clipclasscosface":
+        loss_func = CLIPWithClassCosFaceLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
+    elif args.loss == "clipclasscircle":
+        loss_func = CLIPWithClassCircleLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
+    else:
+        raise ValueError(f"Invalid loss function: {args.loss}")
+
+    return loss_func
 
 
 def train():
@@ -183,26 +263,7 @@ def train():
     # ---------------
     #      Loss
     # ---------------
-    if args.loss == "clip":
-        loss_func = CLIPLoss(args).to(device)
-    elif args.loss == "circleclip":
-        loss_func = CircleCLIPLoss(args).to(device)
-    elif args.loss == "nnclip":
-        loss_func = NearestNeighborCLIPLoss(args).to(device)
-    elif args.loss == "clipclasscosface":
-        loss_func = CLIPWithClassCosFaceLoss(
-            args,
-            dataset.num_categories,
-            dataset.num_high_categories if args.use_high_categories else None,
-        ).to(device)
-    elif args.loss == "clipclasscircle":
-        loss_func = CLIPWithClassCircleLoss(
-            args,
-            dataset.num_categories,
-            dataset.num_high_categories if args.use_high_categories else None,
-        ).to(device)
-    else:
-        raise ValueError(f"Invalid loss function: {args.loss}")
+    loss_func = build_loss(args, dataset, device)
 
     # ---------------------
     #        Models
@@ -210,7 +271,9 @@ def train():
     brain_encoder, vision_encoder, preprocess = build_models(args, dataset, device)
 
     trained_models = Models(
-        brain_encoder, vision_encoder if not args.vision.pretrained else None, loss_func
+        brain_encoder,
+        vision_encoder if (vision_encoder is not None and vision_encoder.training) else None,  # fmt: skip
+        loss_func,
     )
 
     if sweep:
@@ -247,10 +310,15 @@ def train():
         cprint("Using no scheduler.", "yellow")
         scheduler = None
 
+    optimizer_vq = None
+    if isinstance(vision_encoder, LatentsQuantizer):
+        optimizer_vq = torch.optim.SGD(vision_encoder.parameters(), lr=args.vision_quantize_lr)  # fmt: skip
+
     # -----------------------
     #     Strat training
     # -----------------------
     vq_brain = args.vq is not None
+    cprint(f"vq_brain: {vq_brain}", "yellow")
 
     max_test_acc = 0.0
     no_best_counter = 0
@@ -273,39 +341,49 @@ def train():
         train_Y_list = []
         train_Z_list = []
         train_categories_list = []
+        test_Y_list = []
+        test_Z_list = []
+        test_categories_list = []
 
         # -----------------------
         #       Train step
         # -----------------------
         trained_models.train()
-        if args.accum_grad:
-            optimizer.zero_grad()
-
         for batch in tqdm(train_loader, desc="Train"):
             X, Y, subject_idxs, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
+            # ( b, t, d )
 
             if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
+            vq_loss, perplexity = None, None
+            adv_loss = None
+
             if vision_encoder is None:
                 pass
             elif isinstance(vision_encoder, clip.model.CLIP):
                 with torch.no_grad():
                     Y = vision_encoder.encode_image(Y).float()
+            elif isinstance(vision_encoder, GumbelVectorQuantizer):
+                ret_dict = vision_encoder(Y)
+                Y, perplexity = ret_dict["Z"], ret_dict["perplexity"]
+                # vq_loss = ret_dict["div_loss"]
             else:
                 Y = vision_encoder(Y)
 
-            if isinstance(brain_encoder, BrainEncoder):
+            if isinstance(brain_encoder, BrainEncoderBase):
                 ret_dict = brain_encoder(X, subject_idxs)
 
                 Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
-                if vq_brain:
-                    vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]
 
-                if args.dann:
-                    adv_loss = ret_dict["adv_loss"]
+                if isinstance(brain_encoder, BrainEncoder):
+                    if vq_brain:
+                        vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+
+                    if args.dann:
+                        adv_loss = ret_dict["adv_loss"]
 
             elif isinstance(brain_encoder, EEGNetDeep):
                 assert not vq_brain, "EEGNetDeep doesn't support vector quantization."
@@ -316,11 +394,11 @@ def train():
 
             if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                 if args.use_high_categories:
-                    clip_loss = loss_func(Y, Z, classes, high_categories)
+                    clip_loss = loss_func(Z, Y, classes, high_categories)
                 else:
-                    clip_loss = loss_func(Y, Z, classes)
+                    clip_loss = loss_func(Z, Y, classes)
             else:
-                clip_loss = loss_func(Y, Z)
+                clip_loss = loss_func(Z, Y)
 
             if Z_mse is not None:
                 mse_loss = F.mse_loss(
@@ -333,17 +411,13 @@ def train():
             else:
                 loss = clip_loss
 
-            if vq_brain and not args.vq_alternate:
-                loss = loss + vq_loss
-
-            if args.dann:
-                loss = loss + adv_loss
-
             with torch.no_grad():
                 if isinstance(train_classifier, DiagonalClassifier):
                     topk_accs, _ = train_classifier(Z, Y)
                 elif isinstance(train_classifier, LabelClassifier):
-                    topk_accs = train_classifier(Z, y_idxs.to(device))
+                    topk_accs = train_classifier(
+                        Z, y_idxs.to(device), trained_models.vision_encoder
+                    )
                 else:
                     raise NotImplementedError
 
@@ -353,23 +427,33 @@ def train():
             if Z_mse is not None:
                 train_mse_losses.append(mse_loss.item())
 
-            if vq_brain:
+            if vq_loss is not None:
+                loss = loss + vq_loss
                 train_vq_losses.append(vq_loss.item())
+
+            if perplexity is not None:
                 train_perplexities.append(perplexity.item())
 
-            if args.dann:
+            if adv_loss is not None:
+                loss = loss + adv_loss
                 train_adv_losses.append(adv_loss.item())
 
-            if args.accum_grad:
-                loss.backward()
-            else:
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+            optimizer.zero_grad()
+            if optimizer_vq is not None:
+                optimizer_vq.zero_grad()
 
-            if args.plot_latents:
+            loss.backward()
+
+            optimizer.step()
+            if optimizer_vq is not None:
+                optimizer_vq.step()
+
+            if args.plot_latents or args.F == 2:
                 train_Y_list.append(Y.detach().cpu().numpy())
-                train_Z_list.append(Z.detach().cpu().numpy())
+                if Z_mse is not None:
+                    train_Z_list.append(Z_mse.detach().cpu().numpy())
+                else:
+                    train_Z_list.append(Z.detach().cpu().numpy())
 
                 if high_categories is not None:
                     train_categories_list.append(high_categories.numpy())
@@ -378,8 +462,8 @@ def train():
                 else:
                     raise ValueError("plot_latents is True but no classes are given.")
 
-        if args.accum_grad:
-            optimizer.step()
+            # if isinstance(vision_encoder, GumbelVectorQuantizer):
+            #     vision_encoder.update_gumbel_temp()
 
         loss_func.clamp_params()
 
@@ -397,6 +481,9 @@ def train():
 
             X, Y = X.to(device), Y.to(device)
 
+            vq_loss, perplexity = None, None
+            adv_loss = None
+
             with torch.no_grad():
                 if vision_encoder is None:
                     pass
@@ -412,7 +499,10 @@ def train():
                         Y, vision_encoder, args.batch_size, desc="VisionEncoder"
                     )
 
-                if not isinstance(brain_encoder, BrainEncoder):
+                    if isinstance(vision_encoder, GumbelVectorQuantizer):
+                        Y, perplexity = Y["Z"], Y["perplexity"]
+
+                if not isinstance(brain_encoder, BrainEncoderBase):
                     subject_idxs = None
 
                 # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
@@ -425,18 +515,17 @@ def train():
                     reduction=args.reduction,
                 )
 
-                if isinstance(brain_encoder, BrainEncoder):
+                if isinstance(brain_encoder, BrainEncoderBase):
                     ret_dict = Z
 
                     Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
-                    if vq_brain:
-                        vq_loss, perplexity = (
-                            ret_dict["vq_loss"],
-                            ret_dict["perplexity"],
-                        )
 
-                    if args.dann:
-                        adv_loss = ret_dict["adv_loss"]
+                    if isinstance(brain_encoder, BrainEncoder):
+                        if vq_brain:
+                            vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+
+                        if args.dann:
+                            adv_loss = ret_dict["adv_loss"]
 
                 elif isinstance(brain_encoder, EEGNetDeep):
                     Z_mse = None
@@ -445,11 +534,11 @@ def train():
 
                 if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                     if args.use_high_categories:
-                        clip_loss = loss_func(Y, Z, classes, high_categories)
+                        clip_loss = loss_func(Z, Y, classes, high_categories)
                     else:
-                        clip_loss = loss_func(Y, Z, classes)
+                        clip_loss = loss_func(Z, Y, classes)
                 else:
-                    clip_loss = loss_func(Y, Z)
+                    clip_loss = loss_func(Z, Y)
 
                 if Z_mse is not None:
                     mse_loss = F.mse_loss(
@@ -464,21 +553,39 @@ def train():
                     )
                 elif isinstance(test_classifier, LabelClassifier):
                     topk_accs = test_classifier(
-                        Z, y_idxs.to(device), sequential=args.test_with_whole
+                        Z, y_idxs.to(device), trained_models.vision_encoder, sequential=args.test_with_whole  # fmt: skip
                     )
                 else:
                     raise NotImplementedError
+
+            # TODO: Reuse the train step code.
 
             test_clip_losses.append(clip_loss.item())
             test_mse_losses.append(mse_loss.item())
             test_topk_accs.append(topk_accs)
 
-            if vq_brain:
+            if vq_loss is not None:
                 test_vq_losses.append(vq_loss.item())
+
+            if perplexity is not None:
                 test_perplexities.append(perplexity.item())
 
-            if args.dann:
+            if adv_loss is not None:
                 test_adv_losses.append(adv_loss.item())
+
+            if args.plot_latents or args.F == 2:
+                test_Y_list.append(Y.detach().cpu().numpy())
+                if Z_mse is not None:
+                    test_Z_list.append(Z_mse.detach().cpu().numpy())
+                else:
+                    test_Z_list.append(Z.detach().cpu().numpy())
+
+                if high_categories is not None:
+                    test_categories_list.append(high_categories.numpy())
+                elif classes is not None:
+                    test_categories_list.append(classes.numpy())
+                else:
+                    raise ValueError("plot_latents is True but no classes are given.")
 
         train_topk_accs = np.stack(train_topk_accs)
         test_topk_accs = np.stack(test_topk_accs)
@@ -510,46 +617,36 @@ def train():
                     for i, k in enumerate(args.acc_topk)
                 }
             )
-
+            # fmt: off
             if len(train_mse_losses) > 0:
-                assert len(test_mse_losses) > 0
-
-                performance_now.update(
-                    {
-                        "train_mse_loss": np.mean(train_mse_losses),
-                        "test_mse_loss": np.mean(test_mse_losses),
-                    }
-                )
-
-            if vq_brain:
-                performance_now.update(
-                    {
-                        "train_vq_loss": np.mean(train_vq_losses),
-                        "test_vq_loss": np.mean(test_vq_losses),
-                        "train_perplexity": np.mean(train_perplexities),
-                        "test_perplexity": np.mean(test_perplexities),
-                    }
-                )
-
-            if args.dann:
-                performance_now.update(
-                    {
-                        "train_adv_loss": np.mean(train_adv_losses),
-                        "test_adv_loss": np.mean(test_adv_losses),
-                    }
-                )
-
-            if isinstance(loss_func, CLIPWithClassCosFaceLoss):
+                performance_now.update({"train_mse_loss": np.mean(train_mse_losses), "test_mse_loss": np.mean(test_mse_losses)})
+            if len(train_vq_losses) > 0:
+                performance_now.update({"train_vq_loss": np.mean(train_vq_losses), "test_vq_loss": np.mean(test_vq_losses)})
+            if len(train_perplexities) > 0:
+                performance_now.update({"train_perplexity": np.mean(train_perplexities),"test_perplexity": np.mean(test_perplexities)})
+            if len(train_adv_losses) > 0:
+                performance_now.update({"train_adv_loss": np.mean(train_adv_losses), "test_adv_loss": np.mean(test_adv_losses)})
+            if hasattr(loss_func, "temp"):
+                performance_now.update({"temp": loss_func.temp.item()})
+            if hasattr(loss_func, "margin"):
                 performance_now.update({"margin": loss_func.margin.item()})
-
-            # if not isinstance(loss_func, CircleCLIPLoss):
-            performance_now.update({"temp": loss_func.temp.item()})
-
+            if hasattr(vision_encoder, "gumbel_temp"):
+                performance_now.update({"gumbel_temp": vision_encoder.gumbel_temp})
             # FIXME: This doesn't work when args.blocks is a list of strings.
             if args.blocks == "transformer" and args.pos_enc == "sine_abs":
-                performance_now.update(
-                    {"pos_scale": brain_encoder.blocks[0].pos_enc.scale.item()}
+                performance_now.update({"pos_scale": brain_encoder.blocks[0].pos_enc.scale.item()})
+            # fmt: on
+
+            if args.F == 2:
+                plots = plot_2d_latents_with_sorted_categories(
+                    np.concatenate(train_Z_list),
+                    np.concatenate(train_Y_list),
+                    np.concatenate(train_categories_list),
+                    np.concatenate(test_Z_list),
+                    np.concatenate(test_Y_list),
+                    np.concatenate(test_categories_list),
                 )
+                performance_now.update({"latents": wandb.Image(plots)})
 
             wandb.log(performance_now)
 
@@ -565,26 +662,28 @@ def train():
 
             max_test_acc = np.mean(test_topk_accs)
             no_best_counter = 0
+
+            if args.plot_latents:
+                best_train_Z = np.concatenate(train_Z_list)
+                best_train_categories = np.concatenate(train_categories_list)
+                best_test_Z = np.concatenate(test_Z_list)
+                best_test_categories = np.concatenate(test_categories_list)
         else:
             no_best_counter += 1
 
-        if len(train_categories_list) > 0:
-            if epoch == 0:
-                plot_latents_2d(
-                    np.concatenate(train_Y_list),
-                    np.concatenate(train_categories_list),
-                    save_path=os.path.join(run_dir, f"plots/image_latents/epoch{epoch}.png"),  # fmt: skip
-                )
-            if epoch % 50 == 0:
-                plot_latents_2d(
-                    np.concatenate(train_Z_list),
-                    np.concatenate(train_categories_list),
-                    save_path=os.path.join(run_dir, f"plots/ecog_latents/epoch{epoch}.png"),  # fmt: skip
-                )
+        # if args.plot_latents and epoch == 0:
+        #     plot_latents_2d(np.concatenate(train_Y_list), np.concatenate(train_categories_list), save_path=os.path.join(run_dir, f"plots/image_latents/train_epoch0.png"))  # fmt: skip
+        #     plot_latents_2d(np.concatenate(test_Y_list), np.concatenate(test_categories_list), save_path=os.path.join(run_dir, f"plots/image_latents/test_epoch0.png"))  # fmt: skip
 
         if no_best_counter > args.patience:
             cprint(f"Early stopping at epoch {epoch}", color="cyan")
             break
+
+    if args.plot_latents:
+        plot_latents_2d(best_train_Z, best_train_categories, save_path=os.path.join(run_dir, "plots/brain_latents/best_train.png"))  # fmt: skip
+        plot_latents_2d(best_test_Z, best_test_categories, save_path=os.path.join(run_dir, "plots/brain_latents/best_test.png"))  # fmt: skip
+        plot_latents_2d(np.concatenate(train_Z_list), np.concatenate(train_categories_list), save_path=os.path.join(run_dir, "plots/brain_latents/last_train.png"))  # fmt: skip
+        plot_latents_2d(np.concatenate(test_Z_list), np.concatenate(test_categories_list), save_path=os.path.join(run_dir, "plots/brain_latents/last_test.png"))  # fmt: skip
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="default")
