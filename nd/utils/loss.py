@@ -1,12 +1,16 @@
 import sys
+import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 from termcolor import cprint
 from typing import Optional
+
+from nd.utils.hypersphere import HypersphericalUniform, PowerSpherical
 
 
 def calc_similarity(
@@ -67,16 +71,84 @@ def top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
     )
 
 
+def off_diag(mat: torch.Tensor) -> torch.Tensor:
+    """Returns off-diagonal elements of a square matrix.
+    Args:
+        mat ( b, b ): _description_
+    Returns:
+        off_diag ( b * (b - 1), ): _description_
+    """
+    b = mat.shape[0]
+
+    return torch.cat(
+        [torch.diag(mat, i) for i in range(1, b)]
+        + [torch.diag(mat, -i) for i in range(1, b)]
+    )
+
+
+class BinaryCrossEntropyLoss(nn.Module):
+    def __init__(self, reduction: str = "mean") -> None:
+        super().__init__()
+
+        self.reduction = reduction
+
+    def forward(self, logits, targets):
+        """I'm makeing my own BCE because torch BCE turned out not to work as I expected.
+        Accepts soft targets.
+        Args:
+            logits ( b, b ): _description_
+            targets ( b, b ) or ( b, ): _description_
+        Returns:
+            _type_: _description_
+        """
+        probs = F.softmax(logits, dim=1)
+
+        if targets.ndim == 1:
+            targets = F.one_hot(targets, num_classes=logits.shape[1]).to(torch.float32)
+        # FIXME
+        elif torch.equal(targets, torch.eye(targets.shape[0], device=targets.device)):
+            pass
+        else:
+            targets = F.softmax(targets, dim=1)
+
+        bce = F.binary_cross_entropy(probs, targets, reduction="none").sum(dim=1)
+
+        if self.reduction == "mean":
+            return bce.mean()
+        elif self.reduction == "sum":
+            return bce.sum()
+        else:
+            return bce
+
+    #     probs_diag = torch.diag(probs)
+    #     targets_diag = torch.diag(targets)
+    #     ce = -(targets_diag * probs_diag.log()).mean()
+    #     # cprint((ce, F.cross_entropy(logits, targets)), "yellow")
+    #     assert torch.isclose(ce, F.cross_entropy(logits, targets)).item()
+    #     assert (targets_diag == 1).all()
+
+    #     probs_offdiag = self._off_diag(probs)
+    #     targets_offdiag = self._off_diag(targets)
+    #     assert torch.isclose(probs.sum(), probs_diag.sum() + probs_offdiag.sum()).item()
+    #     assert torch.isclose(targets.sum(), targets_diag.sum() + targets_offdiag.sum()).item()  # fmt: skip
+    #     assert (targets_offdiag == 0).all()
+
+    #     bce3 = ce - ((1 - targets_offdiag) * (1 - probs_offdiag).log()).mean()
+
+    #     print(bce.mean(), bce2.mean(), bce3)
+    #     sys.exit()
+
+
 class CLIPLoss(nn.Module):
     def __init__(self, args) -> None:
         super().__init__()
 
         self.compute_similarity = nn.CosineSimilarity(dim=-1)
 
-        if args.push_negative:
-            self.cross_entropy = nn.BCELoss(reduction=args.reduction)
+        if args.use_negative:
+            self.ce = BinaryCrossEntropyLoss(reduction=args.reduction)
         else:
-            self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
+            self.ce = nn.CrossEntropyLoss(reduction=args.reduction)
 
         # Temperature (scaler)
         self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
@@ -95,7 +167,6 @@ class CLIPLoss(nn.Module):
             x_ = rearrange(x, "b f t -> 1 b (f t)")
             y_ = rearrange(y, "b f t -> b 1 (f t)")
             logits = self.compute_similarity(x_, y_)  # s
-
         else:
             # fast way
             x = x.reshape(batch_size, -1)
@@ -112,7 +183,7 @@ class CLIPLoss(nn.Module):
         logits *= torch.exp(self.temp)
 
         # NOTE: as in https://arxiv.org/abs/2103.00020
-        loss = (self.cross_entropy(logits, targets) + self.cross_entropy(logits.t(), targets)) / 2  # fmt: skip
+        loss = (self.ce(logits, targets) + self.ce(logits.T, targets)) / 2
 
         if return_logits:
             return logits, loss
@@ -124,18 +195,324 @@ class CLIPLoss(nn.Module):
             self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
 
 
-class CircleCLIPLoss(nn.Module):
+class OrthoRegCLIPLoss(CLIPLoss):
+    """Regularizes with the orthogonality of the similarity matrix."""
+
+    def __init__(self, args, alpha=0.1) -> None:
+        super().__init__(args)
+
+        self.alpha = alpha
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+        targets = torch.eye(b, device=X.device, requires_grad=False)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        reg_loss = F.l1_loss(similarity, targets, reduction="none").mean()
+
+        similarity *= torch.exp(self.temp)
+        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+        return clip_loss + self.alpha * reg_loss
+
+
+class KLRegCLIPLoss(CLIPLoss):
+    """Regularizes with the KL divergence of X and Y."""
+
+    def __init__(self, args, alpha=0.1) -> None:
+        super().__init__(args)
+
+        self.alpha = alpha
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+        targets = torch.eye(b, device=X.device, requires_grad=False)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        reg_loss = F.kl_div(
+            X.log_softmax(dim=0), Y.softmax(dim=0), reduction="batchmean"
+        )
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        similarity *= torch.exp(self.temp)
+        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+        return clip_loss + self.alpha * reg_loss
+
+
+class LargeEntropyCLIPLoss(CLIPLoss):
+    def __init__(self, args, alpha=0.1) -> None:
+        super().__init__(args)
+
+        self.alpha = alpha
+
+        self.impl_type = args.impl_type
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+        targets = torch.arange(b, requires_grad=False).long().to(X.device)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        if self.impl_type == 0:
+            entropy_loss = -(self._entropy(X) + self._entropy(Y))
+
+        elif self.impl_type == 1:
+            entropy_loss = -(self._perplexity(X) + self._perplexity(Y))
+
+        elif self.impl_type == 2:
+            entropy_loss = -(self._entropy(similarity) + self._entropy(similarity.T))
+
+        elif self.impl_type == 3:
+            entropy_loss = -(
+                self._perplexity(similarity) + self._perplexity(similarity.T)
+            )
+
+        elif self.impl_type == 4:
+            entropy_loss = -(
+                self._angular_entropy(similarity) + self._angular_entropy(similarity.T)
+            )
+        else:
+            raise NotImplementedError
+
+        similarity *= torch.exp(self.temp)
+        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+        return clip_loss + self.alpha * entropy_loss
+
+    @staticmethod
+    def _entropy(x: torch.Tensor) -> torch.Tensor:
+        avg_probs = torch.softmax(x, dim=-1).mean(dim=0)
+
+        return -torch.sum(avg_probs * torch.log(avg_probs + 1e-7))
+
+    @staticmethod
+    def _perplexity(x: torch.Tensor) -> torch.Tensor:
+        avg_probs = torch.softmax(x, dim=-1).mean(dim=0)
+
+        return -torch.sum(avg_probs * torch.log(avg_probs + 1e-7), dim=-1).exp().sum()
+
+    @staticmethod
+    def _angular_entropy(cosine: torch.Tensor) -> torch.Tensor:
+        angles = torch.acos(cosine.clamp(-1 + 1e-7, 1 - 1e-7))
+
+        avg_probs = torch.softmax(angles, dim=-1).mean(dim=0)
+
+        return -torch.sum(avg_probs * torch.log(avg_probs + 1e-7))
+
+
+class AdditionalPositivesCLIPLoss(CLIPLoss):
     def __init__(self, args) -> None:
-        super().__init__()
+        super().__init__(args)
 
-        self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
+        self.threshold = args.positive_threshold
 
-        # Temperature (scaler)
-        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
-        self.temp_min = args.clip_temp_min
-        self.temp_max = args.clip_temp_max
-        if not args.clip_temp_learn:
-            self.temp.requires_grad = False
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        similarity *= torch.exp(self.temp)
+
+        guidance = torch.matmul(Y, Y.T)
+        targets = torch.where(guidance > self.threshold, 1.0, 0.0)
+
+        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+
+class AdaptiveCLIPLoss(CLIPLoss):
+    def __init__(self, args) -> None:
+        super().__init__(args)
+        assert args.use_negative, "Not using negatives makes this loss same as the original CLIP loss."  # fmt: skip
+
+        self.margin_n = args.clip_margin_init
+
+        self.impl_type = args.impl_type
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        guidance = torch.matmul(Y, Y.T)
+        eye = torch.eye(b, device=X.device, requires_grad=False)
+
+        if self.impl_type == 0:
+            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).mean())  # fmt: skip
+        elif self.impl_type == 1:
+            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).median())  # fmt: skip
+        elif self.impl_type == 2:
+            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).max())  # fmt: skip
+        elif self.impl_type == 3:
+            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).min())  # fmt: skip
+
+        similarity = torch.matmul(X, Y.T)
+
+        similarity *= torch.exp(self.temp)
+
+        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+
+class CosFaceCLIPLoss(CLIPLoss):
+    def __init__(self, args) -> None:
+        super().__init__(args)
+
+        self.margin = args.clip_margin_init
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+        targets = torch.eye(b, device=X.device, requires_grad=False)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        similarity -= self.margin * targets
+
+        similarity *= torch.exp(self.temp)
+
+        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+
+class ArcFaceCLIPLoss(CLIPLoss):
+    """Based on https://github.com/ronghuaiyang/arcface-pytorch/blob/master/models/metrics.py"""
+
+    def __init__(self, args, easy_margin: bool = False) -> None:
+        super().__init__(args)
+
+        self.easy_margin = easy_margin
+
+        m: float = args.clip_margin_init
+        self.cos_m = math.cos(m)
+        self.sin_m = math.sin(m)
+        self.th = math.cos(math.pi - m)
+        self.mm = math.sin(math.pi - m) * m
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+        targets = torch.eye(b, device=X.device, requires_grad=False)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        similarity = self._add_angular_margin(similarity, targets)
+
+        similarity *= torch.exp(self.temp)
+
+        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+    def _add_angular_margin(self, cosine, targets) -> torch.Tensor:
+        sine = torch.sqrt(1.0 - torch.pow(cosine, 2)).clamp(0, 1)
+
+        phi = cosine * self.cos_m - sine * self.sin_m
+
+        if self.easy_margin:
+            phi = torch.where(cosine > 0, phi, cosine)
+        else:
+            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+
+        return (targets * phi) + ((1.0 - targets) * cosine)
+
+
+class AdaptiveMarginCLIPLoss(CLIPLoss):
+    """Applies margins on negative pairs."""
+
+    def __init__(self, args) -> None:
+        super().__init__(args)
+
+        self.margin = nn.Parameter(torch.tensor([float(args.clip_margin_init)]))
+        self.margin_min = args.clip_margin_min
+        self.margin_max = args.clip_margin_max
+        if not args.clip_margin_learn:
+            self.margin.requires_grad = False
+
+        self.impl_type = args.impl_type
+
+    def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        b = X.shape[0]
+        targets = torch.arange(b, device=X.device, requires_grad=False).long()
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        # guidance = torch.matmul(Y, Y.T)
+
+        # similarity -= guidance * self.margin
+
+        similarity = self._add_angular_margin(similarity)  # ( b, b )
+
+        similarity *= torch.exp(self.temp)
+
+        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+    def _add_angular_margin(self, cosine: torch.Tensor) -> torch.Tensor:
+        angles = torch.acos(cosine.clamp(-1, 1))  # ( b, b )
+
+        margin = self._margin(cosine.shape[0])
+
+        cosine_plus_margin = torch.cos(angles + margin)
+        cosine = torch.cos(angles)
+
+        # Keep the cost function monotonically decreasing
+        return torch.where(
+            angles <= np.pi - margin,
+            cosine_plus_margin,
+            cosine - margin * torch.sin(margin),
+        )
+
+    def _margin(self, b: int) -> torch.Tensor:
+        # to_margin = -torch.eye(b, device=self.margin.device) + 1
+        to_margin = torch.eye(b, device=self.margin.device, requires_grad=False)
+
+        return self.margin * to_margin
+
+
+class CircleCLIPLoss(CLIPLoss):
+    def __init__(self, args) -> None:
+        super().__init__(args)
 
         self.m = args.circle_relax
         self.o_p = 1 + self.m
@@ -144,13 +521,6 @@ class CircleCLIPLoss(nn.Module):
         self.margin_n = self.m
 
     def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
-        """_summary_
-        Args:
-            X ( b, (t,) f ): _description_
-            Y ( b, (t,) f ): _description_
-        Returns:
-            torch.Tensor: _description_
-        """
         b = X.shape[0]
 
         targets = torch.arange(b, device=X.device, requires_grad=False)
@@ -168,15 +538,12 @@ class CircleCLIPLoss(nn.Module):
         similarity *= self._scaling(similarity, targets_onehot)
         similarity *= torch.exp(self.temp)
 
-        return (
-            self.cross_entropy(similarity, targets)
-            + self.cross_entropy(similarity.T, targets)
-        ) / 2
+        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
 
     def _scaling(
         self, similarity: torch.Tensor, targets_onehot: torch.Tensor
     ) -> torch.Tensor:
-        """_summary_
+        """self.o_p = 1.2, self.o_n = -0.2
         Args:
             similarity ( b, b ): _description_
             target_onehot ( b, b ): Float32 one-hot encoded.
@@ -190,17 +557,163 @@ class CircleCLIPLoss(nn.Module):
         )
 
     def _margin(self, targets_onehot: torch.Tensor) -> torch.Tensor:
-        """_summary_
+        """self.margin_p = 0.6, self.margin_n = 0.4
         Args:
             targets_onehot ( b, b ): Float32 one-hot encoded.
         Returns:
-            margin ( b, n_classes ): _description_
+            margin ( b, b ): _description_
         """
         return torch.where(targets_onehot == 1, self.margin_p, self.margin_n)
 
-    def clamp_params(self) -> None:
-        if not (self.temp_min is None and self.temp_max is None):
-            self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
+
+class GeometricCLIPLoss(CLIPLoss):
+    def __init__(self, args) -> None:
+        super().__init__(args)
+
+        self.ce = nn.CrossEntropyLoss(reduction=args.reduction)
+        self.bce = BinaryCrossEntropyLoss(args.reduction)
+
+        self.m = args.circle_relax
+
+        self.impl_type = args.impl_type
+
+    def forward(self, Y: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+        """_summary_
+        Args:
+            X ( b, (t,) f ): _description_
+            Y ( b, (t,) f ): _description_
+        Returns:
+            torch.Tensor: _description_
+        """
+        b = X.shape[0]
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)  # ( b, b )
+        guidance = torch.matmul(Y, Y.T)  # ( b, b )
+
+        targets = torch.eye(b, device=X.device, requires_grad=False)  # ( b, b )
+        # torch.arange(b, device=X.device, requires_grad=False)
+
+        if self.impl_type in [0, 1, 2]:
+            similarity *= torch.exp(self.temp)
+
+        # Original CLIP loss for comparison
+        if self.impl_type == 0:
+            loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+        # Simply CLIP loss with soft targets
+        elif self.impl_type == 1:
+            soft_targets = F.softmax(guidance, dim=1)  # ( b, b )
+
+            loss = (self.ce(similarity, soft_targets) + self.ce(similarity.T, soft_targets)) / 2  # fmt: skip
+
+        # BCE-CLIP with soft targets
+        elif self.impl_type == 2:
+            loss = (self.bce(similarity, guidance) + self.bce(similarity.T, guidance)) / 2  # fmt: skip
+
+        # CircleLoss-like
+        elif self.impl_type in [3, 4]:
+            if self.impl_type == 3:
+                guidance = torch.where(targets == 1, guidance, 1 - guidance)
+
+            similarity -= self._margin(targets, m=guidance)
+            similarity *= self._scaling(similarity, targets, m=guidance)
+            similarity *= torch.exp(self.temp)
+
+            loss = (self.bce(similarity, targets) + self.bce(similarity.T, targets)) / 2  # fmt: skip
+
+        # Only margin (CosFace-like loss)
+        else:
+            if self.impl_type == 5:
+                margin = guidance
+
+            elif self.impl_type == 6:
+                margin = 1 - guidance
+
+            elif self.impl_type == 7:
+                margin = self.m - guidance
+
+            elif self.impl_type == 8:
+                margin = torch.where(targets == 1, guidance, 1 - guidance)
+
+            elif self.impl_type == 9:
+                margin = torch.where(targets == 1, 1 - guidance, guidance)
+
+            elif self.impl_type == 10:
+                margin = torch.where(targets == 1, guidance, self.m - guidance)
+
+            elif self.impl_type == 11:
+                margin = torch.where(targets == 1, self.m - guidance, guidance)
+
+            # Margin only for positive pairs.
+            elif self.impl_type == 12:
+                margin = torch.where(targets == 1, guidance, 0)
+
+            elif self.impl_type == 13:
+                margin = torch.where(targets == 1, 1 - guidance, 0)
+
+            elif self.impl_type == 14:
+                margin = torch.where(targets == 1, self.m - guidance, 0)
+
+            # Margin only for negative pairs.
+            elif self.impl_type == 15:
+                margin = torch.where(targets == 1, 0, guidance)
+
+            elif self.impl_type == 16:
+                margin = torch.where(targets == 1, 0, 1 - guidance)
+
+            elif self.impl_type == 17:
+                margin = torch.where(targets == 1, 0, self.m - guidance)
+
+            elif self.impl_type == 18:
+                margin = torch.where(targets == 1, -guidance, 0)
+
+            elif self.impl_type == 19:
+                margin = -guidance
+
+            similarity -= margin
+
+            similarity *= self.temp
+
+            loss = (self.bce(similarity, targets) + self.bce(similarity.T, targets)) / 2  # fmt: skip
+
+        return loss
+
+    @staticmethod
+    def _margin(targets, m):
+        """_summary_
+        Args:
+            targets ( b, b ): Float32 one-hot encoded.
+            m ( b, b ): Relaxation margin.
+        Returns:
+            torch.Tensor: _description_
+        """
+        margin_p = 1 - m
+        margin_n = m
+
+        return torch.where(targets == 1, margin_p, margin_n)
+
+    @staticmethod
+    def _scaling(similarity, targets, m):
+        """_summary_
+        Args:
+            similarity ( b, b ): _description_
+            targets ( b, b ): Float32 one-hot encoded.
+            m ( b, b ): Relaxation margin.
+        Returns:
+            _type_: _description_
+        """
+        o_p = 1 + m
+        o_n = -m
+
+        return torch.where(
+            targets == 1, torch.relu(o_p - similarity), torch.relu(similarity - o_n)
+        )
 
 
 class CLIPWithClassCosFaceLoss(CLIPLoss):

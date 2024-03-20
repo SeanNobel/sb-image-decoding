@@ -23,6 +23,7 @@ from nd.models.transformer import (
     PositionalEncoding,  # positional_encoding,
     relative_positional_encoding,
 )
+from nd.models.crate import MSSA, ISTA
 from nd.models.dann import DANN
 from nd.models.utils import DropBlock1D
 from nd.models.subject_sa import SubjectBlockSA, SubjectBlockConvDynamic
@@ -329,7 +330,7 @@ class TransformerBlock(nn.Module):
             PreNorm(SelfAttention(emb_dim, n_heads, block_size), emb_dim)
         )
 
-        self.mlp = FeedForward(emb_dim, ff_pdrop=p_drop)
+        self.ff = FeedForward(emb_dim, ff_pdrop=p_drop)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
@@ -351,9 +352,32 @@ class TransformerBlock(nn.Module):
         else:
             X = self.attn(X)
 
-        X = self.mlp(X)
+        X = self.ff(X)
 
         return X.permute(0, 2, 1)
+
+
+class CRATEBlock(TransformerBlock):
+    def __init__(
+        self,
+        *args,
+        D2: int,
+        n_heads: int,
+        dim_head: int = 64,
+        p_drop: float = 0.1,
+        step_size: float = 0.1,
+        **kwargs,
+    ):
+        super().__init__(D2=D2, n_heads=n_heads, p_drop=p_drop, *args, **kwargs)
+
+        emb_dim = D2
+
+        self.attn = Residual(
+            PreNorm(
+                MSSA(emb_dim, heads=n_heads, dim_head=dim_head, dropout=p_drop), emb_dim
+            )
+        )
+        self.ff = PreNorm(ISTA(emb_dim, step_size=step_size), emb_dim)
 
 
 class ConformerBlock(nn.Module):
@@ -513,7 +537,7 @@ class MLPHead(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
-            Rearrange("b d t -> b (d t)"),
+            Rearrange("b d t -> b (t d)"),
             nn.LayerNorm([in_dim * t]),
             nn.GELU(),
             nn.Linear(in_dim * t, out_dim * t),
@@ -524,7 +548,61 @@ class MLPHead(nn.Module):
         return self.net(X)
 
 
-class BrainEncoder(nn.Module):
+class BrainEncoderBase(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def encode(
+        self,
+        X: torch.Tensor,
+        subject_idxs: Optional[torch.Tensor],
+        return_mse: bool = True,
+        normalize: bool = True,
+        swap_dims: bool = False,
+        stats: Optional[Tuple[float]] = None,
+        device=None,
+    ) -> torch.Tensor:
+        if device is not None:
+            orig_device = X.device
+            X, subject_idxs = X.to(device), subject_idxs.to(device)
+
+        single = X.dim == 2
+        if single:
+            X = X.unsqueeze(0)
+
+            if subject_idxs is not None:
+                subject_idxs = subject_idxs.unsqueeze(0)
+
+        Z = self(X, subject_idxs)
+        Z = Z["Z_mse"] if return_mse else Z["Z_clip"]
+
+        _, d, t = Z.shape
+        Z = rearrange(Z, "b d t -> b (d t)")
+
+        if normalize:
+            Z /= Z.norm(dim=-1, keepdim=True)
+
+        if stats is not None:
+            # Inverse normalization
+            Z = (Z - Z.mean()) / Z.std()
+            mean, std = stats
+            Z = Z * std + mean
+
+        Z = rearrange(Z, "b (d t) -> b d t", d=d)
+
+        if swap_dims:
+            Z = rearrange(Z, "b d t -> b t d")
+
+        if device is not None:
+            Z = Z.to(orig_device)
+
+        if single:
+            Z = Z.squeeze(0)
+
+        return Z
+
+
+class BrainEncoder(BrainEncoderBase):
     def __init__(
         self, args, subjects: Union[int, List[str]], unknown_subject: bool = False
     ) -> None:
@@ -638,6 +716,21 @@ class BrainEncoder(nn.Module):
                         **block_args,
                     ),
                 )
+            elif block == "crate":
+                pe = pos_enc if k == blocks.index("crate") else None
+                cprint(f"Block{k}: CRATE with pos_enc {pe}", "magenta")
+
+                self.blocks.add_module(
+                    f"block{k}",
+                    CRATEBlock(
+                        k,
+                        n_heads=transformer_heads,
+                        # TODO: TransformerBlocks after downsampling with ConvBlocks
+                        block_size=init_temporal_dim,
+                        pos_enc=pe,
+                        **block_args,
+                    ),
+                )
             else:
                 raise NotImplementedError()
 
@@ -729,52 +822,3 @@ class BrainEncoder(nn.Module):
             ret_dict.update({"adv_loss": adv_loss})
 
         return ret_dict
-
-    def encode(
-        self,
-        X: torch.Tensor,
-        subject_idxs: Optional[torch.Tensor],
-        return_mse: bool = True,
-        normalize: bool = True,
-        swap_dims: bool = False,
-        stats: Optional[Tuple[float]] = None,
-        device=None,
-    ) -> torch.Tensor:
-        if device is not None:
-            orig_device = X.device
-            X, subject_idxs = X.to(device), subject_idxs.to(device)
-
-        single = X.dim == 2
-        if single:
-            X = X.unsqueeze(0)
-
-            if subject_idxs is not None:
-                subject_idxs = subject_idxs.unsqueeze(0)
-
-        Z = self(X, subject_idxs)
-        Z = Z["Z_mse"] if return_mse else Z["Z_clip"]
-
-        _, d, t = Z.shape
-        Z = rearrange(Z, "b d t -> b (d t)")
-
-        if normalize:
-            Z /= Z.norm(dim=-1, keepdim=True)
-
-        if stats is not None:
-            # Inverse normalization
-            Z = (Z - Z.mean()) / Z.std()
-            mean, std = stats
-            Z = Z * std + mean
-
-        Z = rearrange(Z, "b (d t) -> b d t", d=d)
-
-        if swap_dims:
-            Z = rearrange(Z, "b d t -> b t d")
-
-        if device is not None:
-            Z = Z.to(orig_device)
-
-        if single:
-            Z = Z.squeeze(0)
-
-        return Z
