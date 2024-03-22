@@ -29,6 +29,7 @@ from nd.models.utils import DropBlock1D
 from nd.models.subject_sa import SubjectBlockSA, SubjectBlockConvDynamic
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.train_utils import conv_output_size
+from nd.utils.hypersphere import PowerSpherical
 
 
 def is_in(s: Optional[str], _s: str) -> bool:
@@ -541,7 +542,7 @@ class MLPHead(nn.Module):
             nn.LayerNorm([in_dim * t]),
             nn.GELU(),
             nn.Linear(in_dim * t, out_dim * t),
-            Rearrange("b (d t) -> b d t", d=out_dim),
+            Rearrange("b (t d) -> b t d", d=out_dim),
         )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
@@ -604,13 +605,18 @@ class BrainEncoderBase(nn.Module):
 
 class BrainEncoder(BrainEncoderBase):
     def __init__(
-        self, args, subjects: Union[int, List[str]], unknown_subject: bool = False
+        self,
+        args,
+        subjects: Union[int, List[str]],
+        variational: bool = False,
+        unknown_subject: bool = False,
     ) -> None:
         super().__init__()
 
         # Parameters
         self.vq = args.vq
         self.ignore_subjects = args.ignore_subjects or args.dann
+        self.variational = variational
         self.unknown_subject = unknown_subject
 
         D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
@@ -780,7 +786,17 @@ class BrainEncoder(BrainEncoderBase):
             self.dann_head = DANN(in_dim=D3, num_domains=num_subjects, scale=dann_scale)  # fmt: skip
 
         self.clip_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
-        self.mse_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
+
+        if variational:
+            assert num_clip_tokens == 1, "Variational mode is only supported for single clip token."  # fmt: skip
+
+            self.kappa_head = nn.Sequential(
+                MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens),
+                nn.Linear(F, 1),
+                nn.Softplus(),
+            )
+        else:
+            self.mse_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
@@ -808,9 +824,20 @@ class BrainEncoder(BrainEncoderBase):
             X = self.temporal_aggregation(X)
 
         Z_clip = self.clip_head(X)
-        Z_mse = self.mse_head(X)
+        ret_dict = {"Z_clip": Z_clip}
 
-        ret_dict = {"Z_clip": Z_clip, "Z_mse": Z_mse}
+        ret_dict.update({"Z_mse": self.mse_head(X) if hasattr(self, "mse_head") else Z_clip})  # fmt: skip
+
+        if self.variational:
+            p = PowerSpherical(
+                loc=rearrange(Z_clip, "b t d -> b (t d)"),
+                scale=rearrange(self.kappa_head(X), "b t 1 -> (b t 1)"),
+            )
+
+            Z_clip = p.rsample((1,)).permute(1, 0, 2)
+            # ( l, b, d ) -> ( b, t, d ) where l = t = 1
+
+            ret_dict.update({"Z_clip": Z_clip, "p": p})
 
         if self.vq is not None:
             ret_dict.update({"vq_loss": vq_loss, "perplexity": perplexity})

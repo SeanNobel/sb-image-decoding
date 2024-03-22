@@ -4,11 +4,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import kl_divergence
 from einops import rearrange
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from termcolor import cprint
-from typing import Optional
+from typing import Optional, Union, List
 
 from nd.utils.hypersphere import HypersphericalUniform, PowerSpherical
 
@@ -193,6 +194,48 @@ class CLIPLoss(nn.Module):
     def clamp_params(self):
         if not (self.temp_min is None and self.temp_max is None):
             self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
+
+
+class VariationalCLIPLoss(CLIPLoss):
+    def __init__(self, args, beta: float) -> None:
+        super().__init__(args)
+
+        self.beta = beta
+        self.q = HypersphericalUniform(dim=args.F)
+
+    def forward(
+        self,
+        X: torch.Tensor,
+        Y: torch.Tensor,
+        p: Union[PowerSpherical, List[PowerSpherical]],
+    ) -> torch.Tensor:
+        """_summary_
+        Args:
+            X ( b, 1, d ): _description_
+            Y ( b, 1, d ): _description_
+        Returns:
+            torch.Tensor: _description_
+        """
+        b = X.shape[0]
+        targets = torch.eye(b, device=X.device, requires_grad=False)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        similarity *= torch.exp(self.temp)
+        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+        if isinstance(p, list):
+            reg_loss = torch.cat([kl_divergence(p_, self.q) for p_ in p]).mean()
+        else:
+            reg_loss = kl_divergence(p, self.q).mean()
+
+        return clip_loss + self.beta * reg_loss
 
 
 class OrthoRegCLIPLoss(CLIPLoss):

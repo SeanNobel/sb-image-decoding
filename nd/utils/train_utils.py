@@ -174,17 +174,18 @@ def sequential_apply(
         for key in output[0].keys():
             _output = [_dict[key] for _dict in output]
 
-            if _output[0].ndim == 0:
-                _output = torch.stack(_output)
+            if isinstance(_output[0], torch.Tensor):
+                if _output[0].ndim == 0:
+                    _output = torch.stack(_output)
 
-                if reduction == "mean":
-                    _output = _output.mean()
-                elif reduction == "sum":
-                    _output = _output.sum()
+                    if reduction == "mean":
+                        _output = _output.mean()
+                    elif reduction == "sum":
+                        _output = _output.sum()
+                else:
+                    _output = torch.cat(_output)
 
-                stacked_dict.update({key: _output})
-            else:
-                stacked_dict.update({key: torch.cat(_output)})
+            stacked_dict.update({key: _output})
 
         return stacked_dict
     else:

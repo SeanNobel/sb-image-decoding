@@ -8,7 +8,7 @@ from einops import rearrange
 from time import time
 from tqdm import tqdm
 from termcolor import cprint
-from typing import Union, Optional
+from typing import Union, Optional, List
 import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -48,6 +48,7 @@ from nd.models import (
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.loss import (
     CLIPLoss,
+    VariationalCLIPLoss,
     KLRegCLIPLoss,
     OrthoRegCLIPLoss,
     LargeEntropyCLIPLoss,
@@ -137,7 +138,9 @@ def build_models(args, dataset, device):
     subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
 
     if args.brain_encoder == "brain_encoder":
-        brain_encoder = BrainEncoder(args, subjects=subjects).to(device)
+        brain_encoder = BrainEncoder(
+            args, subjects, variational=(args.loss == "variationalclip")
+        ).to(device)
 
     elif args.brain_encoder == "wav2vec2":
         brain_encoder = Wav2Vec2ConformerSpatialMixer(args, subjects=subjects).to(device)  # fmt: skip
@@ -188,6 +191,8 @@ def build_models(args, dataset, device):
 def build_loss(args, dataset, device):
     if args.loss == "clip":
         loss_func = CLIPLoss(args).to(device)
+    elif args.loss == "variationalclip":
+        loss_func = VariationalCLIPLoss(args, beta=args.vclip_beta).to(device)
     elif args.loss == "klclip":
         loss_func = KLRegCLIPLoss(args, alpha=args.klclip_alpha).to(device)
     elif args.loss == "orclip":
@@ -358,6 +363,7 @@ def train():
 
             X, Y = X.to(device), Y.to(device)
 
+            p = None
             vq_loss, perplexity = None, None
             adv_loss = None
 
@@ -378,12 +384,14 @@ def train():
 
                 Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
 
-                if isinstance(brain_encoder, BrainEncoder):
-                    if vq_brain:
-                        vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+                if "p" in ret_dict:
+                    p = ret_dict["p"]
 
-                    if args.dann:
-                        adv_loss = ret_dict["adv_loss"]
+                if "vq_loss" in ret_dict:
+                    vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+
+                if "adv_loss" in ret_dict:
+                    adv_loss = ret_dict["adv_loss"]
 
             elif isinstance(brain_encoder, EEGNetDeep):
                 assert not vq_brain, "EEGNetDeep doesn't support vector quantization."
@@ -397,13 +405,17 @@ def train():
                     clip_loss = loss_func(Z, Y, classes, high_categories)
                 else:
                     clip_loss = loss_func(Z, Y, classes)
+            elif isinstance(loss_func, VariationalCLIPLoss):
+                assert p is not None, "You need the posterior for variational loss."
+
+                clip_loss = loss_func(Z, Y, p)
             else:
                 clip_loss = loss_func(Z, Y)
 
             if Z_mse is not None:
                 mse_loss = F.mse_loss(
-                    rearrange(Y, "b d t -> b (d t)"),
-                    rearrange(Z_mse, "b d t -> b (d t)"),
+                    rearrange(Y, "b t d -> b (t d)"),
+                    rearrange(Z_mse, "b t d -> b (t d)"),
                     reduction=args.reduction,
                 )
 
@@ -481,6 +493,7 @@ def train():
 
             X, Y = X.to(device), Y.to(device)
 
+            p = None
             vq_loss, perplexity = None, None
             adv_loss = None
 
@@ -520,12 +533,14 @@ def train():
 
                     Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
 
-                    if isinstance(brain_encoder, BrainEncoder):
-                        if vq_brain:
-                            vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+                    if "p" in ret_dict:
+                        p: List = ret_dict["p"]
 
-                        if args.dann:
-                            adv_loss = ret_dict["adv_loss"]
+                    if "vq_loss" in ret_dict:
+                        vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+
+                    if "adv_loss" in ret_dict:
+                        adv_loss = ret_dict["adv_loss"]
 
                 elif isinstance(brain_encoder, EEGNetDeep):
                     Z_mse = None
@@ -537,13 +552,15 @@ def train():
                         clip_loss = loss_func(Z, Y, classes, high_categories)
                     else:
                         clip_loss = loss_func(Z, Y, classes)
+                elif isinstance(loss_func, VariationalCLIPLoss):
+                    clip_loss = loss_func(Z, Y, p)
                 else:
                     clip_loss = loss_func(Z, Y)
 
                 if Z_mse is not None:
                     mse_loss = F.mse_loss(
-                        rearrange(Y, "b d t -> b (d t)"),
-                        rearrange(Z_mse, "b d t -> b (d t)"),
+                        rearrange(Y, "b t d -> b (t d)"),
+                        rearrange(Z_mse, "b t d -> b (t d)"),
                         reduction=args.reduction,
                     )
 
