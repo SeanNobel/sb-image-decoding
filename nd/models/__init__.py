@@ -1,4 +1,5 @@
 from nd.models.brain_encoder import BrainEncoder, BrainEncoderBase
+from nd.models.brain_decoder import BrainDecoder
 from nd.models.eeg_net import EEGNetDeep
 from nd.models.vision_encoders import (
     ViT,
