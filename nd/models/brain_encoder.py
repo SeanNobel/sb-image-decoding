@@ -29,7 +29,8 @@ from nd.models.utils import DropBlock1D
 from nd.models.subject_sa import SubjectBlockSA, SubjectBlockConvDynamic
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.train_utils import conv_output_size
-from nd.utils.hypersphere import PowerSpherical
+from nd.utils.power_spherical import PowerSpherical
+from nd.utils.von_mises_fisher import VonMisesFisher
 
 
 def is_in(s: Optional[str], _s: str) -> bool:
@@ -539,9 +540,10 @@ class MLPHead(nn.Module):
 
         self.net = nn.Sequential(
             Rearrange("b d t -> b (t d)"),
-            nn.LayerNorm([in_dim * t]),
+            nn.Linear(in_dim * t, in_dim * t // 2),
+            nn.LayerNorm([in_dim * t // 2]),
             nn.GELU(),
-            nn.Linear(in_dim * t, out_dim * t),
+            nn.Linear(in_dim * t // 2, out_dim * t),
             Rearrange("b (t d) -> b t d", d=out_dim),
         )
 
@@ -608,7 +610,6 @@ class BrainEncoder(BrainEncoderBase):
         self,
         args,
         subjects: Union[int, List[str]],
-        variational: bool = False,
         unknown_subject: bool = False,
     ) -> None:
         super().__init__()
@@ -616,7 +617,8 @@ class BrainEncoder(BrainEncoderBase):
         # Parameters
         self.vq = args.vq
         self.ignore_subjects = args.ignore_subjects or args.dann
-        self.variational = variational
+        self.vae: Optional[str] = args.vae
+        self.sample_l: int = args.sample_l
         self.unknown_subject = unknown_subject
 
         D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
@@ -640,6 +642,7 @@ class BrainEncoder(BrainEncoderBase):
         vq_aggregated: bool = args.vq_aggregated
         dann: bool = args.dann
         dann_scale: float = args.dann_scale
+        vae_zdim: int = args.vae_zdim
 
         if isinstance(blocks, str):
             blocks = [blocks] * num_blocks
@@ -782,21 +785,21 @@ class BrainEncoder(BrainEncoderBase):
 
                 self.temporal_aggregation = None
 
+        self.clip_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
+        self.mse_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
+
         if dann:
             self.dann_head = DANN(in_dim=D3, num_domains=num_subjects, scale=dann_scale)  # fmt: skip
 
-        self.clip_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
+        if self.vae:
+            assert num_clip_tokens == 1, "Variational auto-encoding is only supported for single clip token."  # fmt: skip
 
-        if variational:
-            assert num_clip_tokens == 1, "Variational mode is only supported for single clip token."  # fmt: skip
+            out_dim = vae_zdim + 1 if self.vae in ["vmf", "ps"] else vae_zdim * 2
 
-            self.kappa_head = nn.Sequential(
-                MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens),
-                nn.Linear(F, 1),
-                nn.Softplus(),
+            self.q_head = nn.Sequential(
+                MLPHead(in_dim=D3, out_dim=out_dim, t=num_clip_tokens),
+                Rearrange("b t d -> b (t d)"),
             )
-        else:
-            self.mse_head = MLPHead(in_dim=D3, out_dim=F, t=num_clip_tokens)
 
     def forward(
         self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]
@@ -823,21 +826,11 @@ class BrainEncoder(BrainEncoderBase):
         if self.temporal_aggregation is not None:
             X = self.temporal_aggregation(X)
 
-        Z_clip = self.clip_head(X)
-        ret_dict = {"Z_clip": Z_clip}
+        ret_dict = {"Z_clip": self.clip_head(X), "Z_mse": self.mse_head(X)}
 
-        ret_dict.update({"Z_mse": self.mse_head(X) if hasattr(self, "mse_head") else Z_clip})  # fmt: skip
-
-        if self.variational:
-            p = PowerSpherical(
-                loc=rearrange(Z_clip, "b t d -> b (t d)"),
-                scale=rearrange(self.kappa_head(X), "b t 1 -> (b t 1)"),
-            )
-
-            Z_clip = p.rsample((1,)).permute(1, 0, 2)
-            # ( l, b, d ) -> ( b, t, d ) where l = t = 1
-
-            ret_dict.update({"Z_clip": Z_clip, "p": p})
+        if self.vae:
+            Z_sample, q = self._reparameterize(X)
+            ret_dict.update({"Z_sample": Z_sample, "q": q})
 
         if self.vq is not None:
             ret_dict.update({"vq_loss": vq_loss, "perplexity": perplexity})
@@ -849,3 +842,30 @@ class BrainEncoder(BrainEncoderBase):
             ret_dict.update({"adv_loss": adv_loss})
 
         return ret_dict
+
+    def _reparameterize(self, X: torch.Tensor):
+        if self.vae in ["vmf", "ps"]:
+            mu, kappa = torch.tensor_split(self.q_head(X), [-1], dim=-1)
+            # ( b, zdim ), ( b, 1 )
+
+            mu = mu / mu.norm(dim=-1, keepdim=True)
+            # + 1 to prevent collapsing
+            kappa = F.softplus(kappa) + 1
+
+            if self.vae == "vmf":
+                q = VonMisesFisher(loc=mu, scale=kappa)
+                Z_sample = q.rsample(torch.Size([self.sample_l]))
+
+            elif self.vae == "ps":
+                q = PowerSpherical(loc=mu, scale=rearrange(kappa, "b 1 -> (b 1)"))
+                Z_sample = q.rsample((self.sample_l,))  # ( l, b, d )
+
+        elif self.vae == "normal":
+            mu, var = torch.tensor_split(self.q_head(X), 2, dim=-1)
+            # ( b, zdim ), ( b, zdim )
+            var = F.softplus(var)
+
+            q = torch.distributions.Normal(loc=mu, scale=var)
+            Z_sample = q.rsample((self.sample_l,))  # ( l, b, d )
+
+        return Z_sample, q
