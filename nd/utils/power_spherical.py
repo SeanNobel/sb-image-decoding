@@ -162,13 +162,11 @@ class PowerSpherical(torch.distributions.TransformedDistribution):
 
     def __init__(self, loc, scale, validate_args=None):
 
-        (
-            self.loc,
-            self.scale,
-        ) = (
-            loc,
-            scale,
-        )
+        self.loc, self.scale = loc, scale
+
+        # FIXME
+        self.device = "cpu"
+
         super().__init__(
             _JointTSDistribution(
                 MarginalTDistribution(
