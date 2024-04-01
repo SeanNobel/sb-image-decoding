@@ -1,14 +1,15 @@
 # ==== Preprocessing ==== #
-preproc_name: 3_caption # Directly using preprocessed image-text of ThingsMEG
+preproc_name: 0_init
 
 thingsmeg_dir: /mnt/tsukuyomi/things-meg/
 
 root: /home/sensho/brain2face/
-preprocessed_data_dir: ${root}data/preprocessed/thingsmeg/
+preprocessed_data_dir: ${root}data/preprocessed/thingstext/
+
+num_noises: 4 # Corresponds to the number of subjects in MEG data
 
 # ==== Architecture ==== #
 F: 768 ## 1024 # 768 for OpenAI original / 1024 for Huggingface
-orig_F: 768
 
 # align_to: vision # vision / text
 align_tokens: cls ## all # all / cls / mean / list of those
@@ -73,6 +74,8 @@ sweep_config:
   parameters:
     noise_level:
       values: [0.0, 0.05, 0.1, 0.2, 0.3]
+    num_noises:
+      value: 4
 
 # ==== Evaluation ==== #
 eval:
