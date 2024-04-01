@@ -17,6 +17,7 @@ import clip
 
 from nd.datasets.things_text import ThingsTextCLIPDataset
 from nd.utils.loss import build_clip
+from nd.utils.train_utils import sequential_apply
 from nd.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categories
 
 
@@ -94,7 +95,9 @@ def train():
     # ---------------------
     #      Optimizer
     # ---------------------
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(
+        list(model.parameters()) + list(loss_func.parameters()), lr=args.lr
+    )
 
     if args.lr_scheduler == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -189,7 +192,9 @@ def train():
             X, Y, y_idxs = X.to(device), Y.to(device), y_idxs.to(device)
 
             with torch.no_grad():
-                Z = model.encode_text(X).float()
+                Z = sequential_apply(
+                    X, model.encode_text, args.batch_size, desc="Encoding test texts"
+                ).float()
 
                 # -----------------------
                 #       Loss step
