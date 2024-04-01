@@ -8,7 +8,7 @@ from einops import rearrange
 from time import time
 from tqdm import tqdm
 from termcolor import cprint
-from typing import Union, Optional
+from typing import Union, Optional, List
 import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -30,6 +30,7 @@ from nd.datasets.things_meg import ThingsMEGCLIPDataset
 from nd.models import (
     BrainEncoderBase,
     BrainEncoder,
+    BrainDecoder,
     Wav2Vec2ConformerSpatialMixer,
     EEGNetDeep,
     ViT,
@@ -47,21 +48,11 @@ from nd.models import (
 )
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.loss import (
-    CLIPLoss,
-    KLRegCLIPLoss,
-    OrthoRegCLIPLoss,
-    LargeEntropyCLIPLoss,
-    AdaptiveCLIPLoss,
-    AdditionalPositivesCLIPLoss,
-    CosFaceCLIPLoss,
-    ArcFaceCLIPLoss,
-    AdaptiveMarginCLIPLoss,
-    CircleCLIPLoss,
-    GeometricCLIPLoss,
+    build_clip,
+    VariationalCLIPLoss,
     CLIPWithClassCosFaceLoss,
-    CLIPWithClassCircleLoss,
-    NearestNeighborCLIPLoss,
 )
+from nd.utils.loss import VariationalLowerBound
 from nd.utils.train_utils import Models, sequential_apply, count_parameters
 from nd.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categories
 
@@ -137,7 +128,7 @@ def build_models(args, dataset, device):
     subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
 
     if args.brain_encoder == "brain_encoder":
-        brain_encoder = BrainEncoder(args, subjects=subjects).to(device)
+        brain_encoder = BrainEncoder(args, subjects).to(device)
 
     elif args.brain_encoder == "wav2vec2":
         brain_encoder = Wav2Vec2ConformerSpatialMixer(args, subjects=subjects).to(device)  # fmt: skip
@@ -154,6 +145,8 @@ def build_models(args, dataset, device):
         )
     else:
         raise NotImplementedError
+
+    brain_decoder = BrainDecoder(args).to(device) if args.vae else None
 
     vision_encoder, preprocess = None, None
 
@@ -182,50 +175,7 @@ def build_models(args, dataset, device):
     else:
         vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
 
-    return brain_encoder, vision_encoder, preprocess
-
-
-def build_loss(args, dataset, device):
-    if args.loss == "clip":
-        loss_func = CLIPLoss(args).to(device)
-    elif args.loss == "klclip":
-        loss_func = KLRegCLIPLoss(args, alpha=args.klclip_alpha).to(device)
-    elif args.loss == "orclip":
-        loss_func = OrthoRegCLIPLoss(args, alpha=args.orclip_alpha).to(device)
-    elif args.loss == "leclip":
-        loss_func = LargeEntropyCLIPLoss(args, alpha=args.leclip_alpha).to(device)
-    elif args.loss == "adaptiveclip":
-        loss_func = AdaptiveCLIPLoss(args).to(device)
-    elif args.loss == "apclip":
-        loss_func = AdditionalPositivesCLIPLoss(args).to(device)
-    elif args.loss == "cosfaceclip":
-        loss_func = CosFaceCLIPLoss(args).to(device)
-    elif args.loss == "arcfaceclip":
-        loss_func = ArcFaceCLIPLoss(args).to(device)
-    elif args.loss == "amclip":
-        loss_func = AdaptiveMarginCLIPLoss(args).to(device)
-    elif args.loss == "circleclip":
-        loss_func = CircleCLIPLoss(args).to(device)
-    elif args.loss == "geomclip":
-        loss_func = GeometricCLIPLoss(args).to(device)
-    elif args.loss == "nnclip":
-        loss_func = NearestNeighborCLIPLoss(args).to(device)
-    elif args.loss == "clipclasscosface":
-        loss_func = CLIPWithClassCosFaceLoss(
-            args,
-            dataset.num_categories,
-            dataset.num_high_categories if args.use_high_categories else None,
-        ).to(device)
-    elif args.loss == "clipclasscircle":
-        loss_func = CLIPWithClassCircleLoss(
-            args,
-            dataset.num_categories,
-            dataset.num_high_categories if args.use_high_categories else None,
-        ).to(device)
-    else:
-        raise ValueError(f"Invalid loss function: {args.loss}")
-
-    return loss_func
+    return brain_encoder, brain_decoder, vision_encoder, preprocess
 
 
 def train():
@@ -263,15 +213,18 @@ def train():
     # ---------------
     #      Loss
     # ---------------
-    loss_func = build_loss(args, dataset, device)
+    loss_func = build_clip(args, dataset, device)
+
+    elbo_func = VariationalLowerBound(args, device) if args.vae else None
 
     # ---------------------
     #        Models
     # ---------------------
-    brain_encoder, vision_encoder, preprocess = build_models(args, dataset, device)
+    brain_encoder, brain_decoder, vision_encoder, preprocess = build_models(args, dataset, device)  # fmt: skip
 
     trained_models = Models(
         brain_encoder,
+        brain_decoder,
         vision_encoder if (vision_encoder is not None and vision_encoder.training) else None,  # fmt: skip
         loss_func,
     )
@@ -324,18 +277,8 @@ def train():
     no_best_counter = 0
 
     for epoch in range(args.epochs):
-        train_clip_losses = []
-        train_mse_losses = []
-        train_vq_losses = []
-        train_adv_losses = []
-        test_clip_losses = []
-        test_mse_losses = []
-        test_vq_losses = []
-        test_adv_losses = []
-        train_topk_accs = []
-        test_topk_accs = []
-        train_perplexities = []
-        test_perplexities = []
+        train_metrics = {"clip_loss": [], "mse_loss": [], "recon_loss": [], "kl_loss": [], "vq_loss": [], "adv_loss": [], "topk_accs": [], "perplexity": []}  # fmt: skip
+        test_metrics = {"clip_loss": [], "mse_loss": [], "recon_loss": [], "kl_loss": [], "vq_loss": [], "adv_loss": [], "topk_accs": [], "perplexity": []}  # fmt: skip
 
         # For plotting latents
         train_Y_list = []
@@ -351,16 +294,15 @@ def train():
         trained_models.train()
         for batch in tqdm(train_loader, desc="Train"):
             X, Y, subject_idxs, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
-            # ( b, t, d )
 
             if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
 
             X, Y = X.to(device), Y.to(device)
 
-            vq_loss, perplexity = None, None
-            adv_loss = None
-
+            # -----------------------
+            #     Vision encoder
+            # -----------------------
             if vision_encoder is None:
                 pass
             elif isinstance(vision_encoder, clip.model.CLIP):
@@ -369,74 +311,64 @@ def train():
             elif isinstance(vision_encoder, GumbelVectorQuantizer):
                 ret_dict = vision_encoder(Y)
                 Y, perplexity = ret_dict["Z"], ret_dict["perplexity"]
-                # vq_loss = ret_dict["div_loss"]
             else:
                 Y = vision_encoder(Y)
 
-            if isinstance(brain_encoder, BrainEncoderBase):
-                ret_dict = brain_encoder(X, subject_idxs)
+            # -----------------------
+            #     Brain encoder
+            # -----------------------
+            ret_dict = brain_encoder(X, subject_idxs)
 
-                Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
+            Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
 
-                if isinstance(brain_encoder, BrainEncoder):
-                    if vq_brain:
-                        vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+            q, Z_sample = None, None
+            if "q" in ret_dict:
+                q, Z_sample = ret_dict["q"], ret_dict["Z_sample"]
 
-                    if args.dann:
-                        adv_loss = ret_dict["adv_loss"]
+            # -----------------------
+            #     Brain decoder
+            # -----------------------
+            if brain_decoder is not None:
+                X_recon = brain_decoder(rearrange(Z_sample, "l b d -> (l b) d"))
+                X_recon = rearrange(X_recon, "(l b) c t -> l b c t", b=X.shape[0])
 
-            elif isinstance(brain_encoder, EEGNetDeep):
-                assert not vq_brain, "EEGNetDeep doesn't support vector quantization."
-
-                Z, Z_mse = brain_encoder(X), None
-            else:
-                raise NotImplementedError
-
+            # -----------------------
+            #       Loss step
+            # -----------------------
             if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                 if args.use_high_categories:
                     clip_loss = loss_func(Z, Y, classes, high_categories)
                 else:
                     clip_loss = loss_func(Z, Y, classes)
+            elif isinstance(loss_func, VariationalCLIPLoss):
+                assert q is not None, "You need the posterior for variational loss."
+
+                clip_loss = loss_func(Z, Y, q)
             else:
                 clip_loss = loss_func(Z, Y)
 
-            if Z_mse is not None:
-                mse_loss = F.mse_loss(
-                    rearrange(Y, "b d t -> b (d t)"),
-                    rearrange(Z_mse, "b d t -> b (d t)"),
-                    reduction=args.reduction,
-                )
+            mse_loss = F.mse_loss(
+                rearrange(Z_mse, "b t d -> b (t d)"),
+                rearrange(Y, "b t d -> b (t d)"),
+                reduction=args.reduction,
+            )
 
-                loss = args.lambd * clip_loss + (1 - args.lambd) * mse_loss
-            else:
-                loss = clip_loss
+            loss = args.lambd * clip_loss + (1 - args.lambd) * mse_loss
 
-            with torch.no_grad():
-                if isinstance(train_classifier, DiagonalClassifier):
-                    topk_accs, _ = train_classifier(Z, Y)
-                elif isinstance(train_classifier, LabelClassifier):
-                    topk_accs = train_classifier(
-                        Z, y_idxs.to(device), trained_models.vision_encoder
-                    )
-                else:
-                    raise NotImplementedError
+            recon_loss, kl_loss = None, None
+            if brain_decoder is not None:
+                elbo_loss, recon_loss, kl_loss = elbo_func(X_recon, X, q)
+                loss += elbo_loss
 
-            train_clip_losses.append(clip_loss.item())
-            train_topk_accs.append(topk_accs)
+            vq_loss, perplexity = None, None
+            if "vq_loss" in ret_dict:
+                vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+                loss += vq_loss
 
-            if Z_mse is not None:
-                train_mse_losses.append(mse_loss.item())
-
-            if vq_loss is not None:
-                loss = loss + vq_loss
-                train_vq_losses.append(vq_loss.item())
-
-            if perplexity is not None:
-                train_perplexities.append(perplexity.item())
-
-            if adv_loss is not None:
+            adv_loss = None
+            if "adv_loss" in ret_dict:
+                adv_loss = ret_dict["adv_loss"]
                 loss = loss + adv_loss
-                train_adv_losses.append(adv_loss.item())
 
             optimizer.zero_grad()
             if optimizer_vq is not None:
@@ -447,6 +379,39 @@ def train():
             optimizer.step()
             if optimizer_vq is not None:
                 optimizer_vq.step()
+
+            loss_func.clamp_params()
+
+            # -----------------------
+            #     Classification
+            # -----------------------
+            with torch.no_grad():
+                if isinstance(train_classifier, DiagonalClassifier):
+                    topk_accs, _ = train_classifier(Z, Y)
+                elif isinstance(train_classifier, LabelClassifier):
+                    topk_accs = train_classifier(
+                        Z, y_idxs.to(device), trained_models.vision_encoder
+                    )
+                else:
+                    raise NotImplementedError
+
+            # -----------------------
+            #        Logging
+            # -----------------------
+            train_metrics["clip_loss"].append(clip_loss.item())
+            train_metrics["mse_loss"].append(mse_loss.item())
+            train_metrics["topk_accs"].append(topk_accs)
+
+            if recon_loss is not None:
+                train_metrics["recon_loss"].append(recon_loss.item())
+                train_metrics["kl_loss"].append(kl_loss.item())
+
+            if vq_loss is not None:
+                train_metrics["vq_loss"].append(vq_loss.item())
+                train_metrics["perplexity"].append(perplexity.item())
+
+            if adv_loss is not None:
+                train_metrics["adv_loss"].append(adv_loss.item())
 
             if args.plot_latents or args.F == 2:
                 train_Y_list.append(Y.detach().cpu().numpy())
@@ -465,8 +430,6 @@ def train():
             # if isinstance(vision_encoder, GumbelVectorQuantizer):
             #     vision_encoder.update_gumbel_temp()
 
-        loss_func.clamp_params()
-
         _ = trained_models.params_updated()
 
         # -----------------------
@@ -481,10 +444,10 @@ def train():
 
             X, Y = X.to(device), Y.to(device)
 
-            vq_loss, perplexity = None, None
-            adv_loss = None
-
             with torch.no_grad():
+                # -----------------------
+                #     Vision encoder
+                # -----------------------
                 if vision_encoder is None:
                     pass
                 elif isinstance(vision_encoder, clip.model.CLIP):
@@ -502,11 +465,14 @@ def train():
                     if isinstance(vision_encoder, GumbelVectorQuantizer):
                         Y, perplexity = Y["Z"], Y["perplexity"]
 
+                # -----------------------
+                #     Brain encoder
+                # -----------------------
                 if not isinstance(brain_encoder, BrainEncoderBase):
                     subject_idxs = None
 
                 # NOTE: sequential_apply doesn't do sequential application if batch_size == X.shape[0].
-                Z = sequential_apply(
+                ret_dict = sequential_apply(
                     X,
                     brain_encoder,
                     args.batch_size,
@@ -515,38 +481,46 @@ def train():
                     reduction=args.reduction,
                 )
 
-                if isinstance(brain_encoder, BrainEncoderBase):
-                    ret_dict = Z
+                Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
 
-                    Z, Z_mse = ret_dict["Z_clip"], ret_dict["Z_mse"]
+                q, Z_sample = None, None
+                if "q" in ret_dict:
+                    q, Z_sample = ret_dict["q"], ret_dict["Z_sample"]
 
-                    if isinstance(brain_encoder, BrainEncoder):
-                        if vq_brain:
-                            vq_loss, perplexity = ret_dict["vq_loss"], ret_dict["perplexity"]  # fmt: skip
+                # -----------------------
+                #     Brain decoder
+                # -----------------------
+                if brain_decoder is not None:
+                    X_recon = sequential_apply(
+                        rearrange(Z_sample, "l b d -> (l b) d"),
+                        brain_decoder,
+                        args.batch_size,
+                        desc="BrainDecoder",
+                    )
+                    X_recon = rearrange(X_recon, "(l b) c t -> l b c t", b=X.shape[0])
 
-                        if args.dann:
-                            adv_loss = ret_dict["adv_loss"]
-
-                elif isinstance(brain_encoder, EEGNetDeep):
-                    Z_mse = None
-                else:
-                    raise NotImplementedError
-
+                # -----------------------
+                #       Loss step
+                # -----------------------
                 if isinstance(loss_func, CLIPWithClassCosFaceLoss):
                     if args.use_high_categories:
                         clip_loss = loss_func(Z, Y, classes, high_categories)
                     else:
                         clip_loss = loss_func(Z, Y, classes)
+                elif isinstance(loss_func, VariationalCLIPLoss):
+                    clip_loss = loss_func(Z, Y, q)
                 else:
                     clip_loss = loss_func(Z, Y)
 
-                if Z_mse is not None:
-                    mse_loss = F.mse_loss(
-                        rearrange(Y, "b d t -> b (d t)"),
-                        rearrange(Z_mse, "b d t -> b (d t)"),
-                        reduction=args.reduction,
-                    )
+                mse_loss = F.mse_loss(
+                    rearrange(Z_mse, "b t d -> b (t d)"),
+                    rearrange(Y, "b t d -> b (t d)"),
+                    reduction=args.reduction,
+                )
 
+                # -----------------------
+                #     Classification
+                # -----------------------
                 if isinstance(test_classifier, DiagonalClassifier):
                     topk_accs, _ = test_classifier(
                         Z, Y, sequential=args.test_with_whole
@@ -558,20 +532,20 @@ def train():
                 else:
                     raise NotImplementedError
 
-            # TODO: Reuse the train step code.
+            # -----------------------
+            #        Logging
+            # -----------------------
+            test_metrics["clip_loss"].append(clip_loss.item())
+            test_metrics["mse_loss"].append(mse_loss.item())
+            test_metrics["topk_accs"].append(topk_accs)
 
-            test_clip_losses.append(clip_loss.item())
-            test_mse_losses.append(mse_loss.item())
-            test_topk_accs.append(topk_accs)
+            if "vq_loss" in ret_dict:
+                test_metrics["vq_loss"].append(ret_dict["vq_loss"].item())
+            if "perplexity" in ret_dict:
+                test_metrics["perplexity"].append(ret_dict["perplexity"].item())
 
-            if vq_loss is not None:
-                test_vq_losses.append(vq_loss.item())
-
-            if perplexity is not None:
-                test_perplexities.append(perplexity.item())
-
-            if adv_loss is not None:
-                test_adv_losses.append(adv_loss.item())
+            if "adv_loss" in ret_dict:
+                test_metrics["adv_loss"].append(ret_dict["adv_loss"].item())
 
             if args.plot_latents or args.F == 2:
                 test_Y_list.append(Y.detach().cpu().numpy())
@@ -587,21 +561,23 @@ def train():
                 else:
                     raise ValueError("plot_latents is True but no classes are given.")
 
-        train_topk_accs = np.stack(train_topk_accs)
-        test_topk_accs = np.stack(test_topk_accs)
+        train_topk_accs = np.stack(train_metrics["topk_accs"])
+        test_topk_accs = np.stack(test_metrics["topk_accs"])
 
         print(
             f"Epoch {epoch}/{args.epochs} | ",
-            f"avg train CLIP loss: {np.mean(train_clip_losses):.3f} | ",
-            f"avg test CLIP loss: {np.mean(test_clip_losses):.3f} | ",
+            f"avg train CLIP loss: {np.mean(train_metrics['clip_loss']):.3f} | ",
+            f"avg test CLIP loss: {np.mean(test_metrics['clip_loss']):.3f} | ",
             f"lr: {optimizer.param_groups[0]['lr']:.5f}",
         )
 
         if sweep:
             performance_now = {
                 "epoch": epoch,
-                "train_clip_loss": np.mean(train_clip_losses),
-                "test_clip_loss": np.mean(test_clip_losses),
+                "train_clip_loss": np.mean(train_metrics["clip_loss"]),
+                "test_clip_loss": np.mean(test_metrics["clip_loss"]),
+                "train_mse_loss": np.mean(train_metrics["mse_loss"]),
+                "test_mse_loss": np.mean(test_metrics["mse_loss"]),
                 "lrate": optimizer.param_groups[0]["lr"],
             }
 
@@ -618,14 +594,15 @@ def train():
                 }
             )
             # fmt: off
-            if len(train_mse_losses) > 0:
-                performance_now.update({"train_mse_loss": np.mean(train_mse_losses), "test_mse_loss": np.mean(test_mse_losses)})
-            if len(train_vq_losses) > 0:
-                performance_now.update({"train_vq_loss": np.mean(train_vq_losses), "test_vq_loss": np.mean(test_vq_losses)})
-            if len(train_perplexities) > 0:
-                performance_now.update({"train_perplexity": np.mean(train_perplexities),"test_perplexity": np.mean(test_perplexities)})
-            if len(train_adv_losses) > 0:
-                performance_now.update({"train_adv_loss": np.mean(train_adv_losses), "test_adv_loss": np.mean(test_adv_losses)})
+            if len(train_metrics["recon_loss"]) > 0:
+                performance_now.update({"train_recon_loss": np.mean(train_metrics["recon_loss"]), "test_recon_loss": np.mean(test_metrics["recon_loss"])})
+                performance_now.update({"train_kl_loss": np.mean(train_metrics["kl_loss"]), "test_kl_loss": np.mean(test_metrics["kl_loss"])})
+            if len(train_metrics["vq_loss"]) > 0:
+                performance_now.update({"train_vq_loss": np.mean(train_metrics["vq_loss"]), "test_vq_loss": np.mean(test_metrics["vq_loss"])})
+            if len(train_metrics["perplexity"]) > 0:
+                performance_now.update({"train_perplexity": np.mean(train_metrics["perplexity"]), "test_perplexity": np.mean(test_metrics["perplexity"])})
+            if len(train_metrics["adv_loss"]) > 0:
+                performance_now.update({"train_adv_loss": np.mean(train_metrics["adv_loss"]), "test_adv_loss": np.mean(test_metrics["adv_loss"])})
             if hasattr(loss_func, "temp"):
                 performance_now.update({"temp": loss_func.temp.item()})
             if hasattr(loss_func, "margin"):

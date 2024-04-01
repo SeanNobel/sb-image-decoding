@@ -100,7 +100,7 @@ drop_mode: dropout
 reduce_time: False
 
 # ==== Loss ==== #
-loss: clip # clip / geomclip / circleclip / nnclip / clipclasscosface / clipclasscircle
+loss: clip
 reduction: mean
 impl_type: 0
 
@@ -132,10 +132,14 @@ nnclip_support_size: 20000
 nnclip_alpha: 0.5
 
 leclip_alpha: 0.0
-
 orclip_alpha: 0.1
-
 klclip_alpha: 0.1
+
+kl_beta: 1.0 # Same meaning as alpha but using beta after variational inference.
+
+vae: null # ps / vmf / normal / null
+vae_zdim: 10
+sample_l: 2
 
 # ==== Training ==== #
 project_name: nd_things_clip
@@ -152,8 +156,7 @@ layout: ch_locations_2d # DynamicChanLoc2d
 
 large_test_set: False # True
 
-batch_size: 4096
-sequential_batch_size: 32
+batch_size: 128
 lr: 3.0e-4 # 0.005
 lr_scheduler: null # cosine or multistep
 lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
@@ -176,18 +179,32 @@ num_workers: 8
 seed: 1234
 cuda_id: 0
 
-sweep_count: 3
+sweep_count: 4
 sweep_config:
-  name: kl-reg-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
+  name: hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    loss:
-      value: klclip
-    klclip_alpha:
-      values: [1.0, 5.0, 0.1]
+    vae:
+      values: [vmf, ps]
+    vae_zdim:
+      values: [10, 100, 768]
+    sample_l:
+      value: 4
+    kl_beta:
+      value: 2.0
+
+    # loss:
+    #   value: variationalclip
+    # kl_beta:
+    #   values: [1.0, 10.0, 100.0]
+
+    # loss:
+    #   value: klclip
+    # klclip_alpha:
+    #   values: [1.0, 5.0, 0.1]
 
     # batch_size:
     #   value: 8

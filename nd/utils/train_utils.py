@@ -17,20 +17,27 @@ class Models:
     def __init__(
         self,
         brain_encoder: nn.Module,
+        brain_decoder: Optional[nn.Module] = None,
         vision_encoder: Optional[nn.Module] = None,
         loss_func: Optional[nn.Module] = None,
     ):
         self.brain_encoder = brain_encoder
+        self.brain_decoder = brain_decoder
         self.vision_encoder = vision_encoder
         self.loss_func = loss_func
 
         self.brain_encoder_params = self._clone_params_list(self.brain_encoder)
+        self.brain_decoder_params, self.vision_encoder_params = None, None
+        if self.brain_decoder is not None:
+            self.brain_decoder_params = self._clone_params_list(self.brain_decoder)
         if self.vision_encoder is not None:
             self.vision_encoder_params = self._clone_params_list(self.vision_encoder)
 
     def get_params(self):
         params = list(self.brain_encoder.parameters()) + list(self.loss_func.parameters())  # fmt: skip
 
+        if self.brain_decoder is not None:
+            params += list(self.brain_decoder.parameters())
         if self.vision_encoder is not None:
             params += list(self.vision_encoder.parameters())
 
@@ -54,56 +61,53 @@ class Models:
     def params_updated(self, show_non_updated: bool = True) -> bool:
         updated = True
 
-        new_params = self._clone_params_list(self.brain_encoder)
-        non_updated_layers = self._get_non_updated_layers(
-            new_params, self.brain_encoder_params
-        )
-        if len(non_updated_layers) > 0:
-            if show_non_updated:
-                cprint(f"Following layers in brain encoder are not updated: {non_updated_layers}","red")  # fmt: skip
+        models_list = [self.brain_encoder, self.brain_decoder, self.vision_encoder]
+        params_list = [self.brain_encoder_params, self.brain_decoder_params, self.vision_encoder_params]  # fmt: skip
+        names_list = ["brain encoder", "brain decoder", "vision encoder"]
 
-            updated = False
-        self.brain_encoder_params = new_params
+        for model, params, name in zip(models_list, params_list, names_list):
+            if model is None:
+                continue
 
-        if self.vision_encoder is not None:
-            new_params = self._clone_params_list(self.vision_encoder)
-            non_updated_layers = self._get_non_updated_layers(
-                new_params, self.vision_encoder_params
-            )
+            new_params = self._clone_params_list(model)
+            non_updated_layers = self._get_non_updated_layers(new_params, params)
             if len(non_updated_layers) > 0:
                 if show_non_updated:
-                    cprint(f"Following layers in vision encoder are not updated: {non_updated_layers}","red")  # fmt: skip
+                    cprint(f"Following layers in {name} are not updated: {non_updated_layers}","red")  # fmt: skip
 
                 updated = False
-            self.vision_encoder_params = new_params
+
+            if model is self.brain_encoder:
+                self.brain_encoder_params = new_params
+            elif model is self.brain_decoder:
+                self.brain_decoder_params = new_params
+            elif model is self.vision_encoder:
+                self.vision_encoder_params = new_params
 
         return updated
 
     def train(self) -> None:
         self.brain_encoder.train()
+        if self.brain_decoder is not None:
+            self.brain_decoder.train()
         if self.vision_encoder is not None:
             self.vision_encoder.train()
         self.loss_func.train()
 
     def eval(self) -> None:
         self.brain_encoder.eval()
+        if self.brain_decoder is not None:
+            self.brain_decoder.eval()
         if self.vision_encoder is not None:
             self.vision_encoder.eval()
         self.loss_func.eval()
 
     def save(self, run_dir: str, best: bool = False) -> None:
-        torch.save(
-            self.brain_encoder.state_dict(),
-            os.path.join(run_dir, f"brain_encoder_{'best' if best else 'last'}.pt"),
-        )
-
+        torch.save(self.brain_encoder.state_dict(), os.path.join(run_dir, f"brain_encoder_{'best' if best else 'last'}.pt"))  # fmt: skip
+        if self.brain_decoder is not None:
+            torch.save(self.brain_decoder.state_dict(), os.path.join(run_dir, f"brain_decoder_{'best' if best else 'last'}.pt"))  # fmt: skip
         if self.vision_encoder is not None:
-            torch.save(
-                self.vision_encoder.state_dict(),
-                os.path.join(
-                    run_dir, f"vision_encoder_{'best' if best else 'last'}.pt"
-                ),
-            )
+            torch.save(self.vision_encoder.state_dict(), os.path.join(run_dir, f"vision_encoder_{'best' if best else 'last'}.pt"))  # fmt: skip
 
 
 def sequential_apply(
@@ -174,17 +178,18 @@ def sequential_apply(
         for key in output[0].keys():
             _output = [_dict[key] for _dict in output]
 
-            if _output[0].ndim == 0:
-                _output = torch.stack(_output)
+            if isinstance(_output[0], torch.Tensor):
+                if _output[0].ndim == 0:
+                    _output = torch.stack(_output)
 
-                if reduction == "mean":
-                    _output = _output.mean()
-                elif reduction == "sum":
-                    _output = _output.sum()
+                    if reduction == "mean":
+                        _output = _output.mean()
+                    elif reduction == "sum":
+                        _output = _output.sum()
+                else:
+                    _output = torch.cat(_output)
 
-                stacked_dict.update({key: _output})
-            else:
-                stacked_dict.update({key: torch.cat(_output)})
+            stacked_dict.update({key: _output})
 
         return stacked_dict
     else:

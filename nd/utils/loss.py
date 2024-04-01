@@ -4,13 +4,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import kl_divergence
 from einops import rearrange
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from termcolor import cprint
-from typing import Optional
+from typing import Optional, Union, List
 
-from nd.utils.hypersphere import HypersphericalUniform, PowerSpherical
+from nd.utils.power_spherical import PowerSpherical
+from nd.utils.power_spherical import HypersphericalUniform as HypersphericalUniformPS
+from nd.utils.von_mises_fisher import VonMisesFisher
+from nd.utils.von_mises_fisher import HypersphericalUniform as HypersphericalUniformVMF
 
 
 def calc_similarity(
@@ -86,6 +90,51 @@ def off_diag(mat: torch.Tensor) -> torch.Tensor:
     )
 
 
+def build_clip(args, dataset, device):
+    if args.loss == "clip":
+        loss_func = CLIPLoss(args).to(device)
+    elif args.loss == "variationalclip":
+        loss_func = VariationalCLIPLoss(args, beta=args.kl_beta).to(device)
+    elif args.loss == "klclip":
+        loss_func = KLRegCLIPLoss(args, alpha=args.klclip_alpha).to(device)
+    elif args.loss == "orclip":
+        loss_func = OrthoRegCLIPLoss(args, alpha=args.orclip_alpha).to(device)
+    elif args.loss == "leclip":
+        loss_func = LargeEntropyCLIPLoss(args, alpha=args.leclip_alpha).to(device)
+    elif args.loss == "adaptiveclip":
+        loss_func = AdaptiveCLIPLoss(args).to(device)
+    elif args.loss == "apclip":
+        loss_func = AdditionalPositivesCLIPLoss(args).to(device)
+    elif args.loss == "cosfaceclip":
+        loss_func = CosFaceCLIPLoss(args).to(device)
+    elif args.loss == "arcfaceclip":
+        loss_func = ArcFaceCLIPLoss(args).to(device)
+    elif args.loss == "amclip":
+        loss_func = AdaptiveMarginCLIPLoss(args).to(device)
+    elif args.loss == "circleclip":
+        loss_func = CircleCLIPLoss(args).to(device)
+    elif args.loss == "geomclip":
+        loss_func = GeometricCLIPLoss(args).to(device)
+    elif args.loss == "nnclip":
+        loss_func = NearestNeighborCLIPLoss(args).to(device)
+    elif args.loss == "clipclasscosface":
+        loss_func = CLIPWithClassCosFaceLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
+    elif args.loss == "clipclasscircle":
+        loss_func = CLIPWithClassCircleLoss(
+            args,
+            dataset.num_categories,
+            dataset.num_high_categories if args.use_high_categories else None,
+        ).to(device)
+    else:
+        raise ValueError(f"Invalid loss function: {args.loss}")
+
+    return loss_func
+
+
 class BinaryCrossEntropyLoss(nn.Module):
     def __init__(self, reduction: str = "mean") -> None:
         super().__init__()
@@ -120,23 +169,50 @@ class BinaryCrossEntropyLoss(nn.Module):
         else:
             return bce
 
-    #     probs_diag = torch.diag(probs)
-    #     targets_diag = torch.diag(targets)
-    #     ce = -(targets_diag * probs_diag.log()).mean()
-    #     # cprint((ce, F.cross_entropy(logits, targets)), "yellow")
-    #     assert torch.isclose(ce, F.cross_entropy(logits, targets)).item()
-    #     assert (targets_diag == 1).all()
 
-    #     probs_offdiag = self._off_diag(probs)
-    #     targets_offdiag = self._off_diag(targets)
-    #     assert torch.isclose(probs.sum(), probs_diag.sum() + probs_offdiag.sum()).item()
-    #     assert torch.isclose(targets.sum(), targets_diag.sum() + targets_offdiag.sum()).item()  # fmt: skip
-    #     assert (targets_offdiag == 0).all()
+class VariationalLowerBound(nn.Module):
+    def __init__(self, args, device: str) -> None:
+        super().__init__()
 
-    #     bce3 = ce - ((1 - targets_offdiag) * (1 - probs_offdiag).log()).mean()
+        # FIXME: They should be the same but haven't checked yet.
+        if args.vae == "ps":
+            self.p = HypersphericalUniformPS(dim=args.vae_zdim - 1)
+        elif args.vae == "vmf":
+            self.p = HypersphericalUniformVMF(dim=args.vae_zdim - 1, device=device)
+        elif args.vae == "normal":
+            self.p = torch.distributions.Normal(loc=0.0, scale=1.0)
+        else:
+            raise ValueError(f"Invalid hypersphere: {args.hypersphere}")
 
-    #     print(bce.mean(), bce2.mean(), bce3)
-    #     sys.exit()
+        self.beta = args.kl_beta
+        self.reduction = args.reduction
+
+    def forward(
+        self,
+        X_recon: torch.Tensor,
+        X: torch.Tensor,
+        q: Union[PowerSpherical, List[PowerSpherical]],
+    ) -> torch.Tensor:
+        """_summary_
+        Args:
+            X_recon ( l, b, c, t ): _description_
+            X ( b, c, t ): _description_
+        Returns:
+            torch.Tensor: _description_
+        """
+        X_recon = rearrange(X_recon, "l b c t -> l b (c t)")
+        X = rearrange(X, "b c t -> b (c t)")
+
+        recon_loss = torch.stack(
+            [F.mse_loss(Xr, X, reduction=self.reduction) for Xr in X_recon]
+        ).mean()
+
+        if isinstance(q, list):
+            kl_loss = torch.cat([kl_divergence(q_, self.p) for q_ in q]).mean()
+        else:
+            kl_loss = kl_divergence(q, self.p).mean()
+
+        return recon_loss + self.beta * kl_loss, recon_loss, kl_loss
 
 
 class CLIPLoss(nn.Module):
@@ -193,6 +269,48 @@ class CLIPLoss(nn.Module):
     def clamp_params(self):
         if not (self.temp_min is None and self.temp_max is None):
             self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
+
+
+class VariationalCLIPLoss(CLIPLoss):
+    def __init__(self, args, beta: float) -> None:
+        super().__init__(args)
+
+        self.beta = beta
+        self.p = HypersphericalUniformPS(dim=args.F)
+
+    def forward(
+        self,
+        X: torch.Tensor,
+        Y: torch.Tensor,
+        q: Union[PowerSpherical, List[PowerSpherical]],
+    ) -> torch.Tensor:
+        """_summary_
+        Args:
+            X ( b, 1, d ): _description_
+            Y ( b, 1, d ): _description_
+        Returns:
+            torch.Tensor: _description_
+        """
+        b = X.shape[0]
+        targets = torch.eye(b, device=X.device, requires_grad=False)
+
+        X = X.reshape(b, -1)
+        Y = Y.reshape(b, -1)
+
+        X = X / X.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        similarity = torch.matmul(X, Y.T)
+
+        similarity *= torch.exp(self.temp)
+        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+        if isinstance(q, list):
+            reg_loss = torch.cat([kl_divergence(q_, self.p) for q_ in q]).mean()
+        else:
+            reg_loss = kl_divergence(q, self.p).mean()
+
+        return clip_loss + self.beta * reg_loss
 
 
 class OrthoRegCLIPLoss(CLIPLoss):
@@ -937,3 +1055,71 @@ class NearestNeighborCLIPLoss(nn.Module):
             self.support_set_y = torch.cat([self.support_set_y, Y.to(device)], dim=0)[
                 -self.support_size :
             ]
+
+
+# BinaryCrossEntropyLoss.forward()
+
+#     probs_diag = torch.diag(probs)
+#     targets_diag = torch.diag(targets)
+#     ce = -(targets_diag * probs_diag.log()).mean()
+#     # cprint((ce, F.cross_entropy(logits, targets)), "yellow")
+#     assert torch.isclose(ce, F.cross_entropy(logits, targets)).item()
+#     assert (targets_diag == 1).all()
+
+#     probs_offdiag = self._off_diag(probs)
+#     targets_offdiag = self._off_diag(targets)
+#     assert torch.isclose(probs.sum(), probs_diag.sum() + probs_offdiag.sum()).item()
+#     assert torch.isclose(targets.sum(), targets_diag.sum() + targets_offdiag.sum()).item()  # fmt: skip
+#     assert (targets_offdiag == 0).all()
+
+#     bce3 = ce - ((1 - targets_offdiag) * (1 - probs_offdiag).log()).mean()
+
+#     print(bce.mean(), bce2.mean(), bce3)
+#     sys.exit()
+
+
+# class MSELoss(nn.Module):
+#     def __init__(self, reduction: str = "mean") -> None:
+#         super().__init__()
+
+#         self.reduction = reduction
+
+#     def forward(self, X: torch.Tensor, Y: torch.Tensor, *_):
+#         b = X.shape[0]
+
+#         return F.mse_loss(X.reshape(b, -1), Y.reshape(b, -1), reduction=self.reduction)
+
+
+# class HypersphericalKLLoss(nn.Module):
+#     def __init__(
+#         self, dim: int, beta: float = 1.0, l: int = 1, reduction: str = "batchmean"
+#     ) -> None:
+#         super().__init__()
+
+#         self.beta = beta
+#         self.l = l
+#         self.reduction = reduction
+
+#         self.q = HypersphericalUniform(dim=dim)
+
+#     def forward(self, X, Y, kappa):
+#         """_summary_
+#         Args:
+#             X ( b, 1, d ): _description_
+#             Y ( b, 1, d ): _description_
+#             kappa ( b, 1, 1 ): _description_
+#         """
+#         X = rearrange(X, "b t d -> b (t d)")
+#         Y = rearrange(Y, "b t d -> b (t d)")
+#         kappa = rearrange(kappa, "b t 1 -> (b t 1)")
+
+#         p = PowerSpherical(loc=X, scale=kappa)
+#         X = p.rsample((self.l,))  # ( l, b, d )
+
+#         reg_loss = kl_divergence(p, self.q)  # .mean()
+#         print(reg_loss.mean(), reg_loss.sum())
+#         kl1_loss = F.kl_div(X.log_softmax(dim=-1), Y.softmax(dim=-1), reduction=self.reduction)  # fmt: skip
+#         kl2_loss = F.kl_div(Y.log_softmax(dim=-1), X.softmax(dim=-1), reduction=self.reduction)  # fmt: skip
+#         sys.exit()
+
+#         return self.beta * (reg_loss + kl1_loss + kl2_loss)
