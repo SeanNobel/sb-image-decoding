@@ -12,20 +12,25 @@ from omegaconf import DictConfig
 from typing import List
 from termcolor import cprint
 
-NOISE_LEVELS = [0, 0.05, 0.1, 0.2, 0.3]
+NOISE_LEVELS = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
 
 
-def add_noise(texts: List[str], noise_level: float) -> List[str]:
+def add_noise(
+    texts: List[str], noise_level: float, clamp_length: int = 77
+) -> List[str]:
     """Randomly replace characters in text with noise_level probability."""
     noisy_texts = []
     for i, text in enumerate(texts):
         noisy_text = ""
 
-        for char in text:
+        for c, char in enumerate(text):
             if np.random.rand() < noise_level:
                 noisy_text += chr(np.random.randint(97, 123))
             else:
                 noisy_text += char
+
+            if c == clamp_length - 1:
+                break
 
         noisy_texts.append(noisy_text)
 
@@ -52,7 +57,7 @@ def run(args: DictConfig) -> None:
         os.makedirs(save_dir, exist_ok=True)
 
         for n in range(args.num_noises):
-            texts = add_noise(orig_texts, noise_level)
+            texts = add_noise(orig_texts, noise_level, clamp_length=77)
 
             with open(os.path.join(save_dir, f"Texts_N{n}.csv"), "w") as f:
                 writer = csv.writer(f)
