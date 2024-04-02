@@ -32,7 +32,8 @@ runs/*
 notebooks/*
 !notebooks/.gitkeep
 !notebooks/clip_2d_analysis.ipynb
-# !notebooks/ica.ipynb
+!notebooks/clip_text_analysis.ipynb
+!notebooks/hypersphere.ipynb
 
 driving_ica/
 
