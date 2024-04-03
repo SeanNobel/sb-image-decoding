@@ -1,0 +1,87 @@
+# ==== Preprocessing ==== #
+preproc_name: 0_init
+
+thingsmeg_dir: /mnt/tsukuyomi/things-meg/
+
+root: /home/sensho/brain2face/
+preprocessed_data_dir: ${root}data/preprocessed/thingstext/
+
+num_noises: 4 # Corresponds to the number of subjects in MEG data
+
+# ==== Architecture ==== #
+F: 768 ## 1024 # 768 for OpenAI original / 1024 for Huggingface
+
+# align_to: vision # vision / text
+align_tokens: cls ## all # all / cls / mean / list of those
+# orig_clip_tokens: 1 ## 257
+num_clip_tokens: 1
+
+clip_model: ViT-L/14
+# openai/clip-vit-large-patch14 (Huggingface) or ViT-L/14 (OpenAI)
+
+# ==== Loss ==== #
+loss: clip
+reduction: mean
+# impl_type: 0
+
+lambd: 1.0 # Weighting of CLIP and MSE loss
+
+use_negative: False
+
+clip_temp_init: 5.0 # This value is exponentiated in the loss.
+clip_temp_learn: True
+clip_temp_min: null
+clip_temp_max: null
+
+# ==== Training ==== #
+project_name: nd_things_clip_text
+train_name: init
+
+noise_level: 0.0
+
+large_test_set: False # True
+
+batch_size: 128
+lr: 1.0e-4 # 0.005
+lr_scheduler: null # cosine or multistep
+lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
+lr_step_gamma: 0.5
+epochs: 20
+
+acc_topk: [1, 5]
+
+accum_grad: False
+
+patience: 15
+
+chance: False
+
+test_with_whole: True
+
+plot_latents: False
+
+num_workers: 8
+seed: 1234
+cuda_id: 0
+
+sweep_count: 7
+sweep_config:
+  name: noise_levels
+  method: grid
+  metric:
+    name: test_top5_acc
+    goal: maximize
+  parameters:
+    noise_level:
+      values: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    num_noises:
+      value: 4
+
+# ==== Evaluation ==== #
+eval:
+  batch_size: 8
+  num_blocks: 2
+
+save_vision: False
+as_h5: True
+for_webdataset: False
