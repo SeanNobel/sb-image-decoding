@@ -11,88 +11,24 @@ from tqdm import tqdm
 from termcolor import cprint
 from typing import Optional, Union, List
 
+from nd.datasets.things_meg import ThingsCLIPDatasetBase
 from nd.utils.power_spherical import PowerSpherical
 from nd.utils.power_spherical import HypersphericalUniform as HypersphericalUniformPS
 from nd.utils.von_mises_fisher import VonMisesFisher
 from nd.utils.von_mises_fisher import HypersphericalUniform as HypersphericalUniformVMF
 
 
-def calc_similarity(
-    Z: torch.Tensor, Y: torch.Tensor, sequential: bool, pbar: bool = True
-) -> torch.Tensor:
-    batch_size, _size = len(Z), len(Y)
-
-    Z = Z.contiguous().view(batch_size, -1)
-    Y = Y.contiguous().view(_size, -1)
-
-    # NOTE: avoid CUDA out of memory like this
-    if sequential:
-        Z = Z / Z.norm(dim=-1, keepdim=True)
-        Y = Y / Y.norm(dim=-1, keepdim=True)
-
-        similarity = torch.empty(batch_size, _size).to(device=Z.device)
-
-        if pbar:
-            pbar = tqdm(total=batch_size, desc="Similarity matrix of test size")
-
-        for i in range(batch_size):
-            # similarity[i] = (Z[i] @ Y.T) / torch.clamp((Z[i].norm() * Y.norm(dim=1)), min=1e-8)
-            similarity[i] = Z[i] @ Y.T
-
-            if pbar:
-                pbar.update(1)
-    else:
-        Z = rearrange(Z, "b f -> b 1 f")
-        Y = rearrange(Y, "b f -> 1 b f")
-        similarity = F.cosine_similarity(Y, Z, dim=-1)
-
-    torch.cuda.empty_cache()
-
-    return similarity
-
-
-def top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
-    """_summary_
-
-    Args:
-        k (int): _description_
-        similarity ( b, 2400 ): _description_
-        labels ( b, ): _description_
-
-    Returns:
-        _type_: _description_
-    """
-    # if k == 1:
-    #     return (similarity.argmax(axis=1) == diags).to(torch.float).mean().item()  # fmt: skip
-    # else:
-    return np.mean(
-        [
-            label in row
-            for row, label in zip(
-                torch.topk(similarity, k, dim=1, largest=True)[1], labels
-            )
-        ]
-    )
-
-
-def off_diag(mat: torch.Tensor) -> torch.Tensor:
-    """Returns off-diagonal elements of a square matrix.
-    Args:
-        mat ( b, b ): _description_
-    Returns:
-        off_diag ( b * (b - 1), ): _description_
-    """
-    b = mat.shape[0]
-
-    return torch.cat(
-        [torch.diag(mat, i) for i in range(1, b)]
-        + [torch.diag(mat, -i) for i in range(1, b)]
-    )
-
-
 def build_clip(args, dataset, device):
+    dataset = dataset if isinstance(dataset, ThingsCLIPDatasetBase) else None
+
     if args.loss == "clip":
-        loss_func = CLIPLoss(args).to(device)
+        loss_func = CLIPLoss(args, dataset).to(device)
+    elif args.loss == "subspaceclip":
+        loss_func = SubspaceCLIPLoss(args, dataset).to(device)
+    elif args.loss == "normregclip":
+        loss_func = NormRegularizedCLIPLoss(args, dataset, alpha=args.nrclip_alpha).to(device)  # fmt: skip
+
+    # FIXME: Losses below need small fixes when used next time.
     elif args.loss == "variationalclip":
         loss_func = VariationalCLIPLoss(args, beta=args.kl_beta).to(device)
     elif args.loss == "klclip":
@@ -133,6 +69,272 @@ def build_clip(args, dataset, device):
         raise ValueError(f"Invalid loss function: {args.loss}")
 
     return loss_func
+
+
+class CLIPLoss(nn.Module):
+    def __init__(self, args, dataset: Optional[ThingsCLIPDatasetBase] = None) -> None:
+        super().__init__()
+
+        self.reduction = args.reduction
+
+        if args.use_negative:
+            self.ce = BinaryCrossEntropyLoss(reduction=self.reduction)
+        else:
+            self.ce = nn.CrossEntropyLoss(reduction=self.reduction)
+
+        # Temperature (scaler)
+        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
+        self.temp_min = args.clip_temp_min
+        self.temp_max = args.clip_temp_max
+        if not args.clip_temp_learn:
+            self.temp.requires_grad = False
+
+        # For accuracy calculation
+        self.topk: List[int] = args.acc_topk
+
+        if dataset is not None:
+            self._build_labels(dataset)
+
+    def _build_labels(self, dataset):
+        # NOTE: torch.unique has no return_index option
+        test_y_idxs = dataset.y_idxs[dataset.test_idxs].numpy()  # ( 9600, )
+        test_y_idxs, arg_unique = np.unique(test_y_idxs, return_index=True)
+
+        arg_unique = torch.from_numpy(arg_unique)  # ( 2400, )
+        Y = torch.index_select(dataset.test_Y, 0, arg_unique)  # ( 2400, F )
+        categories = torch.index_select(dataset.test_categories, 0, arg_unique)
+
+        self.register_buffer("Y", Y)
+        self.register_buffer("categories", categories)
+        self.register_buffer("test_y_idxs", torch.from_numpy(test_y_idxs))
+
+    def forward(self, Z: torch.Tensor, Y: torch.Tensor):
+        targets = torch.arange(Z.shape[0], device=Z.device, requires_grad=False)
+
+        similarity = self._similarity(Z, Y)
+
+        # FIXME: Probably exp is not needed, but keeping it for consistency to previous experiments.
+        similarity *= torch.exp(self.temp)
+
+        return self._clip(similarity, targets)
+
+    def _clip(self, similarity: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+
+    def _similarity(
+        self,
+        Z: torch.Tensor,
+        Y: torch.Tensor,
+        sequential: bool = False,
+    ) -> torch.Tensor:
+        """
+        Y can have different first dimension size to Z (when doing label-classification)
+        """
+        b, y_size = len(Z), len(Y)
+
+        Z = Z.contiguous().view(b, -1)
+        Y = Y.contiguous().view(y_size, -1)
+
+        Z = Z / Z.norm(dim=-1, keepdim=True)
+        Y = Y / Y.norm(dim=-1, keepdim=True)
+
+        # NOTE: avoid CUDA out of memory
+        if sequential:
+            similarity = torch.empty(b, y_size, device=Z.device)
+
+            for i in range(b):
+                similarity[i] = Z[i] @ Y.T
+
+            torch.cuda.empty_cache()
+        else:
+            similarity = torch.matmul(Z, Y.T)
+
+        return similarity
+
+    @torch.no_grad()
+    def accuracy(
+        self, Z: torch.Tensor, Y: torch.Tensor, sequential: bool = False
+    ) -> np.ndarray:
+        targets = torch.arange(Z.shape[0], device=Z.device, requires_grad=False)
+
+        similarity = self._similarity(Z, Y, sequential)
+
+        topk_accs = np.array(
+            [self._top_k_accuracy(k, similarity, targets) for k in self.topk]
+        )
+
+        return topk_accs
+
+    @torch.no_grad()
+    def label_accuracy(
+        self,
+        Z: torch.Tensor,
+        Y_idxs: torch.Tensor,
+        Y_encoder: Optional[nn.Module],
+        sequential: bool = False,
+    ) -> np.ndarray:
+        Y = Y_encoder.encode(self.Y) if Y_encoder is not None else self.Y
+
+        similarity = self._similarity(Z, Y, sequential)  # ( 2400, b )
+
+        labels = Y_idxs == self.test_y_idxs.unsqueeze(1)  # ( 2400, b )
+        assert torch.all(labels.sum(dim=0) == 1)
+        labels = labels.to(int).argmax(dim=0)  # ( b, )
+
+        topk_accs = np.array(
+            [self._top_k_accuracy(k, similarity, labels) for k in self.topk]
+        )
+
+        return topk_accs
+
+    @staticmethod
+    def _top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
+        """_summary_
+        Args:
+            k (int): _description_
+            similarity ( b, b ): _description_
+            labels ( b, ): _description_
+        Returns:
+            _type_: _description_
+        """
+        topk = torch.topk(similarity, k, dim=-1, largest=True)[1]  # ( b, k )
+
+        return np.mean([label in row for row, label in zip(topk, labels)])
+
+    def clamp_params(self):
+        if not (self.temp_min is None and self.temp_max is None):
+            self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
+
+
+class SubspaceCLIPLoss(CLIPLoss):
+    def __init__(self, args, dataset: Optional[ThingsCLIPDatasetBase] = None) -> None:
+        super().__init__(args, dataset)
+
+        assert args.F % np.prod(args.subspace_downs) == 0, "F cannot be divided by the product of subspace_downs"  # fmt: skip
+        self.num_subspaces = np.prod(args.subspace_downs)
+        self.subspace_dim = args.F // self.num_subspaces
+
+        # Learnable temperature for each subspace
+        self.temp = nn.Parameter(torch.ones(self.num_subspaces) * args.clip_temp_init)
+        if not args.clip_temp_learn:
+            self.temp.requires_grad = False
+
+    def _to_subspace(self, Z, Y):
+        Z = rearrange(Z, "b 1 (s ds) -> s b ds", ds=self.subspace_dim)
+        Y = rearrange(Y, "b s ds -> s b ds", ds=self.subspace_dim)
+
+        return Z, Y
+
+    def forward(self, Z: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        """_summary_
+        Args:
+            X ( b, 1, d ): _description_
+            Y ( b, s, d // s ): _description_
+        Returns:
+            torch.Tensor: _description_
+        """
+        targets = torch.eye(Z.shape[0], device=Z.device, requires_grad=False)
+
+        Z, Y = self._to_subspace(Z, Y)
+
+        clip_loss = []
+        for i, (Z_, Y_) in enumerate(zip(Z, Y)):
+            similarity = self._similarity(Z_, Y_)  # ( b, b )
+
+            similarity *= torch.exp(self.temp[i])
+
+            clip_loss.append(self._clip(similarity, targets))
+
+        return torch.stack(clip_loss).mean()
+
+    @torch.no_grad()
+    def accuracy(
+        self, Z: torch.Tensor, Y: torch.Tensor, sequential: bool = False
+    ) -> np.ndarray:
+        b = Z.shape[0]
+        targets = torch.arange(b, device=Z.device, requires_grad=False)
+
+        Z, Y = self._to_subspace(Z, Y)
+
+        similarity = torch.zeros(b, b, device=Z.device)
+        for Z_, Y_ in zip(Z, Y):
+            similarity += self._similarity(Z_, Y_, sequential)  # ( b, b )
+
+        similarity /= self.num_subspaces
+
+        topk_accs = np.array(
+            [self._top_k_accuracy(k, similarity, targets) for k in self.topk]
+        )
+
+        return topk_accs
+
+    @torch.no_grad()
+    def label_accuracy(
+        self,
+        Z: torch.Tensor,
+        Y_idxs: torch.Tensor,
+        Y_encoder: Optional[nn.Module],
+        sequential: bool = False,
+    ) -> np.ndarray:
+        Y = Y_encoder.encode(self.Y) if Y_encoder is not None else self.Y
+
+        Z, Y = self._to_subspace(Z, Y)
+
+        similarity = torch.zeros(Z.shape[1], Y.shape[1], device=Z.device)
+        for Z_, Y_ in zip(Z, Y):
+            similarity += self._similarity(Z_, Y_, sequential)  # ( 2400, b )
+
+        similarity /= self.num_subspaces
+
+        labels = Y_idxs == self.test_y_idxs.unsqueeze(1)  # ( 2400, b )
+        assert torch.all(labels.sum(dim=0) == 1)
+        labels = labels.to(int).argmax(dim=0)  # ( b, )
+
+        topk_accs = np.array(
+            [self._top_k_accuracy(k, similarity, labels) for k in self.topk]
+        )
+
+        return topk_accs
+
+    # FIXME
+    @staticmethod
+    def _subspace_top_k_accuracy(
+        k: int, similarity: torch.Tensor, labels: torch.Tensor
+    ):
+        """Decides topks with majority votes from subspaces.
+        Args:
+            k (int): _description_
+            similarity ( s, b, b ): _description_
+            labels ( b, ): _description_
+        Returns:
+            _type_: _description_
+        """
+        topk = torch.topk(similarity, k, dim=-1, largest=True)[1]  # ( s, b, k )
+        topk = rearrange(topk, "s b k -> b (s k)")
+        topk = torch.stack([torch.bincount(topk_) for topk_ in topk])  # ( b, s * k )
+        topk = torch.topk(topk, k, dim=-1, largest=True)[1]  # ( b, k )
+
+        return np.mean([label in row for row, label in zip(topk, labels)])
+
+
+class NormRegularizedCLIPLoss(CLIPLoss):
+    def __init__(
+        self, args, dataset: Optional[ThingsCLIPDatasetBase] = None, alpha: float = 0.1
+    ) -> None:
+        super().__init__(args, dataset)
+
+        self.alpha = alpha
+
+    def forward(self, Z: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        clip_loss = super().forward(Z, Y)
+
+        norm = Z.reshape(Z.shape[0], -1).norm(dim=-1)
+        norm_loss = F.mse_loss(norm, torch.ones_like(norm), reduction=self.reduction)
+
+        return clip_loss + self.alpha * norm_loss
+
+
+# ==================================================================================
 
 
 class BinaryCrossEntropyLoss(nn.Module):
@@ -215,62 +417,6 @@ class VariationalLowerBound(nn.Module):
         return recon_loss + self.beta * kl_loss, recon_loss, kl_loss
 
 
-class CLIPLoss(nn.Module):
-    def __init__(self, args) -> None:
-        super().__init__()
-
-        self.compute_similarity = nn.CosineSimilarity(dim=-1)
-
-        if args.use_negative:
-            self.ce = BinaryCrossEntropyLoss(reduction=args.reduction)
-        else:
-            self.ce = nn.CrossEntropyLoss(reduction=args.reduction)
-
-        # Temperature (scaler)
-        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
-        self.temp_min = args.clip_temp_min
-        self.temp_max = args.clip_temp_max
-        if not args.clip_temp_learn:
-            self.temp.requires_grad = False
-
-    def forward(self, x, y, fast=True, return_logits=False):
-        batch_size = x.size(0)
-        assert batch_size > 1, "Batch size must be greater than 1."
-        targets = torch.arange(batch_size, requires_grad=False).long().to(device=x.device)  # fmt: skip
-
-        if not fast:
-            # less efficient way
-            x_ = rearrange(x, "b f t -> 1 b (f t)")
-            y_ = rearrange(y, "b f t -> b 1 (f t)")
-            logits = self.compute_similarity(x_, y_)  # s
-        else:
-            # fast way
-            x = x.reshape(batch_size, -1)
-            y = y.reshape(batch_size, -1)
-
-            # NOTE: scale the embeddings to unit norm
-            x = x / x.norm(dim=-1, keepdim=True)
-            y = y / y.norm(dim=-1, keepdim=True)
-
-            # get dot products
-            logits = torch.matmul(x, y.T)  # ( b, b )
-
-        # FIXME: Probably exp is not needed, but keeping it for consistency.
-        logits *= torch.exp(self.temp)
-
-        # NOTE: as in https://arxiv.org/abs/2103.00020
-        loss = (self.ce(logits, targets) + self.ce(logits.T, targets)) / 2
-
-        if return_logits:
-            return logits, loss
-        else:
-            return loss
-
-    def clamp_params(self):
-        if not (self.temp_min is None and self.temp_max is None):
-            self.temp.data.clamp_(min=self.temp_min, max=self.temp_max)
-
-
 class VariationalCLIPLoss(CLIPLoss):
     def __init__(self, args, beta: float) -> None:
         super().__init__(args)
@@ -303,7 +449,7 @@ class VariationalCLIPLoss(CLIPLoss):
         similarity = torch.matmul(X, Y.T)
 
         similarity *= torch.exp(self.temp)
-        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        clip_loss = self._clip(similarity, targets)
 
         if isinstance(q, list):
             reg_loss = torch.cat([kl_divergence(q_, self.p) for q_ in q]).mean()
@@ -336,7 +482,7 @@ class OrthoRegCLIPLoss(CLIPLoss):
         reg_loss = F.l1_loss(similarity, targets, reduction="none").mean()
 
         similarity *= torch.exp(self.temp)
-        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        clip_loss = self._clip(similarity, targets)
 
         return clip_loss + self.alpha * reg_loss
 
@@ -366,7 +512,7 @@ class KLRegCLIPLoss(CLIPLoss):
         similarity = torch.matmul(X, Y.T)
 
         similarity *= torch.exp(self.temp)
-        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        clip_loss = self._clip(similarity, targets)
 
         return clip_loss + self.alpha * reg_loss
 
@@ -413,7 +559,7 @@ class LargeEntropyCLIPLoss(CLIPLoss):
             raise NotImplementedError
 
         similarity *= torch.exp(self.temp)
-        clip_loss = (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        clip_loss = self._clip(similarity, targets)
 
         return clip_loss + self.alpha * entropy_loss
 
@@ -460,7 +606,7 @@ class AdditionalPositivesCLIPLoss(CLIPLoss):
         guidance = torch.matmul(Y, Y.T)
         targets = torch.where(guidance > self.threshold, 1.0, 0.0)
 
-        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        return self._clip(similarity, targets)
 
 
 class AdaptiveCLIPLoss(CLIPLoss):
@@ -471,6 +617,21 @@ class AdaptiveCLIPLoss(CLIPLoss):
         self.margin_n = args.clip_margin_init
 
         self.impl_type = args.impl_type
+
+    @staticmethod
+    def _off_diag(mat: torch.Tensor) -> torch.Tensor:
+        """Returns off-diagonal elements of a square matrix.
+        Args:
+            mat ( b, b ): _description_
+        Returns:
+            off_diag ( b * (b - 1), ): _description_
+        """
+        b = mat.shape[0]
+
+        return torch.cat(
+            [torch.diag(mat, i) for i in range(1, b)]
+            + [torch.diag(mat, -i) for i in range(1, b)]
+        )
 
     def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
         b = X.shape[0]
@@ -485,19 +646,19 @@ class AdaptiveCLIPLoss(CLIPLoss):
         eye = torch.eye(b, device=X.device, requires_grad=False)
 
         if self.impl_type == 0:
-            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).mean())  # fmt: skip
+            targets = torch.where(eye == 1.0, guidance, guidance - self._off_diag(guidance).mean())  # fmt: skip
         elif self.impl_type == 1:
-            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).median())  # fmt: skip
+            targets = torch.where(eye == 1.0, guidance, guidance - self._off_diag(guidance).median())  # fmt: skip
         elif self.impl_type == 2:
-            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).max())  # fmt: skip
+            targets = torch.where(eye == 1.0, guidance, guidance - self._off_diag(guidance).max())  # fmt: skip
         elif self.impl_type == 3:
-            targets = torch.where(eye == 1.0, guidance, guidance - off_diag(guidance).min())  # fmt: skip
+            targets = torch.where(eye == 1.0, guidance, guidance - self._off_diag(guidance).min())  # fmt: skip
 
         similarity = torch.matmul(X, Y.T)
 
         similarity *= torch.exp(self.temp)
 
-        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        return self._clip(similarity, targets)
 
 
 class CosFaceCLIPLoss(CLIPLoss):
@@ -522,7 +683,7 @@ class CosFaceCLIPLoss(CLIPLoss):
 
         similarity *= torch.exp(self.temp)
 
-        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        return self._clip(similarity, targets)
 
 
 class ArcFaceCLIPLoss(CLIPLoss):
@@ -555,7 +716,7 @@ class ArcFaceCLIPLoss(CLIPLoss):
 
         similarity *= torch.exp(self.temp)
 
-        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        return self._clip(similarity, targets)
 
     def _add_angular_margin(self, cosine, targets) -> torch.Tensor:
         sine = torch.sqrt(1.0 - torch.pow(cosine, 2)).clamp(0, 1)
@@ -604,7 +765,7 @@ class AdaptiveMarginCLIPLoss(CLIPLoss):
 
         similarity *= torch.exp(self.temp)
 
-        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        return self._clip(similarity, targets)
 
     def _add_angular_margin(self, cosine: torch.Tensor) -> torch.Tensor:
         angles = torch.acos(cosine.clamp(-1, 1))  # ( b, b )
@@ -656,7 +817,7 @@ class CircleCLIPLoss(CLIPLoss):
         similarity *= self._scaling(similarity, targets_onehot)
         similarity *= torch.exp(self.temp)
 
-        return (self.ce(similarity, targets) + self.ce(similarity.T, targets)) / 2
+        return self._clip(similarity, targets)
 
     def _scaling(
         self, similarity: torch.Tensor, targets_onehot: torch.Tensor
