@@ -8,11 +8,10 @@ from nd.models.vision_encoders import (
     Unet3DEncoder,
     OpenFaceMapper,
 )
-from nd.models.classifier import DiagonalClassifier, LabelClassifier
 from nd.models.wav2vec2 import Wav2Vec2ConformerSpatialMixer
 from nd.models.vector_quantizer import (
     GumbelVectorQuantizer,
     GumbelVectorQuantizerV2,
     LatentsQuantizer,
 )
-from nd.models.utils import MLPTemporalReducer, MLP
+from nd.models.utils import MLPTemporalReducer, MLP, SubspaceMapper
