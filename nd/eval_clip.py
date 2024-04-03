@@ -54,7 +54,7 @@ def infer(args: DictConfig) -> None:
     # ---------------------
     #        Models
     # ---------------------
-    brain_encoder, vision_encoder, preprocess = build_models(args, dataset, device)
+    brain_encoder, _, vision_encoder, preprocess = build_models(args, dataset, device)
 
     brain_encoder.load_state_dict(
         torch.load(os.path.join(run_dir, "brain_encoder_best.pt"), map_location=device)
@@ -95,12 +95,8 @@ def infer(args: DictConfig) -> None:
         else:
             Y = vision_encoder(Y)
 
-        Z = brain_encoder.encode(
-            X, subject_idxs, normalize=False, swap_dims=True, return_mse=False
-        )
-        Z_mse = brain_encoder.encode(
-            X, subject_idxs, normalize=False, swap_dims=True, return_mse=True
-        )
+        Z = brain_encoder.encode(X, subject_idxs, normalize=False, return_mse=False)
+        Z_mse = brain_encoder.encode(X, subject_idxs, normalize=False, return_mse=True)
         # Z, Z_mse, _, _ = *Z, *[None] * (4 - len(Z))
 
         assert Z.shape == Y.shape, f"Z.shape: {Z.shape}, Y.shape: {Y.shape}"

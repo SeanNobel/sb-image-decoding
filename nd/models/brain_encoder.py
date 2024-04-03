@@ -579,8 +579,8 @@ class BrainEncoderBase(nn.Module):
         Z = self(X, subject_idxs)
         Z = Z["Z_mse"] if return_mse else Z["Z_clip"]
 
-        _, d, t = Z.shape
-        Z = rearrange(Z, "b d t -> b (d t)")
+        _, t, d = Z.shape
+        Z = rearrange(Z, "b t d -> b (t d)")
 
         if normalize:
             Z /= Z.norm(dim=-1, keepdim=True)
@@ -591,10 +591,10 @@ class BrainEncoderBase(nn.Module):
             mean, std = stats
             Z = Z * std + mean
 
-        Z = rearrange(Z, "b (d t) -> b d t", d=d)
+        Z = rearrange(Z, "b (t d) -> b t d", d=d)
 
         if swap_dims:
-            Z = rearrange(Z, "b d t -> b t d")
+            Z = rearrange(Z, "b t d -> b d t")
 
         if device is not None:
             Z = Z.to(orig_device)
