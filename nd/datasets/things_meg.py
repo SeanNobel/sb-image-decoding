@@ -12,7 +12,97 @@ import gc
 from nd.utils.eval_utils import get_run_dir
 
 
-class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
+class ThingsCLIPDatasetBase(torch.utils.data.Dataset):
+    def __init__(self) -> None:
+        super().__init__()
+
+        # To be set in the subclass
+        self.num_clip_tokens = None
+        self.test_idxs = None
+        self.categories = None
+
+    def _load_sample(self) -> None:
+        pass
+
+    @property
+    def test_Y(self) -> torch.Tensor:
+        if hasattr(self, "Y"):
+            return torch.index_select(self.Y, 0, self.test_idxs)
+        else:
+            return torch.stack([self._load_sample(i) for i in self.test_idxs])
+
+    @property
+    def test_categories(self) -> torch.Tensor:
+        return torch.index_select(self.categories, 0, self.test_idxs)
+
+    @staticmethod
+    def make_split(
+        sample_attrs: np.ndarray,
+        large_test_set: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            sample_attrs ( 27048, 18 ): Elements are strs.
+            refined (bool): If True, use splits by Meta, modified from Hebart et al., 2023.
+        Returns:
+            train_trial_idxs ( 22248, ): _description_
+            test_trial_idxs ( 2400, ): _description_
+        """
+        trial_types = sample_attrs[:, 0]  # ( 27048, )
+
+        if not large_test_set:
+            # Small test set
+            train_trial_idxs = np.where(trial_types == "exp")[0]  # ( 22248, )
+            test_trial_idxs = np.where(trial_types == "test")[0]  # ( 2400, )
+
+            assert len(train_trial_idxs) == 22248 and len(test_trial_idxs) == 2400
+        else:
+            category_idxs = sample_attrs[:, 2].astype(int)  # ( 27048, )
+
+            test_trial_idxs = np.where(trial_types == "test")[0]  # ( 2400, )
+            test_category_idxs = np.unique(np.take(category_idxs, test_trial_idxs))
+            # ( 200, )
+
+            test_trial_idxs = np.where(
+                np.logical_and(
+                    np.isin(category_idxs, test_category_idxs),
+                    np.logical_not(trial_types == "test"),
+                )
+            )[0]
+            # ( 2400, )
+
+            train_trial_idxs = np.where(
+                np.logical_and(
+                    trial_types == "exp",
+                    np.logical_not(np.isin(category_idxs, test_category_idxs)),
+                )
+            )[0]
+            # ( 19848, )
+
+            assert len(train_trial_idxs) == 19848 and len(test_trial_idxs) == 2400
+
+        return torch.from_numpy(train_trial_idxs), torch.from_numpy(test_trial_idxs)
+
+    def _extract_tokens(self, Y: torch.Tensor, tokens: str) -> torch.Tensor:
+        if Y.ndim == 2:
+            assert self.num_clip_tokens == 1, "num_clip_tokens > 1 is specified, but the embeddings don't have temporal dimension."  # fmt: skip
+            assert not tokens == "all", "align_tokens is specified as 'all', but the embessings don't have temporal dimension."  # fmt: skip
+
+            Y = Y.unsqueeze(1)
+        else:
+            if tokens == "mean":
+                assert self.num_clip_tokens == 1
+                Y = Y.mean(dim=1, keepdim=True)
+            elif tokens == "cls":
+                assert self.num_clip_tokens == 1
+                Y = Y[:, :1]
+            else:
+                assert tokens == "all"
+
+        return Y
+
+
+class ThingsMEGCLIPDataset(ThingsCLIPDatasetBase):
     def __init__(self, args) -> None:
         super().__init__()
 
@@ -129,35 +219,6 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         del X_list, Y_list, categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
         gc.collect()
 
-    @property
-    def test_Y(self) -> torch.Tensor:
-        if hasattr(self, "Y"):
-            return torch.index_select(self.Y, 0, self.test_idxs)
-        else:
-            return torch.stack([self._load_sample(i) for i in self.test_idxs])
-
-    @property
-    def test_categories(self) -> torch.Tensor:
-        return torch.index_select(self.categories, 0, self.test_idxs)
-
-    def _extract_tokens(self, Y: torch.Tensor, tokens: str) -> torch.Tensor:
-        if Y.ndim == 2:
-            assert self.num_clip_tokens == 1, "num_clip_tokens > 1 is specified, but the embessings don't have temporal dimension."  # fmt: skip
-            assert not tokens == "all", "align_tokens is specified as 'all', but the embessings don't have temporal dimension."  # fmt: skip
-
-            Y = Y.unsqueeze(1)
-        else:
-            if tokens == "mean":
-                assert self.num_clip_tokens == 1
-                Y = Y.mean(dim=1, keepdim=True)
-            elif tokens == "cls":
-                assert self.num_clip_tokens == 1
-                Y = Y[:, :1]
-            else:
-                assert tokens == "all"
-
-        return Y
-
     def __len__(self) -> int:
         return len(self.X)
 
@@ -174,54 +235,6 @@ class ThingsMEGCLIPDataset(torch.utils.data.Dataset):
         )
 
         return torch.from_numpy(np.load(path)).to(torch.float32)
-
-    @staticmethod
-    def make_split(
-        sample_attrs: np.ndarray,
-        large_test_set: bool = True,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            sample_attrs ( 27048, 18 ): Elements are strs.
-            refined (bool): If True, use splits by Meta, modified from Hebart et al., 2023.
-        Returns:
-            train_trial_idxs ( 22248, ): _description_
-            test_trial_idxs ( 2400, ): _description_
-        """
-        trial_types = sample_attrs[:, 0]  # ( 27048, )
-
-        if not large_test_set:
-            # Small test set
-            train_trial_idxs = np.where(trial_types == "exp")[0]  # ( 22248, )
-            test_trial_idxs = np.where(trial_types == "test")[0]  # ( 2400, )
-
-            assert len(train_trial_idxs) == 22248 and len(test_trial_idxs) == 2400
-        else:
-            category_idxs = sample_attrs[:, 2].astype(int)  # ( 27048, )
-
-            test_trial_idxs = np.where(trial_types == "test")[0]  # ( 2400, )
-            test_category_idxs = np.unique(np.take(category_idxs, test_trial_idxs))
-            # ( 200, )
-
-            test_trial_idxs = np.where(
-                np.logical_and(
-                    np.isin(category_idxs, test_category_idxs),
-                    np.logical_not(trial_types == "test"),
-                )
-            )[0]
-            # ( 2400, )
-
-            train_trial_idxs = np.where(
-                np.logical_and(
-                    trial_types == "exp",
-                    np.logical_not(np.isin(category_idxs, test_category_idxs)),
-                )
-            )[0]
-            # ( 19848, )
-
-            assert len(train_trial_idxs) == 19848 and len(test_trial_idxs) == 2400
-
-        return torch.from_numpy(train_trial_idxs), torch.from_numpy(test_trial_idxs)
 
     def to_high_categories(
         self, categories: torch.Tensor, high_categories: np.ndarray
