@@ -1,7 +1,9 @@
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops.layers.torch import Rearrange
+from typing import List
 
 
 class DropBlock1D(nn.Module):
@@ -78,6 +80,37 @@ class MLP(nn.Module):
             nn.LayerNorm(in_dim // 4),
             nn.GELU(),
             nn.Linear(in_dim // 4, out_dim),
+        )
+
+    def forward(self, X):
+        return self.net(X)
+
+    def encode(self, X):
+        return self(X)
+
+
+class SubspaceMapper(nn.Module):
+    def __init__(self, in_dim: int, down_scales: List[int]):
+        super().__init__()
+
+        self.net = nn.Sequential(Rearrange("b t d -> b 1 (t d)"))
+
+        out_channels = 1
+        out_dim = in_dim
+        for i, scale in enumerate(down_scales):
+            out_channels *= scale
+            out_dim //= scale
+
+            self.net.add_module(f"down{i}", self.Downsample(scale, out_channels))
+
+            if i < len(down_scales) - 1:
+                self.net.add_module(f"norm{i}", nn.LayerNorm([out_channels, out_dim]))
+                self.net.add_module(f"act{i}", nn.GELU())
+
+    def Downsample(self, scale: int, out_channels: int):
+        return nn.Sequential(
+            Rearrange("b s1 (d s2) -> b (s1 s2) d", s2=scale),
+            nn.Conv1d(out_channels, out_channels, 1),
         )
 
     def forward(self, X):

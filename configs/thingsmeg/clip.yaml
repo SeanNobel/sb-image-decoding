@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: 3_caption ## 2_huggingface
+preproc_name: 3_caption # 2_huggingface
 
 thingsmeg_dir: /mnt/tsukuyomi/things-meg/
 meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
@@ -22,12 +22,12 @@ brain_resample_sfreq: 120 # Hz
 clamp_lim: 5.0 # Standard deviation
 
 # ==== Architecture ==== #
-F: 768 ## 1024 # 768 for OpenAI original / 1024 for Huggingface
+F: 768 # 768 for OpenAI original / 1024 for Huggingface
 orig_F: 768
 
 align_to: vision # vision / text
-align_tokens: cls ## all # all / cls / mean / list of those
-orig_clip_tokens: 1 ## 257
+align_tokens: cls # all / cls / mean / list of those
+orig_clip_tokens: 1 # 257
 num_clip_tokens: 1
 
 vision:
@@ -134,12 +134,14 @@ nnclip_alpha: 0.5
 leclip_alpha: 0.0
 orclip_alpha: 0.1
 klclip_alpha: 0.1
-
 kl_beta: 1.0 # Same meaning as alpha but using beta after variational inference.
+nrclip_alpha: 0.1
 
 vae: null # ps / vmf / normal / null
 vae_zdim: 10
 sample_l: 2
+
+subspace_downs: [2, 3, 4, 4]
 
 # ==== Training ==== #
 project_name: nd_things_clip
@@ -177,24 +179,40 @@ plot_latents: False
 
 num_workers: 8
 seed: 1234
-cuda_id: 0
+cuda_id: 1
 
-sweep_count: 4
+sweep_count: 3
 sweep_config:
-  name: hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
+  name: subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    vae:
-      values: [vmf, ps]
-    vae_zdim:
-      values: [10, 100, 768]
-    sample_l:
+    # loss:
+    #   value: normregclip
+    # nrclip_alpha:
+    #   values: [0.01, 0.0]
+
+    loss:
+      value: subspaceclip
+    subspace_downs:
+      values: [[2, 3, 4, 4]]
+    blocks:
+      value: crate
+    transformer_heads:
+      values: [4, 8, 16]
+    num_blocks:
       value: 4
-    kl_beta:
-      value: 2.0
+
+    # vae:
+    #   values: [vmf, ps]
+    # vae_zdim:
+    #   values: [10, 100, 768]
+    # sample_l:
+    #   value: 4
+    # kl_beta:
+    #   value: 2.0
 
     # loss:
     #   value: variationalclip
@@ -491,8 +509,11 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  batch_size: 8
-  num_blocks: 2
+  loss: normregclip
+  nrclip_alpha: 0.01
+
+  # batch_size: 8
+  # num_blocks: 2
 
   # blocks: crate
   # num_blocks: 8
