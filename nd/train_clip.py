@@ -38,13 +38,12 @@ from nd.models import (
     ViViTReduceTime,
     Unet3DEncoder,
     OpenFaceMapper,
-    DiagonalClassifier,
-    LabelClassifier,
     LatentsQuantizer,
     GumbelVectorQuantizer,
     GumbelVectorQuantizerV2,
     MLPTemporalReducer,
     MLP,
+    SubspaceMapper,
 )
 from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
 from nd.utils.loss import (
@@ -170,6 +169,9 @@ def build_models(args, dataset, device):
                 args.orig_clip_tokens, args.num_clip_tokens
             ).to(device)
 
+        elif args.loss == "subspaceclip":
+            vision_encoder = SubspaceMapper(args.F, args.subspace_downs).to(device)
+
         elif args.F == 2:
             vision_encoder = MLP(args.orig_F, 2).to(device)
     else:
@@ -233,19 +235,6 @@ def train():
         wandb.config.update({"brain_encoder_params": count_parameters(brain_encoder)})
 
     # ---------------------
-    #      Classifier
-    # ---------------------
-    train_classifier = DiagonalClassifier(args.acc_topk)
-
-    if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
-        test_classifier = DiagonalClassifier(args.acc_topk)
-
-    elif isinstance(dataset, ThingsMEGCLIPDataset):
-        test_classifier = LabelClassifier(dataset, args.acc_topk, device)
-    else:
-        raise NotImplementedError
-
-    # ---------------------
     #      Optimizers
     # ---------------------
     optimizer = torch.optim.Adam(trained_models.get_params(), lr=args.lr)
@@ -275,10 +264,11 @@ def train():
 
     max_test_acc = 0.0
     no_best_counter = 0
+    loss_temps_list = []  # For logging multiple-temperature losses
 
     for epoch in range(args.epochs):
-        train_metrics = {"clip_loss": [], "mse_loss": [], "recon_loss": [], "kl_loss": [], "vq_loss": [], "adv_loss": [], "topk_accs": [], "perplexity": []}  # fmt: skip
-        test_metrics = {"clip_loss": [], "mse_loss": [], "recon_loss": [], "kl_loss": [], "vq_loss": [], "adv_loss": [], "topk_accs": [], "perplexity": []}  # fmt: skip
+        train_metrics = {"clip_loss": [], "mse_loss": [], "z_norms": [], "recon_loss": [], "kl_loss": [], "vq_loss": [], "adv_loss": [], "topk_accs": [], "perplexity": []}  # fmt: skip
+        test_metrics = {"clip_loss": [], "mse_loss": [], "z_norms": [], "recon_loss": [], "kl_loss": [], "vq_loss": [], "adv_loss": [], "topk_accs": [], "perplexity": []}  # fmt: skip
 
         # For plotting latents
         train_Y_list = []
@@ -383,17 +373,9 @@ def train():
             loss_func.clamp_params()
 
             # -----------------------
-            #     Classification
+            #        Accuracy
             # -----------------------
-            with torch.no_grad():
-                if isinstance(train_classifier, DiagonalClassifier):
-                    topk_accs, _ = train_classifier(Z, Y)
-                elif isinstance(train_classifier, LabelClassifier):
-                    topk_accs = train_classifier(
-                        Z, y_idxs.to(device), trained_models.vision_encoder
-                    )
-                else:
-                    raise NotImplementedError
+            topk_accs = loss_func.accuracy(Z, Y)
 
             # -----------------------
             #        Logging
@@ -401,6 +383,9 @@ def train():
             train_metrics["clip_loss"].append(clip_loss.item())
             train_metrics["mse_loss"].append(mse_loss.item())
             train_metrics["topk_accs"].append(topk_accs)
+            train_metrics["z_norms"].append(
+                Z.reshape(Z.shape[0], -1).norm(dim=-1).mean().item()
+            )
 
             if recon_loss is not None:
                 train_metrics["recon_loss"].append(recon_loss.item())
@@ -521,16 +506,17 @@ def train():
                 # -----------------------
                 #     Classification
                 # -----------------------
-                if isinstance(test_classifier, DiagonalClassifier):
-                    topk_accs, _ = test_classifier(
-                        Z, Y, sequential=args.test_with_whole
-                    )
-                elif isinstance(test_classifier, LabelClassifier):
-                    topk_accs = test_classifier(
-                        Z, y_idxs.to(device), trained_models.vision_encoder, sequential=args.test_with_whole  # fmt: skip
+                if isinstance(dataset, ThingsMEGCLIPDataset):
+                    topk_accs = loss_func.label_accuracy(
+                        Z,
+                        y_idxs.to(device),
+                        trained_models.vision_encoder,
+                        sequential=args.test_with_whole,
                     )
                 else:
-                    raise NotImplementedError
+                    topk_accs = loss_func.accuracy(
+                        Z, Y, sequential=args.test_with_whole
+                    )
 
             # -----------------------
             #        Logging
@@ -538,6 +524,9 @@ def train():
             test_metrics["clip_loss"].append(clip_loss.item())
             test_metrics["mse_loss"].append(mse_loss.item())
             test_metrics["topk_accs"].append(topk_accs)
+            test_metrics["z_norms"].append(
+                Z.reshape(Z.shape[0], -1).norm(dim=-1).mean().item()
+            )
 
             if "vq_loss" in ret_dict:
                 test_metrics["vq_loss"].append(ret_dict["vq_loss"].item())
@@ -579,6 +568,8 @@ def train():
                 "train_mse_loss": np.mean(train_metrics["mse_loss"]),
                 "test_mse_loss": np.mean(test_metrics["mse_loss"]),
                 "lrate": optimizer.param_groups[0]["lr"],
+                "train_z_norm": np.mean(train_metrics["z_norms"]),
+                "test_z_norm": np.mean(test_metrics["z_norms"]),
             }
 
             performance_now.update(
@@ -603,16 +594,31 @@ def train():
                 performance_now.update({"train_perplexity": np.mean(train_metrics["perplexity"]), "test_perplexity": np.mean(test_metrics["perplexity"])})
             if len(train_metrics["adv_loss"]) > 0:
                 performance_now.update({"train_adv_loss": np.mean(train_metrics["adv_loss"]), "test_adv_loss": np.mean(test_metrics["adv_loss"])})
+            # fmt: on
             if hasattr(loss_func, "temp"):
-                performance_now.update({"temp": loss_func.temp.item()})
+                if len(loss_func.temp) == 1:
+                    performance_now.update({"temp": loss_func.temp.item()})
+                else:
+                    loss_temps_list.append(loss_func.temp.detach().cpu().numpy())
+                    loss_temps = np.stack(loss_temps_list).T  # ( n_temps, epoch )
+                    performance_now.update(
+                        {
+                            "temp": wandb.plot.line_series(
+                                xs=np.arange(epoch + 1),
+                                ys=loss_temps,
+                                keys=[f"temp_{i}" for i in range(len(loss_temps))],
+                                title="Loss temperatures",
+                                xname="Epoch",
+                            )
+                        }
+                    )
             if hasattr(loss_func, "margin"):
                 performance_now.update({"margin": loss_func.margin.item()})
             if hasattr(vision_encoder, "gumbel_temp"):
                 performance_now.update({"gumbel_temp": vision_encoder.gumbel_temp})
             # FIXME: This doesn't work when args.blocks is a list of strings.
             if args.blocks == "transformer" and args.pos_enc == "sine_abs":
-                performance_now.update({"pos_scale": brain_encoder.blocks[0].pos_enc.scale.item()})
-            # fmt: on
+                performance_now.update({"pos_scale": brain_encoder.blocks[0].pos_enc.scale.item()})  # fmt: skip
 
             if args.F == 2:
                 plots = plot_2d_latents_with_sorted_categories(
