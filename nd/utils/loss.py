@@ -1132,16 +1132,9 @@ class CLIPWithClassCircleLoss(CLIPWithClassCosFaceLoss):
         pass
 
 
-class NearestNeighborCLIPLoss(nn.Module):
+class NearestNeighborCLIPLoss(CLIPLoss):
     def __init__(self, args):
         super().__init__()
-
-        # CLIP related
-        self.cross_entropy = nn.CrossEntropyLoss(reduction=args.reduction)
-
-        self.temp = nn.Parameter(torch.tensor([float(args.clip_temp_init)]))
-        if not args.clip_temp_learn:
-            self.temp.requires_grad = False
 
         # Nearest Neighbor related
         self.k = args.nnclip_k
@@ -1173,7 +1166,7 @@ class NearestNeighborCLIPLoss(nn.Module):
 
         logits = torch.matmul(X, Y.T) * torch.exp(self.temp)
 
-        clip_loss = (self.cross_entropy(logits, targets) + self.cross_entropy(logits.T, targets)) / 2  # fmt: skip
+        clip_loss = self._clip(logits, targets)
 
         # -------------------------
         #   Nearest Neighbor Loss
@@ -1189,7 +1182,7 @@ class NearestNeighborCLIPLoss(nn.Module):
         return clip_loss + self.alpha * nnclip_loss
 
     def _calc_nnclip_loss(self, X, support_set):
-        similarity = calc_similarity(X, support_set, sequential=True, pbar=False)
+        similarity = self._similarity(X, support_set, sequential=True, pbar=False)
         # ( b, support_size )
         topk = torch.topk(similarity, self.k, dim=1)[1]  # ( b, k )
         targets = F.one_hot(topk, num_classes=self.support_size)
