@@ -14,8 +14,7 @@ def run() -> None:
         for i in range(4)
     ]
 
-    save_dir = "/home/sensho/brain2face/data/preprocessed/thingsmeg/4_autoencoder_kl"
-    os.makedirs(save_dir, exist_ok=True)
+    save_dir_ = "/home/sensho/brain2face/data/preprocessed/thingsmeg/4_autoencoder_kl"
 
     images_dir = "/mnt/tsukuyomi/things/osfstorage/THINGS/Images/"
 
@@ -27,6 +26,8 @@ def run() -> None:
 
     for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
         cprint(f"==== Processing subject {subject_id+1} ====", "cyan")
+        save_dir = os.path.join(save_dir_, f"Image_moments_P{subject_id+1}")
+        os.makedirs(save_dir, exist_ok=True)
 
         sample_attrs = np.loadtxt(
             sample_attrs_path, dtype=str, delimiter=",", skiprows=1
@@ -59,8 +60,7 @@ def run() -> None:
             delimiter="\n",
         )
 
-        moments = []
-        for y in tqdm(y_list, desc="Preprocessing & encoding images"):
+        for i, y in enumerate(tqdm(y_list, desc="Preprocessing & encoding images")):
             image = Image.open(y).convert("RGB")
             image = image.resize((256, 256), Image.LANCZOS)
             image = np.array(image, dtype=np.float32) / 127.5 - 1.0
@@ -68,13 +68,9 @@ def run() -> None:
 
             moment = autoencoder.encode_moments(image.unsqueeze(0).to(device))
 
-            moments.append(moment.cpu())
+            np.save(os.path.join(save_dir, f"{i}.npy"), moment.cpu().numpy())
 
-        moments = torch.cat(moments, dim=0)
-
-        cprint(f"Images P{subject_id+1}: {moments.shape}", "cyan")
-
-        torch.save(moments, os.path.join(save_dir, f"Image_moments_P{subject_id+1}.pt"))
+        cprint(f"Saved {i + 1} image moments ({moment.shape}) for P{subject_id+1}", "cyan")  # fmt: skip
 
 
 if __name__ == "__main__":
