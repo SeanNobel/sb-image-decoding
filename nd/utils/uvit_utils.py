@@ -128,7 +128,7 @@ def initialize_train_state(config, device):
     nnet_ema.eval()
     logging.info(f"nnet has {utils.cnt_params(nnet)} parameters")
 
-    with initialize(config_path="configs/thingsmeg/"):
+    with initialize(version_base=None, config_path="../../configs/thingsmeg/"):
         args = compose(config_name="clip")
         brain_encoder = BrainEncoderKL(args, config.z_shape)
 
