@@ -318,6 +318,9 @@ class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
         del categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
         gc.collect()
 
+    def unpreprocess(self, v: torch.Tensor):
+        return (0.5 * (v + 1.0)).clamp(0.0, 1.0)
+
     @property
     def data_shape(self):
         return 4, 32, 32
