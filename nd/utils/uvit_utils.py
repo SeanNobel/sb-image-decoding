@@ -2,16 +2,17 @@ import os, sys
 import numpy as np
 import torch
 import torch.nn as nn
-from einops import rearrange
+from torchvision.utils import save_image
 from pathlib import Path
 from absl import logging
-from hydra import initialize, compose
-from omegaconf import open_dict
 from typing import Tuple
+from termcolor import cprint
+from tqdm import tqdm
 
 from uvit import utils
 
-from nd.models.brain_encoder import BrainEncoder
+from nd.models.brain_encoder import SpatialAttention, ConformerBlock, TransformerBlock
+from nd.utils.layout import min_max_norm
 
 
 def get_config_name():
@@ -26,9 +27,7 @@ def get_hparams():
     lst = []
     for i in range(1, len(argv)):
         assert "=" in argv[i]
-        if argv[i].startswith("--config.") and not argv[i].startswith(
-            "--config.dataset.path"
-        ):
+        if argv[i].startswith("--config.") and not argv[i].startswith("--config.dataset.path"):
             hparam, val = argv[i].split("=")
             hparam = hparam.split(".")[-1]
             if hparam.endswith("path"):
@@ -40,27 +39,51 @@ def get_hparams():
     return hparams
 
 
-class BrainEncoderKL(BrainEncoder):
-    def __init__(self, args, dims: Tuple[int], mid_dim=128):
-        with open_dict(args):
-            args.D2 = mid_dim
+class BrainEncoder(nn.Module):
+    def __init__(
+        self,
+        out_dims: Tuple[int],
+        loc: torch.Tensor,
+        use_fp16: bool,
+        seq_len: int,
+        depth: int = 2,
+        D1: int = 270,
+        D2: int = 64,
+        K: int = 32,
+        n_heads: int = 4,
+        depthwise_ksize: int = 31,
+        pos_enc_type: str = "abs",
+        d_drop: float = 0.1,
+        p_drop: float = 0.1,
+    ):
+        super().__init__()
 
-        super().__init__(args, subjects=1)
+        self.out_dims = out_dims  # ( 4, 32, 32 )
 
-        self.dims = dims  # ( 4, 64, 64 )
+        self.spatial_attention = SpatialAttention(loc, D1, K, d_drop)
+        self.conv = nn.Conv1d(D1, D1, kernel_size=1, stride=1)
 
-        self.out_proj = nn.Linear(self.init_temporal_dim, np.prod(dims) // mid_dim)
+        self.blocks = nn.Sequential()
+        for k in range(depth):
+            self.blocks.add_module(
+                f"block{k}",
+                ConformerBlock(
+                    k, D1, D2, n_heads, depthwise_ksize, pos_enc_type=pos_enc_type, p_drop=p_drop, use_fp16=use_fp16  # fmt: skip
+                ),
+                # TransformerBlock(k, D1, D2, n_heads, seq_len, "sine_abs"),
+            )
+
+        self.out_proj = nn.Linear(seq_len, np.prod(out_dims) // D2)
 
     def forward(self, X: torch.Tensor):
-        X = self.subject_block(X, torch.zeros(X.shape[0]))
+        X = self.spatial_attention(X)
+        X = self.conv(X)
 
         X = self.blocks(X)  # ( b, D2, t )
 
         X = self.out_proj(X)  # ( b, D2, t' )
-        X = rearrange(
-            X, "b d2 t -> b c h w", c=self.dims[0], h=self.dims[1], w=self.dims[2]
-        )
-        return X
+
+        return X.reshape(X.shape[0], *self.out_dims)
 
 
 class TrainState(object):
@@ -119,6 +142,15 @@ class TrainState(object):
                 val.to(device)
 
 
+def get_brain_encoder(config):
+    loc = min_max_norm(np.load(config.dataset.montage_path))
+    loc = torch.from_numpy(loc.astype(np.float32))
+
+    use_fp16 = config.mixed_precision == "fp16"
+
+    return BrainEncoder(config.z_shape, loc, use_fp16, **config.brain_encoder)
+
+
 def initialize_train_state(config, device):
     params = []
 
@@ -128,9 +160,10 @@ def initialize_train_state(config, device):
     nnet_ema.eval()
     logging.info(f"nnet has {utils.cnt_params(nnet)} parameters")
 
-    with initialize(version_base=None, config_path="../../configs/thingsmeg/"):
-        args = compose(config_name="clip")
-        brain_encoder = BrainEncoderKL(args, config.z_shape)
+    # Build brain encoder
+    brain_encoder = get_brain_encoder(config)
+    params += brain_encoder.parameters()
+    logging.info(f"brain_encoder has {utils.cnt_params(brain_encoder)} parameters")
 
     optimizer = utils.get_optimizer(params, **config.optimizer)
     lr_scheduler = utils.get_lr_scheduler(optimizer, **config.lr_scheduler)
@@ -147,3 +180,22 @@ def initialize_train_state(config, device):
     train_state.to(device)
 
     return train_state
+
+
+def sample2dir(accelerator, path, dataloader, sample_fn, unpreprocess_fn=None):
+    os.makedirs(path, exist_ok=True)
+    idx = 0
+
+    for batch in tqdm(
+        dataloader,
+        disable=not accelerator.is_main_process,
+        desc="sample2dir",
+    ):
+        samples = unpreprocess_fn(sample_fn(batch))
+
+        _batch_size = len(samples)
+        samples = accelerator.gather(samples.contiguous())[:_batch_size]
+        if accelerator.is_main_process:
+            for sample in samples:
+                save_image(sample, os.path.join(path, f"{idx}.png"))
+                idx += 1
