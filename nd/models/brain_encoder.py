@@ -41,23 +41,23 @@ def is_in(s: Optional[str], _s: str) -> bool:
 
 
 class SpatialAttention(nn.Module):
-    def __init__(self, args, loc: torch.Tensor, flat: bool = True):
+    def __init__(
+        self, loc: torch.Tensor, D1: int, K: int, d_drop: float = 0.1, flat: bool = True
+    ):
         super().__init__()
 
-        self.D1 = args.D1
-        self.K = args.K
         self.flat = flat
         x, y = loc.T
 
         # TODO: Check if those two are identical.
 
         if flat:  # Implementation version 1
-            self.z_re = nn.Parameter(torch.Tensor(self.D1, self.K, self.K))
-            self.z_im = nn.Parameter(torch.Tensor(self.D1, self.K, self.K))
+            self.z_re = nn.Parameter(torch.Tensor(D1, K, K))
+            self.z_im = nn.Parameter(torch.Tensor(D1, K, K))
             nn.init.kaiming_uniform_(self.z_re, a=np.sqrt(5))
             nn.init.kaiming_uniform_(self.z_im, a=np.sqrt(5))
 
-            k_arange = torch.arange(self.K)
+            k_arange = torch.arange(K)
             rad1 = torch.einsum("k,c->kc", k_arange, x)
             rad2 = torch.einsum("l,c->lc", k_arange, y)
             rad = rad1.unsqueeze(1) + rad2.unsqueeze(0)
@@ -66,14 +66,12 @@ class SpatialAttention(nn.Module):
 
         else:  # Implementation version 2
             # make a complex-valued parameter, reshape k,l into one dimension
-            self.z = nn.Parameter(
-                torch.rand(size=(self.D1, self.K**2), dtype=torch.cfloat)
-            )
+            self.z = nn.Parameter(torch.rand(size=(D1, K**2), dtype=torch.cfloat))
 
             # vectorize of k's and l's
             a = []
-            for k in range(self.K):
-                for l in range(self.K):
+            for k in range(K):
+                for l in range(K):
                     a.append((k, l))
             a = torch.tensor(a)
             k, l = a[:, 0], a[:, 1]
@@ -82,7 +80,7 @@ class SpatialAttention(nn.Module):
             self.register_buffer("cos", torch.cos(phi))
             self.register_buffer("sin", torch.sin(phi))
 
-        self.spatial_dropout = SpatialDropout(loc, args.d_drop)
+        self.spatial_dropout = SpatialDropout(loc, d_drop)
 
     def forward(self, X):
         """_summary_
@@ -144,7 +142,7 @@ class SubjectBlock(nn.Module):
         self.K = args.K
 
         if args.spatial_attention:
-            self.spatial_attention = SpatialAttention(args, loc)
+            self.spatial_attention = SpatialAttention(loc, self.D1, self.K, args.d_drop)
         else:
             cprint("Not using spatial attention.", "yellow")
             self.spatial_attention = None
@@ -395,6 +393,7 @@ class ConformerBlock(nn.Module):
         pos_enc_type: str = "abs",
         temporal_dim: Optional[int] = None,
         p_drop: float = 0.1,
+        use_fp16: bool = False,
     ):
         super().__init__()
 
@@ -411,7 +410,7 @@ class ConformerBlock(nn.Module):
             ffn_embed_dim=emb_dim * 4,
             attention_heads=n_heads,
             dropout=p_drop,
-            use_fp16=False,
+            use_fp16=use_fp16,
             depthwise_conv_kernel_size=depthwise_ksize,
             activation_fn=activation_fn,
             attn_type=attn_type,
@@ -615,14 +614,14 @@ class BrainEncoder(BrainEncoderBase):
         super().__init__()
 
         # Parameters
+        self.init_temporal_dim: int = int(args.seq_len * args.brain_resample_sfreq)
         self.vq = args.vq
-        self.ignore_subjects = args.ignore_subjects or args.dann
+        self.ignore_subjects = args.ignore_subjects or args.dann or subjects == 1
         self.vae: Optional[str] = args.vae
         self.sample_l: int = args.sample_l
         self.unknown_subject = unknown_subject
 
         D1, D2, D3, F = args.D1, args.D2, args.D3, args.F
-        init_temporal_dim: int = int(args.seq_len * args.brain_resample_sfreq)
         num_clip_tokens: int = args.num_clip_tokens
         num_blocks: int = args.num_blocks
         num_subjects: int = subjects if isinstance(subjects, int) else len(subjects)
@@ -670,7 +669,7 @@ class BrainEncoder(BrainEncoderBase):
             else:
                 self.subject_block = SubjectBlockConvDynamic(args, len(subjects), layout(args, subjects))  # fmt: skip
         else:
-            raise TypeError
+            raise TypeError(f"Unknown layout type: {layout}")
 
         block_args = {"D1": D1, "D2": D2, "p_drop": p_drop}
         self.blocks = nn.Sequential()
@@ -705,7 +704,7 @@ class BrainEncoder(BrainEncoderBase):
                         k,
                         n_heads=transformer_heads,
                         # TODO: TransformerBlocks after downsampling with ConvBlocks
-                        block_size=init_temporal_dim,
+                        block_size=self.init_temporal_dim,
                         pos_enc=pe,
                         **block_args,
                     ),
@@ -721,7 +720,7 @@ class BrainEncoder(BrainEncoderBase):
                         n_heads=transformer_heads,
                         depthwise_ksize=depthwise_ksize,
                         pos_enc_type=pe,
-                        temporal_dim=init_temporal_dim,
+                        temporal_dim=self.init_temporal_dim,
                         **block_args,
                     ),
                 )
@@ -735,7 +734,7 @@ class BrainEncoder(BrainEncoderBase):
                         k,
                         n_heads=transformer_heads,
                         # TODO: TransformerBlocks after downsampling with ConvBlocks
-                        block_size=init_temporal_dim,
+                        block_size=self.init_temporal_dim,
                         pos_enc=pe,
                         **block_args,
                     ),
@@ -754,7 +753,7 @@ class BrainEncoder(BrainEncoderBase):
         )
 
         temporal_dim = conv_output_size(
-            init_temporal_dim,
+            self.init_temporal_dim,
             ksize=final_ksize,
             stride=final_stride,
             repetition=3 if temporal_agg == "original" else 1,
