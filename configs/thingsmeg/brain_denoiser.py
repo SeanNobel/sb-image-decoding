@@ -11,17 +11,23 @@ def get_config():
 
     config.seed = 1234
     config.pred = "noise_pred"
-    config.z_shape = (4, 64, 64)
+    config.z_shape = (4, 32, 32)
+    config.wandb_mode = "online"
 
-    config.autoencoder = d(pretrained_path="assets/stable-diffusion/autoencoder_kl.pth")
+    config.autoencoder = d(
+        # pretrained_path="uvit/assets/stable-diffusion/autoencoder_kl_ema.pth",
+        pretrained_path="uvit/assets/stable-diffusion/autoencoder_kl.pth",
+        # scale_factor=0.23010,
+    )
 
     config.train = d(
-        n_steps=500000,
+        name="default",
+        n_steps=200000,
         batch_size=1024,
-        mode="cond",
+        mode="uncond",
         log_interval=10,
-        eval_interval=5000,
-        save_interval=50000,
+        eval_interval=1000,
+        save_interval=10000,
     )
 
     config.optimizer = d(
@@ -33,10 +39,23 @@ def get_config():
 
     config.lr_scheduler = d(name="customized", warmup_steps=5000)
 
+    config.brain_encoder = d(
+        seq_len=169,
+        depth=2,
+        D1=270,
+        D2=64,
+        K=32,
+        n_heads=4,
+        depthwise_ksize=31,
+        pos_enc_type="abs",
+        d_drop=0.1,
+        p_drop=0.1,
+    )
+
     config.nnet = d(
         name="uvit",
-        img_size=64,
-        patch_size=4,
+        img_size=32,
+        patch_size=2,
         in_chans=4,
         embed_dim=1024,
         depth=20,
@@ -44,21 +63,25 @@ def get_config():
         mlp_ratio=4,
         qkv_bias=False,
         mlp_time_embed=False,
-        num_classes=1001,
+        num_classes=-1,
         use_checkpoint=True,
     )
 
     config.dataset = d(
-        name="imagenet512_features",
-        path="assets/datasets/imagenet512_features",
-        cfg=True,
-        p_uncond=0.15,
+        path="data/preprocessed/thingsmeg/4_autoencoder_kl",
+        thingsmeg_dir="/mnt/tsukuyomi/things-meg/",
+        large_test_set=False,
+        chance=False,
+        montage_path="nd/utils/montages/things_meg.npy",
+        # cfg=True,
+        # p_uncond=0.15,
     )
 
     config.sample = d(
-        sample_steps=50,
-        n_samples=50000,
-        mini_batch_size=50,  # the decoder is large
+        steps=50,
+        # n_samples=50000,
+        n_samples_vis=8,
+        mini_batch_size=32,  # the decoder is large
         algorithm="dpm_solver",
         cfg=True,
         scale=0.7,
