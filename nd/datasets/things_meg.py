@@ -8,7 +8,6 @@ from termcolor import cprint
 from tqdm import tqdm
 from typing import Tuple, List, Dict
 import gc
-import ml_collections
 
 from nd.utils.eval_utils import get_run_dir
 
@@ -251,96 +250,6 @@ class ThingsMEGCLIPDataset(ThingsCLIPDatasetBase):
         high_categories = np.append(high_categories, high_categories.max())  # ( 1855, )
 
         return torch.from_numpy(high_categories)[categories]
-
-
-class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
-    def __init__(self, args: ml_collections.FrozenConfigDict) -> None:
-        super().__init__()
-
-        self.preproc_dir = args.path
-        self.large_test_set = args.large_test_set
-        self.num_subjects = 4
-
-        sample_attrs_paths = [
-            os.path.join(args.thingsmeg_dir, f"sourcedata/sample_attributes_P{i+1}.csv")
-            for i in range(self.num_subjects)
-        ]
-
-        subject_idxs_list = []
-        categories_list = []
-        y_idxs_list = []
-        train_idxs_list = []
-        test_idxs_list = []
-        for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
-            # Indexes
-            sample_attrs = np.loadtxt(
-                sample_attrs_path, dtype=str, delimiter=",", skiprows=1
-            )  # ( 27048, 18 )
-
-            categories_list.append(torch.from_numpy(sample_attrs[:, 2].astype(int)))
-            y_idxs_list.append(torch.from_numpy(sample_attrs[:, 1].astype(int)))
-
-            subject_idxs_list.append(torch.ones(len(sample_attrs), dtype=int) * subject_id)
-
-            # Split
-            train_idxs, test_idxs = self.make_split(
-                sample_attrs, large_test_set=self.large_test_set
-            )
-            idx_offset = len(sample_attrs) * subject_id
-            train_idxs_list.append(train_idxs + idx_offset)
-            test_idxs_list.append(test_idxs + idx_offset)
-
-        assert len(set([len(s) for s in subject_idxs_list])) == 1
-        self.num_samples = len(subject_idxs_list[0])
-
-        self.subject_idxs = torch.cat(subject_idxs_list, dim=0)
-
-        self.categories = torch.cat(categories_list) - 1
-        assert torch.equal(self.categories.unique(), torch.arange(self.categories.max() + 1))  # fmt: skip
-        self.num_categories = len(self.categories.unique())
-
-        self.y_idxs = torch.cat(y_idxs_list) - 1
-        assert torch.equal(self.y_idxs.unique(), torch.arange(self.y_idxs.max() + 1))
-
-        self.train_idxs = torch.cat(train_idxs_list, dim=0)
-        self.test_idxs = torch.cat(test_idxs_list, dim=0)
-
-        self.vis_samples: Dict[str, torch.Tensor] = self._load_vis_samples(args.n_vis_samples)
-
-        cprint(f"X, Y: loaded in __getitem__ | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
-
-        del categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
-        gc.collect()
-
-    def _load_vis_samples(self, num_vis_samples: int) -> Dict[str, torch.Tensor]:
-        # fmt: off
-        return {
-            "train_brain": torch.stack([self._load_sample(i, sample_type="MEG") for i in self.train_idxs[:num_vis_samples]]),
-            "train_moments": torch.stack([self._load_sample(i, sample_type="Image_moments") for i in self.train_idxs[:num_vis_samples]]),
-            "test_brain": torch.stack([self._load_sample(i, sample_type="MEG") for i in self.test_idxs[:num_vis_samples]]),
-            "test_moments": torch.stack([self._load_sample(i, sample_type="Image_moments") for i in self.test_idxs[:num_vis_samples]]),
-        }
-        # fmt: on
-
-    def unpreprocess(self, v: torch.Tensor):
-        return (0.5 * (v + 1.0)).clamp(0.0, 1.0)
-
-    @property
-    def data_shape(self):
-        return 4, 32, 32
-
-    @property
-    def fid_stat(self):
-        return os.path.join(self.preproc_dir, "fid_stats_thingsmeg_test.npz")
-
-    def __len__(self) -> int:
-        return len(self.X)
-
-    def __getitem__(self, i):
-        X = self._load_sample(i, sample_type="MEG")
-        Y = self._load_sample(i, sample_type="Image_moments")
-
-        return X, Y, self.subject_idxs[i], self.y_idxs[i], self.categories[i]
 
 
 class ThingsMEGDecoderDataset(torch.utils.data.Dataset):
