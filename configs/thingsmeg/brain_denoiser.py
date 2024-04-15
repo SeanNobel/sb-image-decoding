@@ -14,7 +14,9 @@ def get_config():
     config.z_shape = (4, 32, 32)
     config.wandb_mode = "online"
 
-    config.t_obs = 800  # < n_timestep (= 1000)
+    config.obs_T = False  # Whether to handle x_T as observed or latent variable
+    config.obs_ratio = 0.125
+    config.t_obs = 500  # < n_timestep (= 1000)
 
     config.autoencoder = d(
         # pretrained_path="uvit/assets/stable-diffusion/autoencoder_kl_ema.pth",
