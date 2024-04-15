@@ -16,127 +16,44 @@ from termcolor import cprint
 
 from uvit import libs, utils
 from uvit.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
+
 from uvit.tools.fid_score import calculate_fid_given_paths
 
-from nd.datasets.things_meg import ThingsMEGMomentsDataset
-from nd.utils.uvit_utils import initialize_train_state, get_config_name, get_hparams, sample2dir
-
-
-class Interpolate(object):  # discrete time
-    r"""_betas[0...999] = betas[1...1000]
-    for n>=1, betas[n] is the variance of q(xn|xn-1)
-    for n=0,  betas[0]=0
-    """
-
-    def __init__(self, t_obs: int, linear_start=0.00085, linear_end=0.012, n_timestep=1000):
-        self._betas = self.stable_diffusion_beta_schedule(linear_start, linear_end, n_timestep)
-        self.betas = np.append(0.0, self._betas)
-        self.alphas = 1.0 - self.betas
-        self.T = len(self._betas)
-
-        self.t_obs = t_obs
-        self._betas_obs = self._betas[:t_obs]  # + 1]
-
-        assert isinstance(self.betas, np.ndarray) and self.betas[0] == 0
-        assert isinstance(self.alphas, np.ndarray) and self.alphas[0] == 1
-        assert len(self.betas) == len(self.alphas)
-
-        # skip_alphas[s, t] = alphas[s + 1: t + 1].prod()
-        self.skip_alphas, self.skip_betas = self._get_skip(self.alphas, self.betas)
-        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
-        self.cum_betas = self.skip_betas[0]
-        self.snr = self.cum_alphas / self.cum_betas
-
-        assert np.array_equal(self.alphas.cumprod(), self.cum_alphas)
-        self.cum_alphas_end = np.flip(np.flip(self.alphas).cumprod())
-
-    @staticmethod
-    def stable_diffusion_beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
-        _betas = (
-            torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64) ** 2
-        )
-        return _betas.numpy()
-
-    def tilde_beta(self, s, t):
-        return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
-
-    @staticmethod
-    def _stp(s, ts: torch.Tensor):  # scalar tensor product
-        if isinstance(s, np.ndarray):
-            s = torch.from_numpy(s).type_as(ts)
-        extra_dims = (1,) * (ts.dim() - 1)
-        return s.view(-1, *extra_dims) * ts
-
-    def interpolate(self, x_0: torch.Tensor, x_obs: torch.Tensor):
-        """sample from q(x_t|x_0, x_obs), where t is uniform
-        Args:
-            x_0 (torch.Tensor): _description_
-            x_obs (torch.Tensor): _description_
-        Returns:
-            _type_: _description_
-        """
-        b = x_0.shape[0]
-        t = np.random.choice(list(range(1, self.t_obs + 1)), (b,))
-
-        x_obs = self.rescale(x_obs, x_0)
-        t_obs = np.full(b, self.t_obs)
-        eps = x_obs - self._stp(self.cum_alphas[t_obs] ** 0.5, x_0)
-        eps = self._stp(1 / self.cum_betas[t_obs] ** 0.5, eps)
-
-        x_t = self._sample(t, x_0, eps)
-
-        return torch.tensor(t, device=x_0.device), eps, x_t
-
-    def rescale(self, x_obs, x_0):
-        b, c, h, w = x_obs.shape
-
-        x_obs, x_0 = x_obs.view(b, -1), x_0.view(b, -1)
-
-        # normalize sample-wise
-        x_obs = (x_obs - x_obs.mean(dim=1, keepdim=True)) / x_obs.std(dim=1, keepdim=True)
-        # inverse normalize sample-wise
-        t_obs = np.full(b, self.t_obs)
-        x_obs = self._stp(self.cum_betas[t_obs] ** 0.5, x_obs) + self._stp(self.cum_alphas[t_obs] ** 0.5, x_0)  # fmt: skip
-
-        return x_obs.view(b, c, h, w)
-
-    def _sample(self, t: int, x_0: torch.Tensor, eps: torch.Tensor):
-        return self._stp(self.cum_alphas[t] ** 0.5, x_0) + self._stp(self.cum_betas[t] ** 0.5, eps)
-
-    def __repr__(self):
-        return f"Schedule({self.betas[:10]}..., {self.T})"
-
-    @staticmethod
-    def _get_skip(alphas, betas):
-        N = len(betas) - 1
-
-        skip_alphas = np.ones([N + 1, N + 1], dtype=betas.dtype)
-        for s in range(N + 1):
-            skip_alphas[s, s + 1 :] = alphas[s + 1 :].cumprod()
-
-        skip_betas = np.zeros([N + 1, N + 1], dtype=betas.dtype)
-        for t in range(N + 1):
-            prod = betas[1 : t + 1] * skip_alphas[1 : t + 1, t]
-            skip_betas[:t, t] = (prod[::-1].cumsum())[::-1]
-
-        return skip_alphas, skip_betas
-
-    # def interpolate(self, x_0: torch.Tensor, x_T: torch.Tensor):
-    #     t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
-    #     eps = torch.randn_like(x_0)
-    #     x_t = self._sample(t, x_0, eps)
-    #     cum_alphas_end = torch.from_numpy(self.cum_alphas_end[t]).type_as(x_T)
-    #     x_t_rev = (x_T - self._stp((1.0 - cum_alphas_end) ** 0.5, eps)) / (cum_alphas_end ** 0.5)[:, None, None, None]  # fmt: skip
-    #     x_t = (x_t + x_t_rev) / 2.0
-    #     return torch.tensor(t, device=x_0.device), eps, x_t
+from nd.utils.uvit_utils import (
+    Schedule,
+    Interpolate,
+    ThingsMEGMomentsDataset,
+    initialize_train_state,
+    get_config_name,
+    get_hparams,
+    sample2dir,
+)
 
 
 def p_losses(x_0, x_obs, nnet, schedule, **kwargs):
-    n, eps, x_n = schedule.interpolate(x_0, x_obs)  # n in {1, ..., T}
+    """_summary_
+    Args:
+        x_0 ( b, c, h, w ): _description_
+        x_obs ( b * obs_ratio, c, h, w ) or ( b, c, h, w ): _description_
+        nnet (_type_): _description_
+        schedule (_type_): _description_
+    Returns:
+        _type_: _description_
+    """
+    if isinstance(schedule, Schedule):
+        t, eps, x_t = schedule.sample(x_0)  # n in {1, ..., T}
+    elif isinstance(schedule, Interpolate):
+        t, eps, x_t = schedule.sample(x_0, x_obs)
 
-    eps_pred = nnet(x_n, n, **kwargs)
+    eps_pred = nnet(x_t, t, **kwargs)
 
-    return (eps - eps_pred).pow(2).flatten(start_dim=1).mean(dim=-1)
+    loss = (eps - eps_pred).pow(2).flatten(start_dim=1).mean(dim=-1)
+
+    if isinstance(schedule, Schedule):
+        x_t = schedule.sample_obs(x_0)
+        loss += (x_t - x_obs).pow(2).flatten(start_dim=1).mean(dim=-1)
+
+    return loss
 
 
 def train(config):
@@ -182,11 +99,7 @@ def train(config):
     train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
     test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
 
-    loader_args = {
-        "num_workers": 8,
-        "pin_memory": True,
-        "persistent_workers": True,
-    }
+    loader_args = {"num_workers": 8, "pin_memory": True, "persistent_workers": True}
     train_loader = DataLoader(
         train_set, batch_size=mini_batch_size, shuffle=True, drop_last=True, **loader_args
     )
@@ -225,7 +138,7 @@ def train(config):
 
     data_generator = get_data_generator()
 
-    schedule = Interpolate(config.t_obs)
+    schedule = Interpolate(config.t_obs) if config.obs_T else Schedule(config.t_obs)
     logging.info(f"use {schedule}")
 
     def train_step(_batch):
@@ -239,10 +152,14 @@ def train(config):
         Returns:
             _type_: _description_
         """
+        b = _batch[0].shape[0]
+
         optimizer.zero_grad()
 
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
-        x_obs = brain_encoder(_batch[0])  # ( b, 4, 32, 32 )
+
+        o_obs = _batch[0][: int(b * config.obs_ratio)] if config.obs_T else _batch[0]
+        x_obs = brain_encoder(o_obs)  # ( b * obs_ratio, 4, 32, 32 ) or ( b, 4, 32, 32 )
 
         loss = p_losses(x_0, x_obs, nnet, schedule)
 
@@ -258,20 +175,20 @@ def train(config):
 
         return dict(lr=train_state.optimizer.param_groups[0]["lr"], **_metrics)
 
-    def dpm_solver_sample(_z_init: torch.Tensor, _sample_steps, **kwargs):
+    def dpm_solver_sample(x_init: torch.Tensor, _sample_steps, _betas: np.ndarray, **kwargs):
         noise_schedule = NoiseScheduleVP(
-            schedule="discrete",
-            betas=torch.tensor(schedule._betas_obs, device=device).float(),
+            schedule="discrete", betas=torch.tensor(_betas, device=device).float()
         )
 
         def model_fn(x, t_continuous):
-            t = t_continuous * schedule.t_obs
+            t = t_continuous * schedule.T
             eps_pre = nnet_ema(x, t, **kwargs)
             return eps_pre
 
         dpm_solver = DPM_Solver(model_fn, noise_schedule, predict_x0=True, thresholding=False)
-        _z = dpm_solver.sample(_z_init, steps=_sample_steps, eps=1.0 / schedule.t_obs, T=1.0)
-        return decode(_z)
+        x_0 = dpm_solver.sample(x_init, steps=_sample_steps, eps=1.0 / schedule.T, T=1.0)
+
+        return decode(x_0)
 
     def eval_step(sample_steps):
         n_samples = len(dataset.test_idxs)
@@ -283,16 +200,17 @@ def train(config):
 
         def sample_fn(batch):
             with torch.no_grad():
-                x_obs = brain_encoder(batch[0].to(device))
-                x_0 = autoencoder.sample(batch[1].to(device))
-                x_obs = schedule.rescale(x_obs, x_0)
+                x_init = brain_encoder(batch[0].to(device))
+
+                if config.obs_T:
+                    x_init = schedule.rescale(x_init, autoencoder.sample(batch[1].to(device)))
 
             if config.train.mode == "uncond":
                 kwargs = dict()
             else:
                 raise NotImplementedError("Conditional sampling is not implemented yet.")
 
-            return dpm_solver_sample(x_obs, sample_steps, **kwargs)
+            return dpm_solver_sample(x_init, sample_steps, schedule._betas_obs, **kwargs)
 
         with tempfile.TemporaryDirectory() as temp_path:
             path = config.sample.path or temp_path
@@ -338,21 +256,29 @@ def train(config):
         if train_state.step % config.train.eval_interval == 0:
             # NOTE: training stucks by calling the forward pass only in the main process
             with torch.no_grad():
-                x_obs_train = brain_encoder(dataset.vis_samples["train_brain"].to(device))
-                x_0_train = autoencoder.sample(dataset.vis_samples["train_moments"].to(device))
-                x_obs_train = schedule.rescale(x_obs_train, x_0_train)
+                x_eval = {}
+                for split in ["train", "test"]:
+                    x_init = brain_encoder(dataset.vis_samples[f"{split}_brain"].to(device))
 
-                x_obs_test = brain_encoder(dataset.vis_samples["test_brain"].to(device))
-                x_0_test = autoencoder.sample(dataset.vis_samples["test_moments"].to(device))
-                x_obs_test = schedule.rescale(x_obs_test, x_0_test)
+                    if config.obs_T:
+                        x_0 = autoencoder.sample(dataset.vis_samples[f"{split}_moments"].to(device))
+                        x_init = schedule.rescale(x_init, x_0)
+
+                    x_eval[split] = x_init
+
+                x_eval["rand"] = torch.randn(
+                    config.dataset.n_vis_samples, *config.z_shape, device=device
+                )
 
             if accelerator.is_main_process:
                 torch.cuda.empty_cache()
                 logging.info("Save a grid of images...")
 
-                for split, z_obs in zip(["train", "test"], [x_obs_train, x_obs_test]):
+                for split, x_init in x_eval.items():
+                    _betas = schedule._betas if split == "rand" else schedule._betas_obs
+
                     if config.train.mode == "uncond":
-                        samples = dpm_solver_sample(z_obs, _sample_steps=config.sample.steps)
+                        samples = dpm_solver_sample(x_init, config.sample.steps, _betas)
                     else:
                         raise NotImplementedError("Conditional sampling is not implemented yet.")
 
