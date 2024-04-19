@@ -51,9 +51,11 @@ def p_losses(x_0, x_obs, nnet, schedule, **kwargs):
 
     if isinstance(schedule, Schedule):
         x_t = schedule.sample_obs(x_0)
-        loss += (x_t - x_obs).pow(2).flatten(start_dim=1).mean(dim=-1)
+        obs_loss = (x_t - x_obs).pow(2).flatten(start_dim=1).mean(dim=-1)
+    else:
+        obs_loss = None
 
-    return loss
+    return loss, obs_loss
 
 
 def train(config):
@@ -161,10 +163,15 @@ def train(config):
         o_obs = _batch[0][: int(b * config.obs_ratio)] if config.obs_T else _batch[0]
         x_obs = brain_encoder(o_obs)  # ( b * obs_ratio, 4, 32, 32 ) or ( b, 4, 32, 32 )
 
-        loss = p_losses(x_0, x_obs, nnet, schedule)
+        loss, obs_loss = p_losses(x_0, x_obs, nnet, schedule)
 
         _metrics = dict()
-        _metrics["loss"] = accelerator.gather(loss.detach()).mean()
+        _metrics["p_loss"] = accelerator.gather(loss.detach()).mean()
+
+        if obs_loss is not None:
+            _metrics["o_loss"] = accelerator.gather(obs_loss.detach()).mean()
+
+            loss = loss + obs_loss
 
         accelerator.backward(loss.mean())
         optimizer.step()
