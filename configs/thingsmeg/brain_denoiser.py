@@ -26,12 +26,12 @@ def get_config():
 
     config.train = d(
         name="default",
-        n_steps=200000,
+        n_steps=500000,
         batch_size=1024,
         mode="uncond",
         log_interval=10,
         eval_interval=1000,
-        save_interval=10000,
+        save_interval=50000,
     )
 
     config.optimizer = d(
@@ -44,6 +44,7 @@ def get_config():
     config.lr_scheduler = d(name="customized", warmup_steps=5000)
 
     config.brain_encoder = d(
+        joint=False,  # Whether to learn jointly with the diffusion model
         seq_len=169,
         depth=2,
         D1=270,
@@ -84,11 +85,11 @@ def get_config():
 
     config.sample = d(
         steps=50,
-        # n_samples=50000,
-        mini_batch_size=32,  # the decoder is large
+        n_samples=10000,  # Only used when not training brain encoder jointly
+        mini_batch_size=8,  # the decoder is large
         algorithm="dpm_solver",
         cfg=True,
-        scale=0.7,
+        # scale=0.7,
         path="",
     )
 
