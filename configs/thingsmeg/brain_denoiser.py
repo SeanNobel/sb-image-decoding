@@ -14,6 +14,10 @@ def get_config():
     config.z_shape = (4, 32, 32)
     config.wandb_mode = "online"
 
+    config.obs_T = False  # Whether to handle x_T as observed or latent variable
+    config.t_obs = 800  # 500 # < n_timestep (= 1000)
+    config.obs_ratio = 0.125
+
     config.autoencoder = d(
         # pretrained_path="uvit/assets/stable-diffusion/autoencoder_kl_ema.pth",
         pretrained_path="uvit/assets/stable-diffusion/autoencoder_kl.pth",
@@ -73,6 +77,7 @@ def get_config():
         large_test_set=False,
         chance=False,
         montage_path="nd/utils/montages/things_meg.npy",
+        n_vis_samples=8,
         # cfg=True,
         # p_uncond=0.15,
     )
@@ -80,7 +85,6 @@ def get_config():
     config.sample = d(
         steps=50,
         # n_samples=50000,
-        n_samples_vis=8,
         mini_batch_size=32,  # the decoder is large
         algorithm="dpm_solver",
         cfg=True,
