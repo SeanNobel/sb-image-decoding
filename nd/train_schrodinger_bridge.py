@@ -115,12 +115,12 @@ def train(config):
     autoencoder = libs.autoencoder.get_model(config.autoencoder.pretrained_path)
     autoencoder.to(device)
 
-    brain_encoder = get_brain_encoder(config).eval().to(device)
+    brain_encoder = get_brain_encoder(config)
+    brain_encoder.load_state_dict(
+        torch.load(config.brain_encoder.pretrained_path, map_location="cpu")
+    )
+    brain_encoder.eval().to(device)
     brain_encoder.requires_grad_(False)
-    if config.brain_encoder.pretrained_path is not None:
-        brain_encoder.load_state_dict(
-            torch.load(config.brain_encoder.pretrained_path, map_location=device)
-        )
 
     @torch.cuda.amp.autocast()
     def encode(_batch):
