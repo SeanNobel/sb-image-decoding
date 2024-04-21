@@ -1,3 +1,5 @@
+legacy/
+
 assets/*
 !assets/reports/
 !assets/god_channel_names.csv

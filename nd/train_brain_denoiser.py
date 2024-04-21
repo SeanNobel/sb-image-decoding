@@ -107,7 +107,7 @@ def train(config):
     train_loader = DataLoader(
         train_set, batch_size=mini_batch_size, shuffle=True, drop_last=True, **loader_args
     )
-    if config.brain_encoder.joint:
+    if config.joint:
         test_loader = DataLoader(
             test_set, batch_size=config.sample.mini_batch_size, shuffle=False, drop_last=False, **loader_args  # fmt: skip
         )
@@ -165,7 +165,7 @@ def train(config):
 
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
 
-        if config.brain_encoder.joint:
+        if config.joint:
             o_obs = _batch[0][: int(b * config.obs_ratio)] if config.obs_T else _batch[0]
             x_obs = brain_encoder(o_obs)  # ( b * obs_ratio, 4, 32, 32 ) or ( b, 4, 32, 32 )
         else:
@@ -281,7 +281,7 @@ def train(config):
             # NOTE: training stucks by calling the forward pass only in the main process
             with torch.no_grad():
                 x_eval = {}
-                if config.brain_encoder.joint:
+                if config.joint:
                     for split in ["train", "test"]:
                         x_init = brain_encoder(dataset.vis_samples[f"{split}_brain"].to(device))
 
