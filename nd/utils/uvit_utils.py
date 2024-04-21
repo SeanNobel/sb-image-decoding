@@ -2,6 +2,7 @@ import os, sys
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision.utils import save_image
 import ml_collections
 from pathlib import Path
@@ -13,7 +14,12 @@ import gc
 
 from uvit import utils
 
-from nd.models.brain_encoder import SpatialAttention, ConformerBlock, TransformerBlock
+from nd.models.brain_encoder import (
+    SpatialAttention,
+    ConformerBlock,
+    TemporalAggregation,
+    MLPHead,
+)
 from nd.datasets.things_meg import ThingsCLIPDatasetBase
 from nd.utils.layout import min_max_norm
 
@@ -42,36 +48,67 @@ def get_hparams():
     return hparams
 
 
-def stable_diffusion_beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
-    _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
-    _betas **= 2
+class ScheduleBase(object):
+    def __init__(self, linear_start: float, linear_end: float, T: int):
+        """_betas[0...999] = betas[1...1000]
+        for n>=1, betas[n] is the variance of q(xn|xn-1)
+        for n=0,  betas[0]=0
+        """
+        self._betas = self.stable_diffusion_beta_schedule(linear_start, linear_end, T)
+        self.betas = np.append(0.0, self._betas)
+        self.alphas = 1.0 - self.betas
+        self.T = len(self._betas)
 
-    return _betas.numpy()
+        assert isinstance(self.betas, np.ndarray) and self.betas[0] == 0
+        assert isinstance(self.alphas, np.ndarray) and self.alphas[0] == 1
+        assert len(self.betas) == len(self.alphas)
+
+        # skip_alphas[s, t] = alphas[s + 1: t + 1].prod()
+        self.skip_alphas, self.skip_betas = self._get_skip(self.alphas, self.betas)
+        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
+        self.cum_betas = self.skip_betas[0]
+        self.snr = self.cum_alphas / self.cum_betas
+
+    def _sample(self, t: int, x_0: torch.Tensor, eps: torch.Tensor):
+        return self._stp(self.cum_alphas[t] ** 0.5, x_0) + self._stp(self.cum_betas[t] ** 0.5, eps)
+
+    @staticmethod
+    def stable_diffusion_beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
+        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
+        _betas **= 2
+
+        return _betas.numpy()
+
+    @staticmethod
+    def _stp(s, ts: torch.Tensor):  # scalar tensor product
+        if isinstance(s, np.ndarray):
+            s = torch.from_numpy(s).type_as(ts)
+        extra_dims = (1,) * (ts.dim() - 1)
+        return s.view(-1, *extra_dims) * ts
+
+    @staticmethod
+    def _get_skip(alphas, betas):
+        N = len(betas) - 1
+
+        skip_alphas = np.ones([N + 1, N + 1], dtype=betas.dtype)
+        for s in range(N + 1):
+            skip_alphas[s, s + 1 :] = alphas[s + 1 :].cumprod()
+
+        skip_betas = np.zeros([N + 1, N + 1], dtype=betas.dtype)
+        for t in range(N + 1):
+            prod = betas[1 : t + 1] * skip_alphas[1 : t + 1, t]
+            skip_betas[:t, t] = (prod[::-1].cumsum())[::-1]
+
+        return skip_alphas, skip_betas
+
+    def tilde_beta(self, s, t):
+        return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
+
+    def __repr__(self):
+        return f"Schedule({self.betas[:10]}..., {self.T})"
 
 
-def stp(s, ts: torch.Tensor):  # scalar tensor product
-    if isinstance(s, np.ndarray):
-        s = torch.from_numpy(s).type_as(ts)
-    extra_dims = (1,) * (ts.dim() - 1)
-    return s.view(-1, *extra_dims) * ts
-
-
-def get_skip(alphas, betas):
-    N = len(betas) - 1
-
-    skip_alphas = np.ones([N + 1, N + 1], dtype=betas.dtype)
-    for s in range(N + 1):
-        skip_alphas[s, s + 1 :] = alphas[s + 1 :].cumprod()
-
-    skip_betas = np.zeros([N + 1, N + 1], dtype=betas.dtype)
-    for t in range(N + 1):
-        prod = betas[1 : t + 1] * skip_alphas[1 : t + 1, t]
-        skip_betas[:t, t] = (prod[::-1].cumsum())[::-1]
-
-    return skip_alphas, skip_betas
-
-
-class Schedule(object):  # discrete time
+class Schedule(ScheduleBase):
     def __init__(
         self,
         t_obs: int,
@@ -79,37 +116,17 @@ class Schedule(object):  # discrete time
         linear_end: float = 0.012,
         T: int = 1000,
     ):
-        r"""_betas[0...999] = betas[1...1000]
-        for n>=1, betas[n] is the variance of q(xn|xn-1)
-        for n=0,  betas[0]=0
-        """
-        self._betas = stable_diffusion_beta_schedule(linear_start, linear_end, T)
-        self.betas = np.append(0.0, self._betas)
-        self.alphas = 1.0 - self.betas
-        self.T = len(self._betas)
+        super().__init__(linear_start, linear_end, T)
 
         self.t_obs = t_obs
         self._betas_obs = self._betas[:t_obs]  # + 1]
-
-        assert isinstance(self.betas, np.ndarray) and self.betas[0] == 0
-        assert isinstance(self.alphas, np.ndarray) and self.alphas[0] == 1
-        assert len(self.betas) == len(self.alphas)
-
-        # skip_alphas[s, t] = alphas[s + 1: t + 1].prod()
-        self.skip_alphas, self.skip_betas = get_skip(self.alphas, self.betas)
-        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
-        self.cum_betas = self.skip_betas[0]
-        self.snr = self.cum_alphas / self.cum_betas
-
-    def tilde_beta(self, s, t):
-        return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
 
     def sample(self, x_0: torch.Tensor):
         t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
 
         eps = torch.randn_like(x_0)
 
-        x_t = stp(self.cum_alphas[t] ** 0.5, x_0) + stp(self.cum_betas[t] ** 0.5, eps)
+        x_t = self._sample(t, x_0, eps)
 
         return torch.tensor(t, device=x_0.device), eps, x_t
 
@@ -118,20 +135,10 @@ class Schedule(object):  # discrete time
 
         eps = torch.randn_like(x_0)
 
-        return stp(self.cum_alphas[t] ** 0.5, x_0) + stp(self.cum_betas[t] ** 0.5, eps)
-
-    def __repr__(self):
-        return f"Schedule({self.betas[:10]}..., {self.T})"
+        return self._sample(t, x_0, eps)
 
 
-class Interpolate(object):  # discrete time
-    """_betas[0...999] = betas[1...1000]
-        for t>=1, betas[t] is the variance of q(x_t | x_t - 1)
-        for t=0,  betas[0]=0
-    Args:
-        object (_type_): _description_
-    """
-
+class Interpolate(ScheduleBase):
     def __init__(
         self,
         t_obs: int,
@@ -139,28 +146,13 @@ class Interpolate(object):  # discrete time
         linear_end: float = 0.012,
         T: int = 1000,
     ):
-        self._betas = stable_diffusion_beta_schedule(linear_start, linear_end, T)
-        self.betas = np.append(0.0, self._betas)
-        self.alphas = 1.0 - self.betas
-        self.T = len(self._betas)
+        super().__init__(linear_start, linear_end, T)
 
         self.t_obs = t_obs
         self._betas_obs = self._betas[:t_obs]  # + 1]
 
-        assert isinstance(self.betas, np.ndarray) and self.betas[0] == 0
-        assert isinstance(self.alphas, np.ndarray) and self.alphas[0] == 1
-        assert len(self.betas) == len(self.alphas)
-
-        self.skip_alphas, self.skip_betas = get_skip(self.alphas, self.betas)
-        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
-        self.cum_betas = self.skip_betas[0]
-        self.snr = self.cum_alphas / self.cum_betas
-
         assert np.array_equal(self.alphas.cumprod(), self.cum_alphas)
         self.cum_alphas_end = np.flip(np.flip(self.alphas).cumprod())
-
-    def tilde_beta(self, s, t):
-        return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
 
     def sample(self, x_0: torch.Tensor, x_obs: Optional[torch.Tensor] = None):
         """sample from q(x_t|x_0, x_obs), where t is uniform
@@ -178,9 +170,9 @@ class Interpolate(object):  # discrete time
             x_obs = self.rescale(x_obs, x_0[:b_obs])
             t_obs = np.full(b_obs, self.t_obs)
 
-            eps_obs = stp(
+            eps_obs = self._stp(
                 1 / self.cum_betas[t_obs] ** 0.5,
-                x_obs - stp(self.cum_alphas[t_obs] ** 0.5, x_0[:b_obs]),
+                x_obs - self._stp(self.cum_alphas[t_obs] ** 0.5, x_0[:b_obs]),
             )
             # cprint(f"Mean: {eps_obs.mean()}, std: {eps_obs.std()}", "yellow")
             eps[:b_obs], t[:b_obs] = eps_obs, t_obs
@@ -200,25 +192,36 @@ class Interpolate(object):  # discrete time
         x_obs = (x_obs - x_obs.mean(dim=1, keepdim=True)) / x_obs.std(dim=1, keepdim=True)
 
         # inverse normalize
-        x_obs = stp(self.cum_betas[t_obs] ** 0.5, x_obs)
-        x_obs += stp(self.cum_alphas[t_obs] ** 0.5, x_0.mean(dim=1, keepdim=True))
+        x_obs = self._stp(self.cum_betas[t_obs] ** 0.5, x_obs)
+        x_obs += self._stp(self.cum_alphas[t_obs] ** 0.5, x_0.mean(dim=1, keepdim=True))
 
         return x_obs.view(b, c, h, w)
 
-    def _sample(self, t: int, x_0: torch.Tensor, eps: torch.Tensor):
-        return stp(self.cum_alphas[t] ** 0.5, x_0) + stp(self.cum_betas[t] ** 0.5, eps)
 
-    def __repr__(self):
-        return f"Schedule({self.betas[:10]}..., {self.T})"
+class Bridge(ScheduleBase):
+    def __init__(self, linear_start: float = 0.00085, linear_end: float = 0.012, T: int = 1000):
+        super().__init__(linear_start, linear_end, T)
 
-    # def interpolate(self, x_0: torch.Tensor, x_T: torch.Tensor):
-    #     t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
-    #     eps = torch.randn_like(x_0)
-    #     x_t = self._sample(t, x_0, eps)
-    #     cum_alphas_end = torch.from_numpy(self.cum_alphas_end[t]).type_as(x_T)
-    #     x_t_rev = (x_T - stp((1.0 - cum_alphas_end) ** 0.5, eps)) / (cum_alphas_end ** 0.5)[:, None, None, None]  # fmt: skip
-    #     x_t = (x_t + x_t_rev) / 2.0
-    #     return torch.tensor(t, device=x_0.device), eps, x_t
+        self.betas_cumsum = self.betas.cumsum()
+        self.betas_cumsum_inv = np.flip(np.flip(self.betas).cumsum())
+
+    def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
+        t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
+
+        var = self.betas_cumsum[t]
+        var_bar = self.betas_cumsum_inv[t]
+
+        mu = self._stp(var_bar / (var + var_bar), x_0) + self._stp(var / (var + var_bar), x_T)
+        sigma = var * var_bar / (var + var_bar)
+
+        x_t = self._reparameterize(mu, sigma)
+
+        eps = self._stp(1 / np.sqrt(var), x_t - x_0)
+
+        return torch.tensor(t, device=x_0.device), eps, x_t
+
+    def _reparameterize(self, mu, sigma):
+        return mu + self._stp(sigma, torch.randn_like(mu))
 
 
 class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
@@ -320,7 +323,8 @@ class BrainEncoder(nn.Module):
         seq_len: int,
         depth: int = 2,
         D1: int = 270,
-        D2: int = 64,
+        D2: int = 320,
+        D3: int = 2048,
         K: int = 32,
         n_heads: int = 4,
         depthwise_ksize: int = 31,
@@ -332,8 +336,10 @@ class BrainEncoder(nn.Module):
 
         self.out_dims = out_dims  # ( 4, 32, 32 )
 
-        self.spatial_attention = SpatialAttention(loc, D1, K, d_drop)
-        self.conv = nn.Conv1d(D1, D1, kernel_size=1, stride=1)
+        self.spatial_attention = nn.Sequential(
+            SpatialAttention(loc, D1, K, d_drop),
+            nn.Conv1d(D1, D1, kernel_size=1, stride=1),
+        )
 
         self.blocks = nn.Sequential()
         for k in range(depth):
@@ -345,15 +351,22 @@ class BrainEncoder(nn.Module):
                 # TransformerBlock(k, D1, D2, n_heads, seq_len, "sine_abs"),
             )
 
-        self.out_proj = nn.Linear(seq_len, np.prod(out_dims) // D2)
+        self.conv_final = nn.Conv1d(D2, D3, kernel_size=1, stride=1)
+
+        self.temporal_aggregation = TemporalAggregation(seq_len, D3)
+
+        self.clip_head = MLPHead(in_dim=D3, out_dim=768)
+        self.mse_head = MLPHead(in_dim=D3, out_dim=np.prod(out_dims))
 
     def forward(self, X: torch.Tensor):
         X = self.spatial_attention(X)
-        X = self.conv(X)
 
         X = self.blocks(X)  # ( b, D2, t )
+        X = F.gelu(self.conv_final(X))  # ( b, D3, t )
 
-        X = self.out_proj(X)  # ( b, D2, t' )
+        X = self.temporal_aggregation(X)  # ( b, D3, 1 )
+
+        X = self.mse_head(X)  # ( b, 1, 4096 )
 
         return X.reshape(X.shape[0], *self.out_dims)
 
@@ -420,7 +433,7 @@ def get_brain_encoder(config):
 
     use_fp16 = config.mixed_precision == "fp16"
 
-    return BrainEncoder(config.z_shape, loc, use_fp16, **config.brain_encoder)
+    return BrainEncoder(config.z_shape, loc, use_fp16, **config.brain_encoder.arch)
 
 
 def initialize_train_state(config, device):
@@ -433,7 +446,7 @@ def initialize_train_state(config, device):
     logging.info(f"nnet has {utils.cnt_params(nnet)} parameters")
 
     # Build brain encoder
-    if config.brain_encoder.joint:
+    if config.joint:
         brain_encoder = get_brain_encoder(config)
         params += brain_encoder.parameters()
         logging.info(f"brain_encoder has {utils.cnt_params(brain_encoder)} parameters")
@@ -463,9 +476,7 @@ def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn
     idx = 0
 
     if dataloader is None:
-        dataloader = utils.amortize(
-            config.n_samples, config.mini_batch_size * accelerator.num_processes
-        )
+        dataloader = utils.amortize(config.n_samples, config.mini_batch_size)
 
     for batch in tqdm(
         dataloader,
