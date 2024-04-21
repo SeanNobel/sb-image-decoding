@@ -13,6 +13,7 @@ import tempfile
 from absl import logging
 import builtins
 from termcolor import cprint
+from typing import Optional
 
 from uvit import libs, utils
 from uvit.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
@@ -30,7 +31,7 @@ from nd.utils.uvit_utils import (
 )
 
 
-def p_losses(x_0, x_obs, nnet, schedule, **kwargs):
+def p_losses(x_0, x_obs: Optional[torch.Tensor], nnet, schedule, **kwargs):
     """_summary_
     Args:
         x_0 ( b, c, h, w ): _description_
@@ -43,13 +44,14 @@ def p_losses(x_0, x_obs, nnet, schedule, **kwargs):
     if isinstance(schedule, Schedule):
         t, eps, x_t = schedule.sample(x_0)  # n in {1, ..., T}
     elif isinstance(schedule, Interpolate):
+        assert x_obs is not None, "x_obs must be provided for Interpolate schedule"
         t, eps, x_t = schedule.sample(x_0, x_obs)
 
     eps_pred = nnet(x_t, t, **kwargs)
 
     loss = (eps - eps_pred).pow(2).flatten(start_dim=1).mean(dim=-1)
 
-    if isinstance(schedule, Schedule):
+    if isinstance(schedule, Schedule) and x_obs is not None:
         x_t = schedule.sample_obs(x_0)
         obs_loss = (x_t - x_obs).pow(2).flatten(start_dim=1).mean(dim=-1)
     else:
@@ -105,9 +107,12 @@ def train(config):
     train_loader = DataLoader(
         train_set, batch_size=mini_batch_size, shuffle=True, drop_last=True, **loader_args
     )
-    test_loader = DataLoader(
-        test_set, batch_size=config.sample.mini_batch_size, shuffle=False, drop_last=False, **loader_args  # fmt: skip
-    )
+    if config.brain_encoder.joint:
+        test_loader = DataLoader(
+            test_set, batch_size=config.sample.mini_batch_size, shuffle=False, drop_last=False, **loader_args  # fmt: skip
+        )
+    else:
+        test_loader = None
 
     train_state = initialize_train_state(config, device)
 
@@ -160,8 +165,11 @@ def train(config):
 
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
 
-        o_obs = _batch[0][: int(b * config.obs_ratio)] if config.obs_T else _batch[0]
-        x_obs = brain_encoder(o_obs)  # ( b * obs_ratio, 4, 32, 32 ) or ( b, 4, 32, 32 )
+        if config.brain_encoder.joint:
+            o_obs = _batch[0][: int(b * config.obs_ratio)] if config.obs_T else _batch[0]
+            x_obs = brain_encoder(o_obs)  # ( b * obs_ratio, 4, 32, 32 ) or ( b, 4, 32, 32 )
+        else:
+            x_obs = None
 
         loss, obs_loss = p_losses(x_0, x_obs, nnet, schedule)
 
@@ -206,25 +214,32 @@ def train(config):
         )
 
         def sample_fn(batch):
-            with torch.no_grad():
-                x_init = brain_encoder(batch[0].to(device))
+            if isinstance(batch, int):
+                _betas = schedule._betas
+                x_init = torch.randn(batch, *config.z_shape, device=device)
+            else:
+                _betas = schedule._betas_obs
+                with torch.no_grad():
+                    x_init = brain_encoder(batch[0].to(device))
 
-                if config.obs_T:
-                    x_init = schedule.rescale(x_init, autoencoder.sample(batch[1].to(device)))
+                    if config.obs_T:
+                        x_init = schedule.rescale(x_init, autoencoder.sample(batch[1].to(device)))
 
             if config.train.mode == "uncond":
                 kwargs = dict()
             else:
                 raise NotImplementedError("Conditional sampling is not implemented yet.")
 
-            return dpm_solver_sample(x_init, sample_steps, schedule._betas_obs, **kwargs)
+            return dpm_solver_sample(x_init, sample_steps, _betas, **kwargs)
 
         with tempfile.TemporaryDirectory() as temp_path:
             path = config.sample.path or temp_path
             if accelerator.is_main_process:
                 os.makedirs(path, exist_ok=True)
 
-            sample2dir(accelerator, path, test_loader, sample_fn, dataset.unpreprocess)
+            sample2dir(
+                accelerator, path, test_loader, config.sample, sample_fn, dataset.unpreprocess
+            )
 
             _fid = 0
             if accelerator.is_main_process:
@@ -246,14 +261,16 @@ def train(config):
     step_fid = []
     while train_state.step < config.train.n_steps:
         nnet.train()
-        brain_encoder.train()
+        if brain_encoder is not None:
+            brain_encoder.train()
 
         batch = tree_map(lambda x: x.to(device), next(data_generator))
 
         metrics = train_step(batch)
 
         nnet.eval()
-        brain_encoder.eval()
+        if brain_encoder is not None:
+            brain_encoder.eval()
 
         if accelerator.is_main_process and train_state.step % config.train.log_interval == 0:  # fmt: skip
             logging.info(utils.dct2str(dict(step=train_state.step, **metrics)))
@@ -264,14 +281,17 @@ def train(config):
             # NOTE: training stucks by calling the forward pass only in the main process
             with torch.no_grad():
                 x_eval = {}
-                for split in ["train", "test"]:
-                    x_init = brain_encoder(dataset.vis_samples[f"{split}_brain"].to(device))
+                if config.brain_encoder.joint:
+                    for split in ["train", "test"]:
+                        x_init = brain_encoder(dataset.vis_samples[f"{split}_brain"].to(device))
 
-                    if config.obs_T:
-                        x_0 = autoencoder.sample(dataset.vis_samples[f"{split}_moments"].to(device))
-                        x_init = schedule.rescale(x_init, x_0)
+                        if config.obs_T:
+                            x_0 = autoencoder.sample(
+                                dataset.vis_samples[f"{split}_moments"].to(device)
+                            )
+                            x_init = schedule.rescale(x_init, x_0)
 
-                    x_eval[split] = x_init
+                        x_eval[split] = x_init
 
                 x_eval["rand"] = torch.randn(
                     config.dataset.n_vis_samples, *config.z_shape, device=device

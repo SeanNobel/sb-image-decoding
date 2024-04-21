@@ -433,9 +433,13 @@ def initialize_train_state(config, device):
     logging.info(f"nnet has {utils.cnt_params(nnet)} parameters")
 
     # Build brain encoder
-    brain_encoder = get_brain_encoder(config)
-    params += brain_encoder.parameters()
-    logging.info(f"brain_encoder has {utils.cnt_params(brain_encoder)} parameters")
+    if config.brain_encoder.joint:
+        brain_encoder = get_brain_encoder(config)
+        params += brain_encoder.parameters()
+        logging.info(f"brain_encoder has {utils.cnt_params(brain_encoder)} parameters")
+    else:
+        brain_encoder = None
+        logging.info(f"Not learning brain encoder jointly.")
 
     optimizer = utils.get_optimizer(params, **config.optimizer)
     lr_scheduler = utils.get_lr_scheduler(optimizer, **config.lr_scheduler)
@@ -454,9 +458,14 @@ def initialize_train_state(config, device):
     return train_state
 
 
-def sample2dir(accelerator, path, dataloader, sample_fn, unpreprocess_fn=None):
+def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn=None):
     os.makedirs(path, exist_ok=True)
     idx = 0
+
+    if dataloader is None:
+        dataloader = utils.amortize(
+            config.n_samples, config.mini_batch_size * accelerator.num_processes
+        )
 
     for batch in tqdm(
         dataloader,
