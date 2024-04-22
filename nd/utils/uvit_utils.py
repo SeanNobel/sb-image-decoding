@@ -203,8 +203,8 @@ class Bridge(ScheduleBase):
     def __init__(self, linear_start: float = 1e-4, linear_end: float = 2e-2, T: int = 1000):
         super().__init__(linear_start, linear_end, T)
 
-        self.var_fwd = self._betas.cumsum()
-        self.var_bwd = np.flip(np.flip(self._betas).cumsum())
+        self._var_fwd = self._betas.cumsum()
+        self._var_bwd = np.flip(np.flip(self._betas).cumsum())
 
     @staticmethod
     def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
@@ -218,8 +218,8 @@ class Bridge(ScheduleBase):
     def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
         t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
 
-        var_fwd = self.var_fwd[t - 1]
-        var_bwd = self.var_bwd[t - 1]
+        var_fwd = self._var_fwd[t - 1]
+        var_bwd = self._var_bwd[t - 1]
         denom = var_fwd + var_bwd
 
         mu = self._stp(var_bwd / denom, x_0) + self._stp(var_fwd / denom, x_T)
