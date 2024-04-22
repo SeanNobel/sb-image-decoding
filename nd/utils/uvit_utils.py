@@ -54,7 +54,7 @@ class ScheduleBase(object):
         for n>=1, betas[n] is the variance of q(xn|xn-1)
         for n=0,  betas[0]=0
         """
-        self._betas = self.stable_diffusion_beta_schedule(linear_start, linear_end, T)
+        self._betas = self._beta_schedule(linear_start, linear_end, T)
         self.betas = np.append(0.0, self._betas)
         self.alphas = 1.0 - self.betas
         self.T = len(self._betas)
@@ -73,7 +73,8 @@ class ScheduleBase(object):
         return self._stp(self.cum_alphas[t] ** 0.5, x_0) + self._stp(self.cum_betas[t] ** 0.5, eps)
 
     @staticmethod
-    def stable_diffusion_beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
+    def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
+        """Stable Diffusion beta schedule"""
         _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
         _betas **= 2
 
@@ -199,11 +200,21 @@ class Interpolate(ScheduleBase):
 
 
 class Bridge(ScheduleBase):
-    def __init__(self, linear_start: float = 0.00085, linear_end: float = 0.012, T: int = 1000):
+    def __init__(self, linear_start: float = 0.00085, linear_end: float = 0.004, T: int = 1000):
         super().__init__(linear_start, linear_end, T)
 
         self.betas_cumsum = self.betas.cumsum()
         self.betas_cumsum_inv = np.flip(np.flip(self.betas).cumsum())
+
+    @staticmethod
+    def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
+        """symmetric beta schedule"""
+        assert n_timestep % 2 == 0
+
+        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep // 2, dtype=torch.float64)
+        _betas **= 2
+
+        return torch.cat([_betas, _betas.flip([0])]).numpy()
 
     def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
         t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
