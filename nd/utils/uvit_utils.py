@@ -200,39 +200,36 @@ class Interpolate(ScheduleBase):
 
 
 class Bridge(ScheduleBase):
-    def __init__(self, linear_start: float = 0.00085, linear_end: float = 0.004, T: int = 1000):
+    def __init__(self, linear_start: float = 1e-4, linear_end: float = 2e-2, T: int = 1000):
         super().__init__(linear_start, linear_end, T)
 
-        self.betas_cumsum = self.betas.cumsum()
-        self.betas_cumsum_inv = np.flip(np.flip(self.betas).cumsum())
+        self.var_fwd = self._betas.cumsum()
+        self.var_bwd = np.flip(np.flip(self._betas).cumsum())
 
     @staticmethod
     def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
         """symmetric beta schedule"""
         assert n_timestep % 2 == 0
+        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
+        _betas = (_betas**2).numpy()[: n_timestep // 2]
 
-        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep // 2, dtype=torch.float64)
-        _betas **= 2
-
-        return torch.cat([_betas, _betas.flip([0])]).numpy()
+        return np.concatenate([_betas, np.flip(_betas)])
 
     def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
         t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
 
-        var = self.betas_cumsum[t]
-        var_bar = self.betas_cumsum_inv[t]
+        var_fwd = self.var_fwd[t - 1]
+        var_bwd = self.var_bwd[t - 1]
+        denom = var_fwd + var_bwd
 
-        mu = self._stp(var_bar / (var + var_bar), x_0) + self._stp(var / (var + var_bar), x_T)
-        sigma = var * var_bar / (var + var_bar)
+        mu = self._stp(var_bwd / denom, x_0) + self._stp(var_fwd / denom, x_T)
+        sigma = np.sqrt(var_fwd * var_bwd / denom)
 
-        x_t = self._reparameterize(mu, sigma)
+        x_t = mu + self._stp(sigma, torch.randn_like(mu))
 
-        eps = self._stp(1 / np.sqrt(var), x_t - x_0)
+        eps = self._stp(1 / np.sqrt(var_fwd), x_t - x_0)
 
-        return torch.tensor(t, device=x_0.device), eps, x_t
-
-    def _reparameterize(self, mu, sigma):
-        return mu + self._stp(sigma, torch.randn_like(mu))
+        return torch.tensor(t, device=x_0.device), eps.detach(), x_t.detach()
 
 
 class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
