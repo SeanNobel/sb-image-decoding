@@ -140,10 +140,14 @@ def train(config):
     schedule = Bridge()
     logging.info(f"use {schedule}")
 
-    for split in ["train", "test"]:
-        samples_gt = decode(dataset.vis_samples[f"{split}_moments"].to(device))
-        samples_gt = make_grid(dataset.unpreprocess(samples_gt), config.dataset.n_vis_samples // 2)
-        wandb.log({f"{split}_samples_gt": wandb.Image(samples_gt)})
+    if accelerator.is_main_process:
+        for split in ["train", "test"]:
+            samples_gt = autoencoder.sample(dataset.vis_samples[f"{split}_moments"].to(device))
+            samples_gt = decode(samples_gt)
+            samples_gt = make_grid(
+                dataset.unpreprocess(samples_gt), config.dataset.n_vis_samples // 2
+            )
+            wandb.log({f"{split}_samples_gt": wandb.Image(samples_gt)})
 
     def train_step(_batch):
         """_summary_
