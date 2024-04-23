@@ -190,9 +190,9 @@ def train(config):
             pred = nnet_ema(x, t, **kwargs)
 
             t = t.cpu().numpy().astype(int)
-            eps = x - schedule._stp(np.sqrt(schedule._var_fwd[t - 1]), pred)
+            eps = x - schedule._stp(schedule._var_fwd[t - 1] ** 0.5, pred)
             eps = x - schedule._stp(schedule.cum_alphas[t] ** 0.5, eps)
-            eps = schedule._stp(1 / schedule._betas[t] ** 0.5, eps)
+            eps = schedule._stp(1 / schedule.cum_betas[t] ** 0.5, eps)
 
             return eps
 
