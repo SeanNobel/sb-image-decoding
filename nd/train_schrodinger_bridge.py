@@ -187,8 +187,14 @@ def train(config):
 
         def model_fn(x, t_continuous):
             t = t_continuous * schedule.T
-            eps_pre = nnet_ema(x, t, **kwargs)
-            return eps_pre
+            pred = nnet_ema(x, t, **kwargs)
+
+            t = t.cpu().numpy().astype(int)
+            eps = x - schedule._stp(np.sqrt(schedule._var_fwd[t - 1]), pred)
+            eps = x - schedule._stp(schedule.cum_alphas[t] ** 0.5, eps)
+            eps = schedule._stp(1 / schedule._betas[t] ** 0.5, eps)
+
+            return eps
 
         dpm_solver = DPM_Solver(model_fn, noise_schedule, predict_x0=True, thresholding=False)
         x_0 = dpm_solver.sample(x_init, steps=_sample_steps, eps=1.0 / schedule.T, T=1.0)

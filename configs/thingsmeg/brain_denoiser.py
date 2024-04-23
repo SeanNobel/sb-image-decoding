@@ -32,7 +32,7 @@ def get_config():
         mode="uncond",
         log_interval=10,
         eval_interval=1000,
-        save_interval=50000,
+        save_interval=10000,
     )
 
     config.optimizer = d(
