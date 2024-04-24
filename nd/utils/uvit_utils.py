@@ -215,6 +215,7 @@ class Bridge(ScheduleBase):
 
         return np.concatenate([_betas, np.flip(_betas)])
 
+    @staticmethod
     def _gaussian_product_coef(var1, var2):
         denom = var1 + var2
         mu1 = var2 / denom
