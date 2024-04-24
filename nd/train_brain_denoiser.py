@@ -205,12 +205,11 @@ def train(config):
 
         return decode(x_0)
 
-    def eval_step(sample_steps):
+    def eval_step():
         n_samples = len(dataset.test_idxs)
 
         logging.info(
-            f"eval_step: n_samples={n_samples}, sample_steps={sample_steps}"
-            f"mini_batch_size={config.sample.mini_batch_size}"
+            f"eval_step: n_samples={n_samples}, mini_batch_size={config.sample.mini_batch_size}"
         )
 
         def sample_fn(batch):
@@ -230,7 +229,7 @@ def train(config):
             else:
                 raise NotImplementedError("Conditional sampling is not implemented yet.")
 
-            return dpm_solver_sample(x_init, sample_steps, _betas, **kwargs)
+            return dpm_solver_sample(x_init, config.sample.dpm_solver_steps, _betas, **kwargs)
 
         with tempfile.TemporaryDirectory() as temp_path:
             path = config.sample.path or temp_path
@@ -277,7 +276,7 @@ def train(config):
             logging.info(config.workdir)
             wandb.log(metrics, step=train_state.step)
 
-        if train_state.step % config.train.eval_interval == 0:
+        if train_state.step % config.train.vis_interval == 0:
             # NOTE: training stucks by calling the forward pass only in the main process
             with torch.no_grad():
                 x_eval = {}
@@ -305,7 +304,7 @@ def train(config):
                     _betas = schedule._betas if split == "rand" else schedule._betas_obs
 
                     if config.train.mode == "uncond":
-                        samples = dpm_solver_sample(x_init, config.sample.steps, _betas)
+                        samples = dpm_solver_sample(x_init, config.sample.dpm_solver_steps, _betas)
                     else:
                         raise NotImplementedError("Conditional sampling is not implemented yet.")
 
@@ -328,10 +327,12 @@ def train(config):
             if accelerator.local_process_index == 0:
                 train_state.save(os.path.join(config.ckpt_root, f"{train_state.step}.ckpt"))
 
+            torch.cuda.empty_cache()
             accelerator.wait_for_everyone()
 
+        if train_state.step % config.train.eval_interval == 0 or train_state.step == config.train.n_steps:
             # calculate fid of the saved checkpoint
-            fid = eval_step(sample_steps=config.sample.steps)
+            fid = eval_step()
 
             step_fid.append((train_state.step, fid))
             torch.cuda.empty_cache()
@@ -349,7 +350,7 @@ def train(config):
     del metrics
     accelerator.wait_for_everyone()
 
-    eval_step(sample_steps=config.sample.sample_steps)
+    eval_step()
 
 
 from absl import flags

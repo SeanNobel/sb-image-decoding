@@ -31,8 +31,9 @@ def get_config():
         batch_size=1024,
         mode="uncond",
         log_interval=10,
-        eval_interval=1000,
-        save_interval=5000,
+        vis_interval=1000,
+        save_interval=5, # 1000,
+        eval_interval=10, # 50000,
     )
 
     config.optimizer = d(
@@ -88,11 +89,11 @@ def get_config():
     )
 
     config.sample = d(
-        steps=50,
-        n_samples=10000,  # Only used when not training brain encoder jointly
         mini_batch_size=32,  # the decoder is large
         algorithm="ddpm",  # "dpm_solver",
-        cfg=True,
+        dpm_solver_steps=50,
+        n_samples=10000,  # Only used when not training brain encoder jointly
+        # cfg=True,
         # scale=0.7,
         path="",
     )

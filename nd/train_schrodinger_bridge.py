@@ -203,6 +203,7 @@ def train(config):
 
         return decode(x_0)
 
+    @torch.no_grad()
     def ddpm_sample(x_init: torch.Tensor):
         """_summary_
         https://github.com/NVlabs/I2SB/blob/1ffdfaaf05495ef883ece2c1fe991b3049f814cc/i2sb/diffusion.py
@@ -228,19 +229,18 @@ def train(config):
 
         return decode(x_t)
 
-    def eval_step(sample_steps):
+    def eval_step():
         n_samples = len(dataset.test_idxs)
 
         logging.info(
-            f"eval_step: n_samples={n_samples}, sample_steps={sample_steps}"
-            f"mini_batch_size={config.sample.mini_batch_size}"
+            f"eval_step: n_samples={n_samples}, mini_batch_size={config.sample.mini_batch_size}"
         )
 
         def sample_fn(batch):
             x_init = brain_encoder(batch[0].to(device))
 
             if config.sample.algorithm == "dpm_solver":
-                return dpm_solver_sample(x_init, sample_steps, schedule._betas)
+                return dpm_solver_sample(x_init, config.sample.dpm_solver_steps, schedule._betas)
             elif config.sample.algorithm == "ddpm":
                 return ddpm_sample(x_init)
             else:
@@ -287,7 +287,7 @@ def train(config):
             logging.info(config.workdir)
             wandb.log(metrics, step=train_state.step)
 
-        if train_state.step % config.train.eval_interval == 0:
+        if train_state.step % config.train.vis_interval == 0:
             # NOTE: training stucks by calling the forward pass only in the main process
             x_eval = {
                 split: brain_encoder(dataset.vis_samples[f"{split}_brain"].to(device))
@@ -300,7 +300,7 @@ def train(config):
 
                 for split, x_init in x_eval.items():
                     if config.sample.algorithm == "dpm_solver":
-                        samples = dpm_solver_sample(x_init, config.sample.steps, schedule._betas)
+                        samples = dpm_solver_sample(x_init, config.sample.dpm_solver_steps, schedule._betas)
                     elif config.sample.algorithm == "ddpm":
                         samples = ddpm_sample(x_init)
                     else:
@@ -325,10 +325,12 @@ def train(config):
             if accelerator.local_process_index == 0:
                 train_state.save(os.path.join(config.ckpt_root, f"{train_state.step}.ckpt"))
 
+            torch.cuda.empty_cache()
             accelerator.wait_for_everyone()
 
+        if train_state.step % config.train.eval_interval == 0 or train_state.step == config.train.n_steps:
             # calculate fid of the saved checkpoint
-            fid = eval_step(sample_steps=config.sample.steps)
+            fid = eval_step()
 
             step_fid.append((train_state.step, fid))
             torch.cuda.empty_cache()
