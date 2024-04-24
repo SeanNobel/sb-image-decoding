@@ -1,7 +1,7 @@
 import os, sys
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler, BatchSampler
 from torch.utils._pytree import tree_map
 from torchvision.utils import make_grid, save_image
 from torch import multiprocessing as mp
@@ -97,8 +97,13 @@ def train(config):
     train_loader = DataLoader(
         train_set, batch_size=mini_batch_size, shuffle=True, drop_last=True, **loader_args
     )
-    test_loader = DataLoader(
-        test_set, batch_size=config.sample.mini_batch_size, shuffle=False, drop_last=False, **loader_args  # fmt: skip
+    # test_loader = DataLoader(
+    #     test_set, batch_size=config.sample.mini_batch_size, shuffle=False, drop_last=False, **loader_args  # fmt: skip
+    # )
+    test_loader = BatchSampler(
+        RandomSampler(test_set, num_samples=config.sample.mini_batch_size),
+        config.sample.mini_batch_size,
+        drop_last=False,
     )
 
     train_state = initialize_train_state(config, device)
@@ -300,7 +305,9 @@ def train(config):
 
                 for split, x_init in x_eval.items():
                     if config.sample.algorithm == "dpm_solver":
-                        samples = dpm_solver_sample(x_init, config.sample.dpm_solver_steps, schedule._betas)
+                        samples = dpm_solver_sample(
+                            x_init, config.sample.dpm_solver_steps, schedule._betas
+                        )
                     elif config.sample.algorithm == "ddpm":
                         samples = ddpm_sample(x_init)
                     else:
@@ -328,7 +335,10 @@ def train(config):
             torch.cuda.empty_cache()
             accelerator.wait_for_everyone()
 
-        if train_state.step % config.train.eval_interval == 0 or train_state.step == config.train.n_steps:
+        if (
+            train_state.step % config.train.eval_interval == 0
+            or train_state.step == config.train.n_steps
+        ):
             # calculate fid of the saved checkpoint
             fid = eval_step()
 
