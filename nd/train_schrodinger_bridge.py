@@ -49,6 +49,8 @@ def p_losses(x_0, x_T, nnet, schedule: Bridge, **kwargs):
 
 
 def train(config):
+    assert config.train.mode == "uncond", "Conditioning is not supprted."
+
     if config.get("benchmark", False):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
@@ -201,6 +203,31 @@ def train(config):
 
         return decode(x_0)
 
+    def ddpm_sample(x_init: torch.Tensor):
+        """_summary_
+        https://github.com/NVlabs/I2SB/blob/1ffdfaaf05495ef883ece2c1fe991b3049f814cc/i2sb/diffusion.py
+        Args:
+            x_init (torch.Tensor): _description_
+        """
+
+        def pred_x0_fn(x_t, t: int):  # t: [1000, 999, ..., 2]
+            t = np.full(x_t.shape[0], t, dtype=int)
+            pred = nnet_ema(x_t, torch.from_numpy(t).to(x_t))
+
+            std_fwd = np.sqrt(schedule._var_fwd[t - 1])
+            return x_t - schedule._stp(std_fwd, pred)
+
+        x_t = x_init
+
+        steps = np.arange(1, schedule.T + 1)[::-1]  # [1000, 999, ..., 2, 1]
+        for prev_step, step in tqdm(
+            zip(steps[1:], steps[:-1]), desc="DDPM sampling", total=schedule.T - 1
+        ):
+            pred_x_0 = pred_x0_fn(x_t, step)
+            x_t = schedule.p_posterior(prev_step, step, x_t, pred_x_0)
+
+        return decode(x_t)
+
     def eval_step(sample_steps):
         n_samples = len(dataset.test_idxs)
 
@@ -212,12 +239,12 @@ def train(config):
         def sample_fn(batch):
             x_init = brain_encoder(batch[0].to(device))
 
-            if config.train.mode == "uncond":
-                kwargs = dict()
+            if config.sample.algorithm == "dpm_solver":
+                return dpm_solver_sample(x_init, sample_steps, schedule._betas)
+            elif config.sample.algorithm == "ddpm":
+                return ddpm_sample(x_init)
             else:
-                raise NotImplementedError("Conditional sampling is not implemented yet.")
-
-            return dpm_solver_sample(x_init, sample_steps, schedule._betas, **kwargs)
+                raise ValueError(f"Unknown sampling algorithm: {config.sample.algorithm}")
 
         with tempfile.TemporaryDirectory() as temp_path:
             path = config.sample.path or temp_path
@@ -272,10 +299,12 @@ def train(config):
                 logging.info("Save a grid of images...")
 
                 for split, x_init in x_eval.items():
-                    if config.train.mode == "uncond":
+                    if config.sample.algorithm == "dpm_solver":
                         samples = dpm_solver_sample(x_init, config.sample.steps, schedule._betas)
+                    elif config.sample.algorithm == "ddpm":
+                        samples = ddpm_sample(x_init)
                     else:
-                        raise NotImplementedError("Conditional sampling is not implemented yet.")
+                        raise ValueError(f"Unknown sampling algorithm: {config.sample.algorithm}")
 
                     samples = make_grid(
                         dataset.unpreprocess(samples), config.dataset.n_vis_samples // 2

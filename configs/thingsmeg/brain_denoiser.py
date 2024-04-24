@@ -91,7 +91,7 @@ def get_config():
         steps=50,
         n_samples=10000,  # Only used when not training brain encoder jointly
         mini_batch_size=32,  # the decoder is large
-        algorithm="dpm_solver",
+        algorithm="ddpm",  # "dpm_solver",
         cfg=True,
         # scale=0.7,
         path="",
