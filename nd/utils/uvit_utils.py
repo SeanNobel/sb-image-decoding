@@ -215,21 +215,51 @@ class Bridge(ScheduleBase):
 
         return np.concatenate([_betas, np.flip(_betas)])
 
+    def _gaussian_product_coef(var1, var2):
+        denom = var1 + var2
+        mu1 = var2 / denom
+        mu2 = var1 / denom
+        var = var1 * var2 / denom
+
+        return mu1, mu2, var**0.5
+
     def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
         t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
 
         var_fwd = self._var_fwd[t - 1]
         var_bwd = self._var_bwd[t - 1]
-        denom = var_fwd + var_bwd
 
-        mu = self._stp(var_bwd / denom, x_0) + self._stp(var_fwd / denom, x_T)
-        sigma = np.sqrt(var_fwd * var_bwd / denom)
+        mu_0, mu_T, sigma = self._gaussian_product_coef(var_fwd, var_bwd)
+        mu = self._stp(mu_0, x_0) + self._stp(mu_T, x_T)
 
         x_t = mu + self._stp(sigma, torch.randn_like(mu))
 
         eps = self._stp(1 / np.sqrt(var_fwd), x_t - x_0)
 
         return torch.tensor(t, device=x_0.device), eps.detach(), x_t.detach()
+
+    def p_posterior(self, t_prev: int, t: int, x_t, x_0):
+        """_summary_
+        Args:
+            t_prev (int): [999, ..., 1]
+            t (int): [1000, ..., 2]
+            x_t (_type_): _description_
+            x_0 (_type_): _description_
+        Returns:
+            _type_: _description_
+        """
+        var = self._var_fwd[t - 1]
+        var_prev = self._var_fwd[t_prev - 1]
+        var_delta = var - var_prev
+
+        mu_0, mu_t, sigma = self._gaussian_product_coef(var_prev, var_delta)
+
+        x_t_prev = mu_0 * x_0 + mu_t * x_t
+
+        if t_prev > 1:
+            x_t_prev += sigma * torch.randn_like(x_t_prev)
+
+        return x_t_prev
 
 
 class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
