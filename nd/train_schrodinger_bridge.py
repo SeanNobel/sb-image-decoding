@@ -97,13 +97,12 @@ def train(config):
     train_loader = DataLoader(
         train_set, batch_size=mini_batch_size, shuffle=True, drop_last=True, **loader_args
     )
-    # test_loader = DataLoader(
-    #     test_set, batch_size=config.sample.mini_batch_size, shuffle=False, drop_last=False, **loader_args  # fmt: skip
-    # )
-    test_loader = BatchSampler(
-        RandomSampler(test_set, num_samples=config.sample.mini_batch_size),
-        config.sample.mini_batch_size,
+    test_loader = DataLoader(
+        test_set,
+        batch_size=config.sample.mini_batch_size,
+        sampler=RandomSampler(test_set, num_samples=config.sample.mini_batch_size * config.sample.n_batches),
         drop_last=False,
+        **loader_args
     )
 
     train_state = initialize_train_state(config, device)
