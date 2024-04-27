@@ -11,6 +11,7 @@ from typing import Tuple, Dict, Optional
 from termcolor import cprint
 from tqdm import tqdm
 import gc
+import itertools
 
 from uvit import utils
 
@@ -264,7 +265,18 @@ class Bridge(ScheduleBase):
 
 
 class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
-    def __init__(self, args: ml_collections.FrozenConfigDict) -> None:
+    def __init__(
+        self,
+        args: ml_collections.FrozenConfigDict,
+        brain_encoder: Optional[nn.Module] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        """Loads MEG samples in __getitem__ if brain_encoder is None,
+        else loads and encodes all of them in __init__.
+        Args:
+            args (ml_collections.FrozenConfigDict): _description_
+            brain_encoder (Optional[nn.Module], optional): _description_. Defaults to None.
+        """
         super().__init__()
 
         self.preproc_dir = args.path
@@ -309,28 +321,56 @@ class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
         assert torch.equal(self.categories.unique(), torch.arange(self.categories.max() + 1))  # fmt: skip
         self.num_categories = len(self.categories.unique())
 
+        if brain_encoder is not None:
+            self.X = self._load_encode_brain(brain_encoder, device)
+
         self.y_idxs = torch.cat(y_idxs_list) - 1
         assert torch.equal(self.y_idxs.unique(), torch.arange(self.y_idxs.max() + 1))
 
         self.train_idxs = torch.cat(train_idxs_list, dim=0)
         self.test_idxs = torch.cat(test_idxs_list, dim=0)
 
-        self.vis_samples: Dict[str, torch.Tensor] = self._load_vis_samples(args.n_vis_samples)
+        self.vis_samples: Dict[str, torch.Tensor] = self._load_vis_samples(
+            args.n_vis_samples, brain_encoder, device
+        )
 
-        cprint(f"X, Y: loaded in __getitem__ | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
+        cprint(f"X: {self.X.shape if hasattr(self, 'X') else 'loaded in __getitem__'} | Y: loaded in __getitem__ | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
 
         del categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
         gc.collect()
 
-    def _load_vis_samples(self, num_vis_samples: int) -> Dict[str, torch.Tensor]:
-        # fmt: off
-        return {
-            "train_brain": torch.stack([self._load_sample(i, sample_type="MEG") for i in self.train_idxs[:num_vis_samples]]),
-            "train_moments": torch.stack([self._load_sample(i, sample_type="Image_moments") for i in self.train_idxs[:num_vis_samples]]),
-            "test_brain": torch.stack([self._load_sample(i, sample_type="MEG") for i in self.test_idxs[:num_vis_samples]]),
-            "test_moments": torch.stack([self._load_sample(i, sample_type="Image_moments") for i in self.test_idxs[:num_vis_samples]]),
-        }
-        # fmt: on
+    def _load_encode_brain(self, brain_encoder: nn.Module, device: torch.device) -> torch.Tensor:
+        return torch.cat(
+            [
+                brain_encoder(
+                    self._load_sample(i, sample_type="MEG").unsqueeze(0).to(device)
+                ).cpu()
+                for i in tqdm(range(len(self)), desc="Encoding all MEG samples.", total=len(self))
+            ]
+        )
+
+    def _load_vis_samples(
+        self,
+        num_vis_samples: int,
+        brain_encoder: Optional[nn.Module],
+        device: Optional[torch.device],
+    ) -> Dict[str, torch.Tensor]:
+        vis_samples = {}
+        for split, sample_type in itertools.product(
+            ["train", "test"], [("brain", "MEG"), ("moments", "Image_moments")]
+        ):
+            samples = torch.stack(
+                [
+                    self._load_sample(i, sample_type=sample_type[1])
+                    for i in getattr(self, f"{split}_idxs")[:num_vis_samples]
+                ]
+            )
+            if brain_encoder is not None and sample_type[1] == "MEG":
+                samples = brain_encoder(samples.to(device)).cpu()
+
+            vis_samples[f"{split}_{sample_type[0]}"] = samples
+
+        return vis_samples
 
     def unpreprocess(self, v: torch.Tensor):
         return (0.5 * (v + 1.0)).clamp(0.0, 1.0)
@@ -344,10 +384,10 @@ class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
         return os.path.join(self.preproc_dir, "fid_stats_thingsmeg_test.npz")
 
     def __len__(self) -> int:
-        return len(self.X)
+        return self.num_samples * self.num_subjects
 
     def __getitem__(self, i):
-        X = self._load_sample(i, sample_type="MEG")
+        X = self.X[i] if hasattr(self, "X") else self._load_sample(i, sample_type="MEG")
         Y = self._load_sample(i, sample_type="Image_moments")
 
         return X, Y, self.subject_idxs[i], self.y_idxs[i], self.categories[i]
