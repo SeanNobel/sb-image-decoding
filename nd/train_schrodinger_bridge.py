@@ -87,7 +87,17 @@ def train(config):
         builtins.print = lambda *args: None
     logging.info(f"Run on {accelerator.num_processes} devices")
 
-    dataset = ThingsMEGMomentsDataset(config.dataset)
+    autoencoder = libs.autoencoder.get_model(config.autoencoder.pretrained_path)
+    autoencoder.to(device)
+
+    brain_encoder = get_brain_encoder(config)
+    brain_encoder.load_state_dict(
+        torch.load(config.brain_encoder.pretrained_path, map_location="cpu")
+    )
+    brain_encoder.eval().to(device)
+    brain_encoder.requires_grad_(False)
+
+    dataset = ThingsMEGMomentsDataset(config.dataset, brain_encoder)
     assert os.path.exists(dataset.fid_stat)
 
     train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
@@ -117,16 +127,6 @@ def train(config):
     )
     lr_scheduler = train_state.lr_scheduler
     train_state.resume(config.ckpt_root)
-
-    autoencoder = libs.autoencoder.get_model(config.autoencoder.pretrained_path)
-    autoencoder.to(device)
-
-    brain_encoder = get_brain_encoder(config)
-    brain_encoder.load_state_dict(
-        torch.load(config.brain_encoder.pretrained_path, map_location="cpu")
-    )
-    brain_encoder.eval().to(device)
-    brain_encoder.requires_grad_(False)
 
     @torch.cuda.amp.autocast()
     def encode(_batch):
@@ -170,7 +170,7 @@ def train(config):
 
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
 
-        x_T = brain_encoder(_batch[0])  # ( b, 4, 32, 32 )
+        x_T = _batch[0]  # ( b, 4, 32, 32 )
 
         loss = p_losses(x_0, x_T, nnet, schedule)
 
@@ -241,7 +241,7 @@ def train(config):
         )
 
         def sample_fn(batch):
-            x_init = brain_encoder(batch[0].to(device))
+            x_init = batch[0].to(device)
 
             if config.sample.algorithm == "dpm_solver":
                 return dpm_solver_sample(x_init, config.sample.dpm_solver_steps, schedule._betas)
@@ -294,7 +294,7 @@ def train(config):
         if train_state.step % config.train.vis_interval == 0:
             # NOTE: training stucks by calling the forward pass only in the main process
             x_eval = {
-                split: brain_encoder(dataset.vis_samples[f"{split}_brain"].to(device))
+                split: dataset.vis_samples[f"{split}_brain"].to(device)
                 for split in ["train", "test"]
             }
 
