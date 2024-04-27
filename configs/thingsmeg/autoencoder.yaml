@@ -165,12 +165,12 @@ layout: ch_locations_2d # DynamicChanLoc2d
 
 large_test_set: False # True
 
-batch_size: 128
+batch_size: 256
 lr: 3.0e-4 # 0.005
-lr_scheduler: null # cosine or multistep
-lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
-lr_step_gamma: 0.5
-epochs: 1000
+lr_scheduler: multistep # cosine or multistep
+lr_multistep_mlstns: [0.4, 0.8]
+lr_step_gamma: 0.1
+epochs: 200
 
 # acc_topk: [1, 5]
 
