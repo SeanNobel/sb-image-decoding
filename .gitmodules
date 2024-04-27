@@ -1,12 +1,6 @@
-[submodule "encoder4editing"]
-	path = encoder4editing
-	url = https://github.com/SeanNobel/encoder4editing.git
 [submodule "dalle2_video"]
 	path = dalle2-video
 	url = https://github.com/SeanNobel/DALLE2-video.git
-[submodule "brainmagick"]
-	path = brainmagick
-	url = https://github.com/SeanNobel/brainmagick.git
 [submodule "vqtorch"]
 	path = vqtorch
 	url = https://github.com/SeanNobel/vqtorch.git
@@ -16,9 +10,6 @@
 [submodule "U-ViT"]
 	path = uvit
 	url = git@github.com:SeanNobel/U-ViT.git
-[submodule "unidiffuser"]
-	path = unidiffuser
-	url = https://github.com/SeanNobel/unidiffuser.git
 [submodule "fairseq"]
 	path = fairseq
 	url = https://github.com/pytorch/fairseq
