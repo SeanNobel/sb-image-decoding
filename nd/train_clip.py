@@ -16,8 +16,6 @@ from omegaconf import DictConfig, OmegaConf
 import clip
 from transformers import AutoProcessor, CLIPVisionModel
 
-from brainmagick.bm.models.simpleconv import SimpleConv
-
 from nd.datasets.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
@@ -31,7 +29,7 @@ from nd.models import (
     BrainEncoderBase,
     BrainEncoder,
     BrainDecoder,
-    Wav2Vec2ConformerSpatialMixer,
+    # Wav2Vec2ConformerSpatialMixer,
     EEGNetDeep,
     ViT,
     ViViT,
@@ -129,19 +127,11 @@ def build_models(args, dataset, device):
     if args.brain_encoder == "brain_encoder":
         brain_encoder = BrainEncoder(args, subjects).to(device)
 
-    elif args.brain_encoder == "wav2vec2":
-        brain_encoder = Wav2Vec2ConformerSpatialMixer(args, subjects=subjects).to(device)  # fmt: skip
+    # elif args.brain_encoder == "wav2vec2":
+    #     brain_encoder = Wav2Vec2ConformerSpatialMixer(args, subjects=subjects).to(device)  # fmt: skip
 
     elif args.brain_encoder == "eegnet":
         brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
-
-    elif args.brain_encoder == "brainmagick":
-        brain_encoder = SimpleConv(
-            in_channels={"meg": args.num_channels},
-            out_channels=args.F,
-            n_subjects=len(dataset.subject_names),
-            **args.simpleconv,
-        )
     else:
         raise NotImplementedError
 
@@ -165,15 +155,13 @@ def build_models(args, dataset, device):
             ).to(device)
 
         elif args.orig_clip_tokens != args.num_clip_tokens:
-            vision_encoder = MLPTemporalReducer(
-                args.orig_clip_tokens, args.num_clip_tokens
-            ).to(device)
+            vision_encoder = MLPTemporalReducer(args.orig_clip_tokens, args.num_clip_tokens).to(device)  # fmt: skip
 
         elif args.loss == "subspaceclip":
             vision_encoder = SubspaceMapper(args.F, args.subspace_downs).to(device)
 
-        elif args.F == 2:
-            vision_encoder = MLP(args.orig_F, 2).to(device)
+        elif args.F_mse != args.F:
+            vision_encoder = MLP(args.F, args.F_mse).to(device)
     else:
         vision_encoder = eval(args.vision.model)(**args.vision_encoder).to(device)
 
@@ -293,6 +281,7 @@ def train():
             # -----------------------
             #     Vision encoder
             # -----------------------
+            Y_mse = None
             if vision_encoder is None:
                 pass
             elif isinstance(vision_encoder, clip.model.CLIP):
@@ -301,6 +290,8 @@ def train():
             elif isinstance(vision_encoder, GumbelVectorQuantizer):
                 ret_dict = vision_encoder(Y)
                 Y, perplexity = ret_dict["Z"], ret_dict["perplexity"]
+            elif isinstance(vision_encoder, MLP):
+                Y_mse = vision_encoder(Y)
             else:
                 Y = vision_encoder(Y)
 
@@ -339,7 +330,7 @@ def train():
 
             mse_loss = F.mse_loss(
                 rearrange(Z_mse, "b t d -> b (t d)"),
-                rearrange(Y, "b t d -> b (t d)"),
+                Y_mse if Y_mse is not None else rearrange(Y, "b t d -> b (t d)"),
                 reduction=args.reduction,
             )
 
@@ -383,9 +374,7 @@ def train():
             train_metrics["clip_loss"].append(clip_loss.item())
             train_metrics["mse_loss"].append(mse_loss.item())
             train_metrics["topk_accs"].append(topk_accs)
-            train_metrics["z_norms"].append(
-                Z.reshape(Z.shape[0], -1).norm(dim=-1).mean().item()
-            )
+            train_metrics["z_norms"].append(Z.reshape(Z.shape[0], -1).norm(dim=-1).mean().item())
 
             if recon_loss is not None:
                 train_metrics["recon_loss"].append(recon_loss.item())
@@ -433,6 +422,7 @@ def train():
                 # -----------------------
                 #     Vision encoder
                 # -----------------------
+                Y_mse = None
                 if vision_encoder is None:
                     pass
                 elif isinstance(vision_encoder, clip.model.CLIP):
@@ -443,12 +433,12 @@ def train():
                         desc="VisionEncoder (pretrained)",
                     ).float()
                 else:
-                    Y = sequential_apply(
-                        Y, vision_encoder, args.batch_size, desc="VisionEncoder"
-                    )
+                    ret = sequential_apply(Y, vision_encoder, args.batch_size, desc="VisionEncoder")
 
                     if isinstance(vision_encoder, GumbelVectorQuantizer):
-                        Y, perplexity = Y["Z"], Y["perplexity"]
+                        Y, perplexity = ret["Z"], ret["perplexity"]
+                    elif isinstance(vision_encoder, MLP):
+                        Y_mse = ret
 
                 # -----------------------
                 #     Brain encoder
@@ -499,7 +489,7 @@ def train():
 
                 mse_loss = F.mse_loss(
                     rearrange(Z_mse, "b t d -> b (t d)"),
-                    rearrange(Y, "b t d -> b (t d)"),
+                    Y_mse if Y_mse is not None else rearrange(Y, "b t d -> b (t d)"),
                     reduction=args.reduction,
                 )
 
@@ -510,13 +500,11 @@ def train():
                     topk_accs = loss_func.label_accuracy(
                         Z,
                         y_idxs.to(device),
-                        trained_models.vision_encoder,
+                        None if isinstance(vision_encoder, MLP) else vision_encoder,
                         sequential=args.test_with_whole,
                     )
                 else:
-                    topk_accs = loss_func.accuracy(
-                        Z, Y, sequential=args.test_with_whole
-                    )
+                    topk_accs = loss_func.accuracy(Z, Y, sequential=args.test_with_whole)
 
             # -----------------------
             #        Logging
@@ -524,9 +512,7 @@ def train():
             test_metrics["clip_loss"].append(clip_loss.item())
             test_metrics["mse_loss"].append(mse_loss.item())
             test_metrics["topk_accs"].append(topk_accs)
-            test_metrics["z_norms"].append(
-                Z.reshape(Z.shape[0], -1).norm(dim=-1).mean().item()
-            )
+            test_metrics["z_norms"].append(Z.reshape(Z.shape[0], -1).norm(dim=-1).mean().item())
 
             if "vq_loss" in ret_dict:
                 test_metrics["vq_loss"].append(ret_dict["vq_loss"].item())

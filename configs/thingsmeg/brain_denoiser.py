@@ -14,6 +14,7 @@ def get_config():
     config.z_shape = (4, 32, 32)
     config.wandb_mode = "online"
 
+    config.joint = False  # Whether to train brain encoder jointly with the diffusion model
     config.obs_T = False  # Whether to handle x_T as observed or latent variable
     config.t_obs = 800  # 500 # < n_timestep (= 1000)
     config.obs_ratio = 0.125
@@ -27,11 +28,14 @@ def get_config():
     config.train = d(
         name="default",
         n_steps=500000,
-        batch_size=1024,
+        batch_size=1536,
         mode="uncond",
         log_interval=10,
-        eval_interval=1000,
-        save_interval=50000,
+        vis_interval=1000,
+        save_interval=2000,
+        eval_interval=10000,
+        accum_steps=4,
+        use_ema=False,
     )
 
     config.optimizer = d(
@@ -44,17 +48,20 @@ def get_config():
     config.lr_scheduler = d(name="customized", warmup_steps=5000)
 
     config.brain_encoder = d(
-        joint=False,  # Whether to learn jointly with the diffusion model
-        seq_len=169,
-        depth=2,
-        D1=270,
-        D2=64,
-        K=32,
-        n_heads=4,
-        depthwise_ksize=31,
-        pos_enc_type="abs",
-        d_drop=0.1,
-        p_drop=0.1,
+        pretrained_path="runs/thingsmeg/small_test_F_mse-4096_ignore_subjects-True_/brain_encoder_best.pt",
+        arch=d(
+            seq_len=169,
+            depth=2,
+            D1=270,
+            D2=320,
+            D3=2048,
+            K=32,
+            n_heads=4,
+            depthwise_ksize=31,
+            pos_enc_type="abs",
+            d_drop=0.1,
+            p_drop=0.1,
+        ),
     )
 
     config.nnet = d(
@@ -84,11 +91,12 @@ def get_config():
     )
 
     config.sample = d(
-        steps=50,
+        mini_batch_size=32,  # the decoder is large
+        algorithm="ddpm",  # "dpm_solver",
+        dpm_solver_steps=50,
+        n_batches=10,  # Only used for DDPM, which takes longer time to sample and thus uses RandomSampler
         n_samples=10000,  # Only used when not training brain encoder jointly
-        mini_batch_size=8,  # the decoder is large
-        algorithm="dpm_solver",
-        cfg=True,
+        # cfg=True,
         # scale=0.7,
         path="",
     )

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops.layers.torch import Rearrange
-from typing import List
+from typing import List, Optional
 
 
 class DropBlock1D(nn.Module):
@@ -71,15 +71,17 @@ class MLPTemporalReducer(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int):
+    def __init__(self, in_dim: int, out_dim: int, hid_dim: Optional[int] = None):
         super().__init__()
+
+        hid_dim = in_dim if hid_dim is None else hid_dim
 
         self.net = nn.Sequential(
             Rearrange("b t d -> b (t d)"),
-            nn.Linear(in_dim, in_dim // 4),
-            nn.LayerNorm(in_dim // 4),
+            nn.Linear(in_dim, hid_dim),
+            nn.LayerNorm(hid_dim),
             nn.GELU(),
-            nn.Linear(in_dim // 4, out_dim),
+            nn.Linear(hid_dim, out_dim),
         )
 
     def forward(self, X):

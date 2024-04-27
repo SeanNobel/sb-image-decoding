@@ -10,8 +10,7 @@ def timer(func):
 
         end = time()
 
-        # logger.info(f"{func.__name__} took {end - start} seconds")
-        cprint(f"{func.__name__} took {end - start} seconds")
+        cprint(f"{func.__name__} took {end - start} seconds", "yellow")
 
         return result
 

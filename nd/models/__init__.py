@@ -8,7 +8,7 @@ from nd.models.vision_encoders import (
     Unet3DEncoder,
     OpenFaceMapper,
 )
-from nd.models.wav2vec2 import Wav2Vec2ConformerSpatialMixer
+# from nd.models.wav2vec2 import Wav2Vec2ConformerSpatialMixer
 from nd.models.vector_quantizer import (
     GumbelVectorQuantizer,
     GumbelVectorQuantizerV2,

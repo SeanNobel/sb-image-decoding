@@ -2,6 +2,7 @@ import os, sys
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision.utils import save_image
 import ml_collections
 from pathlib import Path
@@ -10,10 +11,16 @@ from typing import Tuple, Dict, Optional
 from termcolor import cprint
 from tqdm import tqdm
 import gc
+import itertools
 
 from uvit import utils
 
-from nd.models.brain_encoder import SpatialAttention, ConformerBlock, TransformerBlock
+from nd.models.brain_encoder import (
+    SpatialAttention,
+    ConformerBlock,
+    TemporalAggregation,
+    MLPHead,
+)
 from nd.datasets.things_meg import ThingsCLIPDatasetBase
 from nd.utils.layout import min_max_norm
 
@@ -42,36 +49,68 @@ def get_hparams():
     return hparams
 
 
-def stable_diffusion_beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
-    _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
-    _betas **= 2
+class ScheduleBase(object):
+    def __init__(self, linear_start: float, linear_end: float, T: int):
+        """_betas[0...999] = betas[1...1000]
+        for n>=1, betas[n] is the variance of q(xn|xn-1)
+        for n=0,  betas[0]=0
+        """
+        self._betas = self._beta_schedule(linear_start, linear_end, T)
+        self.betas = np.append(0.0, self._betas)
+        self.alphas = 1.0 - self.betas
+        self.T = len(self._betas)
 
-    return _betas.numpy()
+        assert isinstance(self.betas, np.ndarray) and self.betas[0] == 0
+        assert isinstance(self.alphas, np.ndarray) and self.alphas[0] == 1
+        assert len(self.betas) == len(self.alphas)
+
+        # skip_alphas[s, t] = alphas[s + 1: t + 1].prod()
+        self.skip_alphas, self.skip_betas = self._get_skip(self.alphas, self.betas)
+        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
+        self.cum_betas = self.skip_betas[0]
+        self.snr = self.cum_alphas / self.cum_betas
+
+    def _sample(self, t: int, x_0: torch.Tensor, eps: torch.Tensor):
+        return self._stp(self.cum_alphas[t] ** 0.5, x_0) + self._stp(self.cum_betas[t] ** 0.5, eps)
+
+    @staticmethod
+    def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
+        """Stable Diffusion beta schedule"""
+        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
+        _betas **= 2
+
+        return _betas.numpy()
+
+    @staticmethod
+    def _stp(s, ts: torch.Tensor):  # scalar tensor product
+        if isinstance(s, np.ndarray):
+            s = torch.from_numpy(s).type_as(ts)
+        extra_dims = (1,) * (ts.dim() - 1)
+        return s.view(-1, *extra_dims) * ts
+
+    @staticmethod
+    def _get_skip(alphas, betas):
+        N = len(betas) - 1
+
+        skip_alphas = np.ones([N + 1, N + 1], dtype=betas.dtype)
+        for s in range(N + 1):
+            skip_alphas[s, s + 1 :] = alphas[s + 1 :].cumprod()
+
+        skip_betas = np.zeros([N + 1, N + 1], dtype=betas.dtype)
+        for t in range(N + 1):
+            prod = betas[1 : t + 1] * skip_alphas[1 : t + 1, t]
+            skip_betas[:t, t] = (prod[::-1].cumsum())[::-1]
+
+        return skip_alphas, skip_betas
+
+    def tilde_beta(self, s, t):
+        return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
+
+    def __repr__(self):
+        return f"Schedule({self.betas[:10]}..., {self.T})"
 
 
-def stp(s, ts: torch.Tensor):  # scalar tensor product
-    if isinstance(s, np.ndarray):
-        s = torch.from_numpy(s).type_as(ts)
-    extra_dims = (1,) * (ts.dim() - 1)
-    return s.view(-1, *extra_dims) * ts
-
-
-def get_skip(alphas, betas):
-    N = len(betas) - 1
-
-    skip_alphas = np.ones([N + 1, N + 1], dtype=betas.dtype)
-    for s in range(N + 1):
-        skip_alphas[s, s + 1 :] = alphas[s + 1 :].cumprod()
-
-    skip_betas = np.zeros([N + 1, N + 1], dtype=betas.dtype)
-    for t in range(N + 1):
-        prod = betas[1 : t + 1] * skip_alphas[1 : t + 1, t]
-        skip_betas[:t, t] = (prod[::-1].cumsum())[::-1]
-
-    return skip_alphas, skip_betas
-
-
-class Schedule(object):  # discrete time
+class Schedule(ScheduleBase):
     def __init__(
         self,
         t_obs: int,
@@ -79,37 +118,17 @@ class Schedule(object):  # discrete time
         linear_end: float = 0.012,
         T: int = 1000,
     ):
-        r"""_betas[0...999] = betas[1...1000]
-        for n>=1, betas[n] is the variance of q(xn|xn-1)
-        for n=0,  betas[0]=0
-        """
-        self._betas = stable_diffusion_beta_schedule(linear_start, linear_end, T)
-        self.betas = np.append(0.0, self._betas)
-        self.alphas = 1.0 - self.betas
-        self.T = len(self._betas)
+        super().__init__(linear_start, linear_end, T)
 
         self.t_obs = t_obs
         self._betas_obs = self._betas[:t_obs]  # + 1]
-
-        assert isinstance(self.betas, np.ndarray) and self.betas[0] == 0
-        assert isinstance(self.alphas, np.ndarray) and self.alphas[0] == 1
-        assert len(self.betas) == len(self.alphas)
-
-        # skip_alphas[s, t] = alphas[s + 1: t + 1].prod()
-        self.skip_alphas, self.skip_betas = get_skip(self.alphas, self.betas)
-        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
-        self.cum_betas = self.skip_betas[0]
-        self.snr = self.cum_alphas / self.cum_betas
-
-    def tilde_beta(self, s, t):
-        return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
 
     def sample(self, x_0: torch.Tensor):
         t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
 
         eps = torch.randn_like(x_0)
 
-        x_t = stp(self.cum_alphas[t] ** 0.5, x_0) + stp(self.cum_betas[t] ** 0.5, eps)
+        x_t = self._sample(t, x_0, eps)
 
         return torch.tensor(t, device=x_0.device), eps, x_t
 
@@ -118,20 +137,10 @@ class Schedule(object):  # discrete time
 
         eps = torch.randn_like(x_0)
 
-        return stp(self.cum_alphas[t] ** 0.5, x_0) + stp(self.cum_betas[t] ** 0.5, eps)
-
-    def __repr__(self):
-        return f"Schedule({self.betas[:10]}..., {self.T})"
+        return self._sample(t, x_0, eps)
 
 
-class Interpolate(object):  # discrete time
-    """_betas[0...999] = betas[1...1000]
-        for t>=1, betas[t] is the variance of q(x_t | x_t - 1)
-        for t=0,  betas[0]=0
-    Args:
-        object (_type_): _description_
-    """
-
+class Interpolate(ScheduleBase):
     def __init__(
         self,
         t_obs: int,
@@ -139,28 +148,13 @@ class Interpolate(object):  # discrete time
         linear_end: float = 0.012,
         T: int = 1000,
     ):
-        self._betas = stable_diffusion_beta_schedule(linear_start, linear_end, T)
-        self.betas = np.append(0.0, self._betas)
-        self.alphas = 1.0 - self.betas
-        self.T = len(self._betas)
+        super().__init__(linear_start, linear_end, T)
 
         self.t_obs = t_obs
         self._betas_obs = self._betas[:t_obs]  # + 1]
 
-        assert isinstance(self.betas, np.ndarray) and self.betas[0] == 0
-        assert isinstance(self.alphas, np.ndarray) and self.alphas[0] == 1
-        assert len(self.betas) == len(self.alphas)
-
-        self.skip_alphas, self.skip_betas = get_skip(self.alphas, self.betas)
-        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
-        self.cum_betas = self.skip_betas[0]
-        self.snr = self.cum_alphas / self.cum_betas
-
         assert np.array_equal(self.alphas.cumprod(), self.cum_alphas)
         self.cum_alphas_end = np.flip(np.flip(self.alphas).cumprod())
-
-    def tilde_beta(self, s, t):
-        return self.skip_betas[s, t] * self.cum_betas[s] / self.cum_betas[t]
 
     def sample(self, x_0: torch.Tensor, x_obs: Optional[torch.Tensor] = None):
         """sample from q(x_t|x_0, x_obs), where t is uniform
@@ -178,9 +172,9 @@ class Interpolate(object):  # discrete time
             x_obs = self.rescale(x_obs, x_0[:b_obs])
             t_obs = np.full(b_obs, self.t_obs)
 
-            eps_obs = stp(
+            eps_obs = self._stp(
                 1 / self.cum_betas[t_obs] ** 0.5,
-                x_obs - stp(self.cum_alphas[t_obs] ** 0.5, x_0[:b_obs]),
+                x_obs - self._stp(self.cum_alphas[t_obs] ** 0.5, x_0[:b_obs]),
             )
             # cprint(f"Mean: {eps_obs.mean()}, std: {eps_obs.std()}", "yellow")
             eps[:b_obs], t[:b_obs] = eps_obs, t_obs
@@ -200,29 +194,89 @@ class Interpolate(object):  # discrete time
         x_obs = (x_obs - x_obs.mean(dim=1, keepdim=True)) / x_obs.std(dim=1, keepdim=True)
 
         # inverse normalize
-        x_obs = stp(self.cum_betas[t_obs] ** 0.5, x_obs)
-        x_obs += stp(self.cum_alphas[t_obs] ** 0.5, x_0.mean(dim=1, keepdim=True))
+        x_obs = self._stp(self.cum_betas[t_obs] ** 0.5, x_obs)
+        x_obs += self._stp(self.cum_alphas[t_obs] ** 0.5, x_0.mean(dim=1, keepdim=True))
 
         return x_obs.view(b, c, h, w)
 
-    def _sample(self, t: int, x_0: torch.Tensor, eps: torch.Tensor):
-        return stp(self.cum_alphas[t] ** 0.5, x_0) + stp(self.cum_betas[t] ** 0.5, eps)
 
-    def __repr__(self):
-        return f"Schedule({self.betas[:10]}..., {self.T})"
+class Bridge(ScheduleBase):
+    def __init__(self, linear_start: float = 1e-4, linear_end: float = 2e-2, T: int = 1000):
+        super().__init__(linear_start, linear_end, T)
 
-    # def interpolate(self, x_0: torch.Tensor, x_T: torch.Tensor):
-    #     t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
-    #     eps = torch.randn_like(x_0)
-    #     x_t = self._sample(t, x_0, eps)
-    #     cum_alphas_end = torch.from_numpy(self.cum_alphas_end[t]).type_as(x_T)
-    #     x_t_rev = (x_T - stp((1.0 - cum_alphas_end) ** 0.5, eps)) / (cum_alphas_end ** 0.5)[:, None, None, None]  # fmt: skip
-    #     x_t = (x_t + x_t_rev) / 2.0
-    #     return torch.tensor(t, device=x_0.device), eps, x_t
+        self._var_fwd = self._betas.cumsum()
+        self._var_bwd = np.flip(np.flip(self._betas).cumsum())
+
+    @staticmethod
+    def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
+        """symmetric beta schedule"""
+        assert n_timestep % 2 == 0
+        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
+        _betas = (_betas**2).numpy()[: n_timestep // 2]
+
+        return np.concatenate([_betas, np.flip(_betas)])
+
+    @staticmethod
+    def _gaussian_product_coef(var1, var2):
+        denom = var1 + var2
+        mu1 = var2 / denom
+        mu2 = var1 / denom
+        var = var1 * var2 / denom
+
+        return mu1, mu2, var**0.5
+
+    def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
+        t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
+
+        var_fwd = self._var_fwd[t - 1]
+        var_bwd = self._var_bwd[t - 1]
+
+        mu_0, mu_T, sigma = self._gaussian_product_coef(var_fwd, var_bwd)
+        mu = self._stp(mu_0, x_0) + self._stp(mu_T, x_T)
+
+        x_t = mu + self._stp(sigma, torch.randn_like(mu))
+
+        eps = self._stp(1 / np.sqrt(var_fwd), x_t - x_0)
+
+        return torch.tensor(t, device=x_0.device), eps.detach(), x_t.detach()
+
+    def p_posterior(self, t_prev: int, t: int, x_t, x_0):
+        """_summary_
+        Args:
+            t_prev (int): [999, ..., 1]
+            t (int): [1000, ..., 2]
+            x_t (_type_): _description_
+            x_0 (_type_): _description_
+        Returns:
+            _type_: _description_
+        """
+        var = self._var_fwd[t - 1]
+        var_prev = self._var_fwd[t_prev - 1]
+        var_delta = var - var_prev
+
+        mu_0, mu_t, sigma = self._gaussian_product_coef(var_prev, var_delta)
+
+        x_t_prev = mu_0 * x_0 + mu_t * x_t
+
+        if t_prev > 1:
+            x_t_prev += sigma * torch.randn_like(x_t_prev)
+
+        return x_t_prev
 
 
 class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
-    def __init__(self, args: ml_collections.FrozenConfigDict) -> None:
+    def __init__(
+        self,
+        args: ml_collections.FrozenConfigDict,
+        brain_encoder: Optional[nn.Module] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        """Loads MEG samples in __getitem__ if brain_encoder is None,
+        else loads and encodes all of them in __init__.
+        Args:
+            args (ml_collections.FrozenConfigDict): _description_
+            brain_encoder (Optional[nn.Module], optional): _description_. Defaults to None.
+        """
         super().__init__()
 
         self.preproc_dir = args.path
@@ -267,28 +321,56 @@ class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
         assert torch.equal(self.categories.unique(), torch.arange(self.categories.max() + 1))  # fmt: skip
         self.num_categories = len(self.categories.unique())
 
+        if brain_encoder is not None:
+            self.X = self._load_encode_brain(brain_encoder, device)
+
         self.y_idxs = torch.cat(y_idxs_list) - 1
         assert torch.equal(self.y_idxs.unique(), torch.arange(self.y_idxs.max() + 1))
 
         self.train_idxs = torch.cat(train_idxs_list, dim=0)
         self.test_idxs = torch.cat(test_idxs_list, dim=0)
 
-        self.vis_samples: Dict[str, torch.Tensor] = self._load_vis_samples(args.n_vis_samples)
+        self.vis_samples: Dict[str, torch.Tensor] = self._load_vis_samples(
+            args.n_vis_samples, brain_encoder, device
+        )
 
-        cprint(f"X, Y: loaded in __getitem__ | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
+        cprint(f"X: {self.X.shape if hasattr(self, 'X') else 'loaded in __getitem__'} | Y: loaded in __getitem__ | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
 
         del categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
         gc.collect()
 
-    def _load_vis_samples(self, num_vis_samples: int) -> Dict[str, torch.Tensor]:
-        # fmt: off
-        return {
-            "train_brain": torch.stack([self._load_sample(i, sample_type="MEG") for i in self.train_idxs[:num_vis_samples]]),
-            "train_moments": torch.stack([self._load_sample(i, sample_type="Image_moments") for i in self.train_idxs[:num_vis_samples]]),
-            "test_brain": torch.stack([self._load_sample(i, sample_type="MEG") for i in self.test_idxs[:num_vis_samples]]),
-            "test_moments": torch.stack([self._load_sample(i, sample_type="Image_moments") for i in self.test_idxs[:num_vis_samples]]),
-        }
-        # fmt: on
+    def _load_encode_brain(self, brain_encoder: nn.Module, device: torch.device) -> torch.Tensor:
+        return torch.cat(
+            [
+                brain_encoder(
+                    self._load_sample(i, sample_type="MEG").unsqueeze(0).to(device)
+                ).cpu()
+                for i in tqdm(range(len(self)), desc="Encoding all MEG samples.", total=len(self))
+            ]
+        )
+
+    def _load_vis_samples(
+        self,
+        num_vis_samples: int,
+        brain_encoder: Optional[nn.Module],
+        device: Optional[torch.device],
+    ) -> Dict[str, torch.Tensor]:
+        vis_samples = {}
+        for split, sample_type in itertools.product(
+            ["train", "test"], [("brain", "MEG"), ("moments", "Image_moments")]
+        ):
+            samples = torch.stack(
+                [
+                    self._load_sample(i, sample_type=sample_type[1])
+                    for i in getattr(self, f"{split}_idxs")[:num_vis_samples]
+                ]
+            )
+            if brain_encoder is not None and sample_type[1] == "MEG":
+                samples = brain_encoder(samples.to(device)).cpu()
+
+            vis_samples[f"{split}_{sample_type[0]}"] = samples
+
+        return vis_samples
 
     def unpreprocess(self, v: torch.Tensor):
         return (0.5 * (v + 1.0)).clamp(0.0, 1.0)
@@ -302,10 +384,10 @@ class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
         return os.path.join(self.preproc_dir, "fid_stats_thingsmeg_test.npz")
 
     def __len__(self) -> int:
-        return len(self.X)
+        return self.num_samples * self.num_subjects
 
     def __getitem__(self, i):
-        X = self._load_sample(i, sample_type="MEG")
+        X = self.X[i] if hasattr(self, "X") else self._load_sample(i, sample_type="MEG")
         Y = self._load_sample(i, sample_type="Image_moments")
 
         return X, Y, self.subject_idxs[i], self.y_idxs[i], self.categories[i]
@@ -320,7 +402,8 @@ class BrainEncoder(nn.Module):
         seq_len: int,
         depth: int = 2,
         D1: int = 270,
-        D2: int = 64,
+        D2: int = 320,
+        D3: int = 2048,
         K: int = 32,
         n_heads: int = 4,
         depthwise_ksize: int = 31,
@@ -332,8 +415,10 @@ class BrainEncoder(nn.Module):
 
         self.out_dims = out_dims  # ( 4, 32, 32 )
 
-        self.spatial_attention = SpatialAttention(loc, D1, K, d_drop)
-        self.conv = nn.Conv1d(D1, D1, kernel_size=1, stride=1)
+        self.spatial_attention = nn.Sequential(
+            SpatialAttention(loc, D1, K, d_drop),
+            nn.Conv1d(D1, D1, kernel_size=1, stride=1),
+        )
 
         self.blocks = nn.Sequential()
         for k in range(depth):
@@ -345,15 +430,22 @@ class BrainEncoder(nn.Module):
                 # TransformerBlock(k, D1, D2, n_heads, seq_len, "sine_abs"),
             )
 
-        self.out_proj = nn.Linear(seq_len, np.prod(out_dims) // D2)
+        self.conv_final = nn.Conv1d(D2, D3, kernel_size=1, stride=1)
+
+        self.temporal_aggregation = TemporalAggregation(seq_len, D3)
+
+        self.clip_head = MLPHead(in_dim=D3, out_dim=768)
+        self.mse_head = MLPHead(in_dim=D3, out_dim=np.prod(out_dims))
 
     def forward(self, X: torch.Tensor):
         X = self.spatial_attention(X)
-        X = self.conv(X)
 
         X = self.blocks(X)  # ( b, D2, t )
+        X = F.gelu(self.conv_final(X))  # ( b, D3, t )
 
-        X = self.out_proj(X)  # ( b, D2, t' )
+        X = self.temporal_aggregation(X)  # ( b, D3, 1 )
+
+        X = self.mse_head(X)  # ( b, 1, 4096 )
 
         return X.reshape(X.shape[0], *self.out_dims)
 
@@ -420,7 +512,7 @@ def get_brain_encoder(config):
 
     use_fp16 = config.mixed_precision == "fp16"
 
-    return BrainEncoder(config.z_shape, loc, use_fp16, **config.brain_encoder)
+    return BrainEncoder(config.z_shape, loc, use_fp16, **config.brain_encoder.arch)
 
 
 def initialize_train_state(config, device):
@@ -433,7 +525,7 @@ def initialize_train_state(config, device):
     logging.info(f"nnet has {utils.cnt_params(nnet)} parameters")
 
     # Build brain encoder
-    if config.brain_encoder.joint:
+    if config.joint:
         brain_encoder = get_brain_encoder(config)
         params += brain_encoder.parameters()
         logging.info(f"brain_encoder has {utils.cnt_params(brain_encoder)} parameters")
@@ -463,9 +555,7 @@ def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn
     idx = 0
 
     if dataloader is None:
-        dataloader = utils.amortize(
-            config.n_samples, config.mini_batch_size * accelerator.num_processes
-        )
+        dataloader = utils.amortize(config.n_samples, config.mini_batch_size)
 
     for batch in tqdm(
         dataloader,

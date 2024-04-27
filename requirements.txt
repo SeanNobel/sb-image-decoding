@@ -4,23 +4,25 @@ mne
 einops
 scikit-learn
 h5py
-pyxdf
+# pyxdf
 pandas
-lxml
-cmake
+# lxml
+# cmake
 # dlib
-av
+# av
 mediapipe
 opencv-python
 wandb
 gdown
 torch
+torchvision
+torchaudio
 natsort
 pytest
 
-dalle2-pytorch==1.14.2
+# dalle2-pytorch==1.14.2
 
-deepspeed
+# deepspeed
 
 # -e git+https://github.com/SeanNobel/DALLE2-video.git@main#egg=dalle2_video
 
@@ -29,5 +31,5 @@ deepspeed
 huggingface_hub
 
 accelerate
-deepspeed
 transformers
+ml-collections
