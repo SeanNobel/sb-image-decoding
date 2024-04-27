@@ -16,8 +16,6 @@ from omegaconf import DictConfig, OmegaConf
 import clip
 from transformers import AutoProcessor, CLIPVisionModel
 
-from brainmagick.bm.models.simpleconv import SimpleConv
-
 from nd.datasets.datasets import (
     YLabGODCLIPDataset,
     YLabE0030CLIPDataset,
@@ -31,7 +29,7 @@ from nd.models import (
     BrainEncoderBase,
     BrainEncoder,
     BrainDecoder,
-    Wav2Vec2ConformerSpatialMixer,
+    # Wav2Vec2ConformerSpatialMixer,
     EEGNetDeep,
     ViT,
     ViViT,
@@ -129,19 +127,11 @@ def build_models(args, dataset, device):
     if args.brain_encoder == "brain_encoder":
         brain_encoder = BrainEncoder(args, subjects).to(device)
 
-    elif args.brain_encoder == "wav2vec2":
-        brain_encoder = Wav2Vec2ConformerSpatialMixer(args, subjects=subjects).to(device)  # fmt: skip
+    # elif args.brain_encoder == "wav2vec2":
+    #     brain_encoder = Wav2Vec2ConformerSpatialMixer(args, subjects=subjects).to(device)  # fmt: skip
 
     elif args.brain_encoder == "eegnet":
         brain_encoder = EEGNetDeep(args, duration=dataset.X.shape[-1]).to(device)
-
-    elif args.brain_encoder == "brainmagick":
-        brain_encoder = SimpleConv(
-            in_channels={"meg": args.num_channels},
-            out_channels=args.F,
-            n_subjects=len(dataset.subject_names),
-            **args.simpleconv,
-        )
     else:
         raise NotImplementedError
 
