@@ -28,12 +28,14 @@ def get_config():
     config.train = d(
         name="default",
         n_steps=500000,
-        batch_size=1024,
+        batch_size=1536,
         mode="uncond",
         log_interval=10,
         vis_interval=1000,
         save_interval=2000,
         eval_interval=10000,
+        accum_steps=4,
+        use_ema=False,
     )
 
     config.optimizer = d(
@@ -92,7 +94,7 @@ def get_config():
         mini_batch_size=32,  # the decoder is large
         algorithm="ddpm",  # "dpm_solver",
         dpm_solver_steps=50,
-        n_batches=10, # Only used for DDPM, which takes longer time to sample and thus uses RandomSampler
+        n_batches=10,  # Only used for DDPM, which takes longer time to sample and thus uses RandomSampler
         n_samples=10000,  # Only used when not training brain encoder jointly
         # cfg=True,
         # scale=0.7,

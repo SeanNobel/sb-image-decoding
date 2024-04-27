@@ -29,6 +29,7 @@ from nd.utils.uvit_utils import (
     get_hparams,
     sample2dir,
 )
+from nd.utils.timer import timer
 
 
 def p_losses(x_0, x_obs: Optional[torch.Tensor], nnet, schedule, **kwargs):
@@ -66,7 +67,7 @@ def train(config):
         torch.backends.cudnn.deterministic = False
 
     mp.set_start_method("spawn", force=True)
-    accelerator = accelerate.Accelerator()
+    accelerator = accelerate.Accelerator(gradient_accumulation_steps=config.train.accum_steps)
     device = accelerator.device
     accelerate.utils.set_seed(config.seed, device_specific=True)
     logging.info(f"Process {accelerator.process_index} using device: {device}")
@@ -86,7 +87,7 @@ def train(config):
             dir=os.path.abspath(config.workdir),
             project="brain_denoiser",
             config=config.to_dict(),
-            name=config.hparams,
+            name=config.train.name,
             job_type="train",
             mode=config.wandb_mode,
         )
@@ -161,8 +162,6 @@ def train(config):
         """
         b = _batch[0].shape[0]
 
-        optimizer.zero_grad()
-
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
 
         if config.joint:
@@ -171,18 +170,21 @@ def train(config):
         else:
             x_obs = None
 
-        loss, obs_loss = p_losses(x_0, x_obs, nnet, schedule)
+        with accelerator.accumulate(nnet):
+            optimizer.zero_grad()
+
+            loss, obs_loss = p_losses(x_0, x_obs, nnet, schedule)
+            if obs_loss is not None:
+                loss = loss + obs_loss
+
+            accelerator.backward(loss.mean())
+            optimizer.step()
 
         _metrics = dict()
         _metrics["p_loss"] = accelerator.gather(loss.detach()).mean()
-
         if obs_loss is not None:
             _metrics["o_loss"] = accelerator.gather(obs_loss.detach()).mean()
 
-            loss = loss + obs_loss
-
-        accelerator.backward(loss.mean())
-        optimizer.step()
         lr_scheduler.step()
 
         train_state.ema_update(config.get("ema_rate", 0.9999))
@@ -195,10 +197,13 @@ def train(config):
             schedule="discrete", betas=torch.tensor(_betas, device=device).float()
         )
 
+        @torch.no_grad()
         def model_fn(x, t_continuous):
             t = t_continuous * schedule.T
-            eps_pre = nnet_ema(x, t, **kwargs)
-            return eps_pre
+
+            _nnet = nnet_ema if nnet_ema is not None else nnet
+
+            return _nnet(x, t, **kwargs)
 
         dpm_solver = DPM_Solver(model_fn, noise_schedule, predict_x0=True, thresholding=False)
         x_0 = dpm_solver.sample(x_init, steps=_sample_steps, eps=1.0 / schedule.T, T=1.0)
@@ -330,7 +335,7 @@ def train(config):
             torch.cuda.empty_cache()
             accelerator.wait_for_everyone()
 
-        if train_state.step % config.train.eval_interval == 0 or train_state.step == config.train.n_steps:
+        if train_state.step % config.train.eval_interval == 0 or train_state.step == config.train.n_steps:  # fmt: skip
             # calculate fid of the saved checkpoint
             fid = eval_step()
 
