@@ -97,7 +97,7 @@ def train(config):
     brain_encoder.eval().to(device)
     brain_encoder.requires_grad_(False)
 
-    dataset = ThingsMEGMomentsDataset(config.dataset, brain_encoder)
+    dataset = ThingsMEGMomentsDataset(config.dataset, brain_encoder, device)
     assert os.path.exists(dataset.fid_stat)
 
     train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
