@@ -12,7 +12,7 @@ pandas
 # av
 mediapipe
 opencv-python
-wandb
+wandb==0.15.0
 gdown
 torch==1.13.1
 torchvision
