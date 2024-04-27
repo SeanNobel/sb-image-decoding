@@ -237,7 +237,7 @@ def train():
         torch.save(model.state_dict(), os.path.join(run_dir, "autoencoder_last.pt"))
 
         # NOTE: This is mean over multiple ks.
-        if np.mean(test_loss) > min_test_loss:
+        if np.mean(test_loss) < min_test_loss:
             cprint(f"New best. Saving models to {run_dir}", color="cyan")
             torch.save(model.state_dict(), os.path.join(run_dir, "autoencoder_best.pt"))
 
