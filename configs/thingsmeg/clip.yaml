@@ -100,6 +100,10 @@ drop_mode: dropout
 
 reduce_time: False
 
+vae: null # ps / vmf / normal / null
+vae_zdim: 10
+sample_l: 2
+
 # ==== Loss ==== #
 loss: clip
 reduction: mean
@@ -137,10 +141,6 @@ orclip_alpha: 0.1
 klclip_alpha: 0.1
 kl_beta: 1.0 # Same meaning as alpha but using beta after variational inference.
 nrclip_alpha: 0.1
-
-vae: null # ps / vmf / normal / null
-vae_zdim: 10
-sample_l: 2
 
 subspace_downs: [2, 3, 4, 4]
 
@@ -182,9 +182,9 @@ num_workers: 8
 seed: 1234
 cuda_id: 0
 
-sweep_count: 2
+sweep_count: 1
 sweep_config:
-  name: F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
+  name: init # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
   method: grid
   metric:
     name: test_top5_acc
@@ -192,8 +192,6 @@ sweep_config:
   parameters:
     F_mse:
       value: 4096
-    ignore_subjects:
-      values: [False, True]
 
     # loss:
     #   value: normregclip

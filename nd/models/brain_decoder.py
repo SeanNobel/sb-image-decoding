@@ -22,29 +22,30 @@ class BrainDecoderBlock(nn.Module):
 
 
 class BrainDecoder(nn.Module):
-    def __init__(self, args):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        temporal_dim: int,
+        mid_channels: int = 256,
+        ksize: int = 3,
+    ):
         super().__init__()
-
-        in_dim: int = args.vae_zdim
-        mid_dim: int = 256
-        num_channels: int = args.num_channels
-        final_temporal_dim: int = int(args.seq_len * args.brain_resample_sfreq)
-        ksize: int = args.conv_block_ksize
 
         # Gradually upsample from ( b, 768, 1 ) to ( b, 271, 169 )
         self.net = nn.Sequential(
             Rearrange("b f -> b f 1"),
-            BrainDecoderBlock(in_dim, mid_dim // 2, 4, ksize),  # ( b, 128, 4 )
-            BrainDecoderBlock(mid_dim // 2, mid_dim, 16, ksize),  # ( b, 256, 16 )
-            BrainDecoderBlock(mid_dim, num_channels, 64, ksize),  # ( b, 271, 64 )
-            nn.Linear(64, final_temporal_dim),  # ( b, 271, 169 )
+            BrainDecoderBlock(in_channels, mid_channels, 4, ksize),  # ( b, 128, 4 )
+            BrainDecoderBlock(mid_channels, mid_channels, 16, ksize),  # ( b, 256, 16 )
+            BrainDecoderBlock(mid_channels, out_channels, 64, ksize),  # ( b, 271, 64 )
+            nn.Linear(64, temporal_dim),  # ( b, 271, 169 )
         )
 
     def forward(self, X: torch.Tensor):
         """_summary_
         Args:
-            X ( l * b, vae_zdim ): _description_
+            X ( b, d ): _description_
         Returns:
-            X ( l * b, c, t ): _description_
+            X ( b, c, t ): _description_
         """
         return self.net(X)

@@ -86,7 +86,7 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
 
         loc = layout.pos[:, :2]  # ( 32, 2 )
 
-    elif args.dataset == "ThingsMEG":
+    elif "ThingsMEG" in args.dataset:
         loc = np.load(args.montage_path)
 
     else:
@@ -119,12 +119,8 @@ def load_god_montage(
     if not return_chnames:
         return montage
 
-    path = os.path.join(
-        freesurfer_dir, subject, "elec_recon", f"{subject}.electrodeNames"
-    )
-    ch_names = [
-        name[0] for name in np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode")
-    ]
+    path = os.path.join(freesurfer_dir, subject, "elec_recon", f"{subject}.electrodeNames")
+    ch_names = [name[0] for name in np.loadtxt(path, delimiter=" ", skiprows=2, dtype="unicode")]
 
     return montage, ch_names
 

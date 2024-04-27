@@ -135,7 +135,9 @@ def build_models(args, dataset, device):
     else:
         raise NotImplementedError
 
-    brain_decoder = BrainDecoder(args).to(device) if args.vae else None
+    brain_decoder = BrainDecoder(
+        args.vae_dim, args.num_channels, int(args.seq_len * args.brain_resample_sfreq)
+    ).to(device) if args.vae else None  # fmt: skip
 
     vision_encoder, preprocess = None, None
 
