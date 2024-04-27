@@ -14,11 +14,12 @@ mediapipe
 opencv-python
 wandb
 gdown
-torch
+torch==1.13.1
 torchvision
 torchaudio
 natsort
 pytest
+string-color
 
 # dalle2-pytorch==1.14.2
 
@@ -27,6 +28,7 @@ pytest
 # -e git+https://github.com/SeanNobel/DALLE2-video.git@main#egg=dalle2_video
 
 # -e git+https://github.com/openai/CLIP.git#egg=clip-1.0
+git+https://github.com/openai/CLIP.git
 
 huggingface_hub
 
