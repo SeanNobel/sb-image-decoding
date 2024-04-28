@@ -13,9 +13,8 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from nd.datasets.things_meg import ThingsCLIPDatasetBase
+from nd.datasets import ThingsMEGBrainDataset, ImageNetEEGBrainDataset
 from nd.models import BrainEncoder, BrainDecoder
-from nd.train_clip import build_dataloaders
 from nd.utils.train_utils import count_parameters
 
 
@@ -37,72 +36,6 @@ class BrainAutoencoder(nn.Module):
             Z = rearrange(Z, "b () f -> b f")
 
         return self.decoder(Z)
-
-
-class ThingsMEGBrainDataset(ThingsCLIPDatasetBase):
-    def __init__(self, args) -> None:
-        super().__init__()
-
-        self.num_subjects = 4
-        self.large_test_set = args.large_test_set
-
-        self.preproc_dir = os.path.join(args.preprocessed_data_dir, args.preproc_name)
-
-        sample_attrs_paths = [
-            os.path.join(args.thingsmeg_dir, f"sourcedata/sample_attributes_P{i+1}.csv")
-            for i in range(self.num_subjects)
-        ]
-
-        X_list = []
-        subject_idxs_list = []
-        categories_list = []
-        train_idxs_list = []
-        test_idxs_list = []
-        for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
-            # MEG
-            X_list.append(torch.load(os.path.join(self.preproc_dir, f"MEG_P{subject_id+1}.pt")))
-            # ( 27048, 271, segment_len )
-
-            # Indexes
-            sample_attrs = np.loadtxt(
-                sample_attrs_path, dtype=str, delimiter=",", skiprows=1
-            )  # ( 27048, 18 )
-
-            categories_list.append(torch.from_numpy(sample_attrs[:, 2].astype(int)))
-
-            subject_idxs_list.append(torch.ones(len(sample_attrs), dtype=int) * subject_id)
-
-            # Split
-            train_idxs, test_idxs = self.make_split(
-                sample_attrs, large_test_set=self.large_test_set
-            )
-            idx_offset = len(sample_attrs) * subject_id
-            train_idxs_list.append(train_idxs + idx_offset)
-            test_idxs_list.append(test_idxs + idx_offset)
-
-        assert len(set([len(X) for X in X_list])) == 1
-        self.num_samples = len(X_list[0])
-
-        self.X = torch.cat(X_list, dim=0)
-        self.subject_idxs = torch.cat(subject_idxs_list, dim=0)
-
-        self.categories = torch.cat(categories_list) - 1
-        assert torch.equal(self.categories.unique(), torch.arange(self.categories.max() + 1))  # fmt: skip
-        self.num_categories = len(self.categories.unique())
-
-        self.train_idxs = torch.cat(train_idxs_list, dim=0)
-        self.test_idxs = torch.cat(test_idxs_list, dim=0)
-
-        cprint(f"X: {self.X.shape} | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
-
-        if args.chance:
-            self.X = self.X[torch.randperm(len(self.X))]
-
-    def __len__(self) -> int:
-        return len(self.X)
-
-    def __getitem__(self, i):
-        return self.X[i], self.subject_idxs[i], self.categories[i]
 
 
 def train():
@@ -137,9 +70,16 @@ def train():
     # -----------------------
     #       Dataloader
     # -----------------------
-    dataset = ThingsMEGBrainDataset(args)
-    train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
-    test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
+    dataset = eval(f"{args.dataset}Dataset")(args)
+
+    if hasattr(dataset, "train_idxs"):
+        train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+        test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
+    else:
+        train_size = int(len(dataset) * 0.8)
+        train_set, test_set = torch.utils.data.random_split(
+            dataset, [train_size, len(dataset) - train_size]
+        )
 
     loader_args = {
         "batch_size": args.batch_size,
@@ -191,7 +131,8 @@ def train():
         #       Train step
         # -----------------------
         model.train()
-        for X, subject_idxs, categories in tqdm(train_loader, desc="Train"):
+        for batch in tqdm(train_loader, desc="Train"):
+            X, subject_idxs, categories = *batch, *[None] * (3 - len(batch))
             X = X.to(device)
 
             X_recon = model(X, subject_idxs)
@@ -207,7 +148,8 @@ def train():
         #       Test step
         # -----------------------
         model.eval()
-        for X, subject_idxs, categories in tqdm(test_loader, desc="Test"):
+        for batch in tqdm(test_loader, desc="Test"):
+            X, subject_idxs, categories = *batch, *[None] * (3 - len(batch))
             X = X.to(device)
 
             with torch.no_grad():
