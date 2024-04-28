@@ -1,0 +1,179 @@
+# ==== Preprocessing ==== #
+preproc_name: 0_init
+
+root: /home/sensho/neuro-diffusion
+eeg_dir: ${root}/data/raw/eeg_cvpr_2017/
+preprocessed_data_dir: ${root}/data/preprocessed/imageneteeg/
+
+# brain_filter_low: 0.1 # Hz
+# brain_filter_high: 250 # Hz
+brain_resample_sfreq: 1000 # Hz
+# clamp_lim: 5.0 # Standard deviation
+
+# ==== Architecture ==== #
+decoder_dim: 256
+
+F: 768 # 768 for OpenAI original / 1024 for Huggingface
+# F_orig: 768
+F_mse: 4096
+
+num_clip_tokens: 1
+
+vision:
+  pretrained: True
+  model: ViT # For face.pretrained=False
+  pretrained_model: ViT-L/14
+  # openai/clip-vit-large-patch14 (Huggingface) or ViT-L/14 (OpenAI)
+  encoded: False # False is basically only for StyleGAN
+
+num_channels: 128
+D1: 270
+D2: 320
+D3: 2048
+K: 32
+spatial_attention: True
+ignore_subjects: False
+blocks: conformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
+num_blocks: 2
+d_drop: 0.1 # Dropout rate for spatial-attention
+p_drop: 0.1 # Dropout rate for conv blocks
+downsample: False # Can be a list of bools with length num_blocks
+final_ksize: 1
+final_stride: 1
+temporal_aggregation: affine # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
+head_activation: True
+conv_block_ksize: 3
+depthwise_ksize: 31
+transformer_heads: 4
+pos_enc: sine_abs # learn / sine_abs / sine_rel / rotary
+
+# =======================================================================================
+# This area is not related to AE training but necessary to reuse BrainEncoder from CLIP
+# =======================================================================================
+
+# Where of the model to apply vector quantization.
+vq: null # null / middle1 (before blocks) / middle2 (after blocks) / end
+vq_type: gumbel # original / affine (= vqtorch basic) / group / residual
+vq_aggregated: False
+vq_num_embeds: 2048
+vq_num_concepts: 16 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
+vq_alpha: 1.0 # How much to weight vq loss(es) against CLIP loss.
+vq_beta: 0.3 # How much to weight encoder regularization term against codebook loss.
+# NOTE that this beta is (1 - beta) in vqtorch paper.
+vq_affine_lr: 0.1 # lr scale for affine parameters
+# EMA. When using EMA for codebook, beta should be zero? https://arxiv.org/abs/2305.08842
+vq_use_ema: False
+vq_gamma: 0.99 # Decay for EMA of codebook.
+vq_epsilon: 1e-5 # Epsilon for EMA of codebook.
+# vqtorch
+vq_kmeans_init: False # Whether to use kmeans++ init
+vq_norm: null # Noralization for input vectors
+vq_cb_norm: null # Normalization for codebook vectors
+vq_sync_nu: 0.2 # Codebook synchronization contribution
+vq_replace_freq: 20 # Frequency to replace dead codes
+vq_alternate: False # Whether to alternate between task loss and vq loss
+# NOTE that vq_beta will be overwritten by 0.0 when vq_alternate is True.
+vq_groups: 4 # Number of groups for group VQ
+vq_share: False # If True, codebook is shared for each sub-vector.
+# lucidrains
+vq_num_quantizers: 16 # Number of quantizers to use
+
+dann: False
+dann_scale: 1.0
+
+drop_mode: dropout
+
+reduce_time: False
+
+vae: null # ps / vmf / normal / null
+vae_zdim: 10
+sample_l: 2
+
+# ==== Loss ==== #
+reduction: mean
+
+# ==== Training ==== #
+project_name: bd_imneteeg_ae
+train_name: init
+
+# seq_onset: 0.0
+seq_len: 0.44 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
+
+dataset: ImageNetEEGBrain
+# image_size: 256
+
+montage_path: ${root}nd/utils/montages/things_meg.npy
+layout: ch_locations_2d # DynamicChanLoc2d
+
+large_test_set: False # True
+
+batch_size: 128
+lr: 3.0e-4 # 0.005
+lr_scheduler: multistep # cosine or multistep
+lr_multistep_mlstns: [0.4, 0.8]
+lr_step_gamma: 0.1
+epochs: 200
+
+# acc_topk: [1, 5]
+
+# accum_grad: False
+
+patience: 15
+
+chance: False
+
+# test_with_whole: True
+
+plot_latents: False
+
+num_workers: 8
+seed: 1234
+cuda_id: 0
+
+sweep_count: 2
+sweep_config:
+  name: init
+  method: grid
+  metric:
+    name: test_top5_acc
+    goal: maximize
+  parameters:
+    decoder_dim:
+      values: [256, 512]
+
+# ==== Evaluation ==== #
+eval:
+  loss: normregclip
+  nrclip_alpha: 0.01
+
+  # batch_size: 8
+  # num_blocks: 2
+
+  # blocks: crate
+  # num_blocks: 8
+  # transformer_heads: 8
+
+  # clip_temp_learn: False
+  # clip_temp_init: 2
+  # loss: orclip
+  # orclip_alpha: 0.5
+
+  # blocks: conformer
+
+  # chance: False
+  # large_test_set: False
+
+  # preproc_name: 3_caption
+  # align_tokens: mean
+
+  # num_blocks: 4
+  # vq: middle1 # null
+  # vq_type: lu_residual
+
+  # vq_num_quantizers: 16
+  # loss: clip
+  # pos_enc: sine_abs
+
+save_vision: False
+as_h5: True
+for_webdataset: False
