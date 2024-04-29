@@ -31,11 +31,17 @@ class BrainAutoencoder(nn.Module):
         )
 
     def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor):
+        Z = self.encode(X, subject_idxs)
+
+        return self.decoder(Z)
+
+    def encode(self, X: torch.Tensor, subject_idxs: torch.Tensor):
         Z = self.encoder(X, subject_idxs)["Z_mse"]
+
         if Z.ndim == 3:
             Z = rearrange(Z, "b () f -> b f")
 
-        return self.decoder(Z)
+        return Z
 
 
 def train():
