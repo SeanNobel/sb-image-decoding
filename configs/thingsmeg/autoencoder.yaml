@@ -201,36 +201,7 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  loss: normregclip
-  nrclip_alpha: 0.01
-
-  # batch_size: 8
-  # num_blocks: 2
-
-  # blocks: crate
-  # num_blocks: 8
-  # transformer_heads: 8
-
-  # clip_temp_learn: False
-  # clip_temp_init: 2
-  # loss: orclip
-  # orclip_alpha: 0.5
-
-  # blocks: conformer
-
-  # chance: False
-  # large_test_set: False
-
-  # preproc_name: 3_caption
-  # align_tokens: mean
-
-  # num_blocks: 4
-  # vq: middle1 # null
-  # vq_type: lu_residual
-
-  # vq_num_quantizers: 16
-  # loss: clip
-  # pos_enc: sine_abs
+  decoder_dim: 256
 
 save_vision: False
 as_h5: True

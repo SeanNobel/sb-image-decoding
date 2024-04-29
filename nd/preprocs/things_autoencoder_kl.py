@@ -10,8 +10,7 @@ from uvit import libs
 
 def run() -> None:
     sample_attrs_paths = [
-        f"/mnt/tsukuyomi/things-meg/sourcedata/sample_attributes_P{i+1}.csv"
-        for i in range(4)
+        f"/mnt/tsukuyomi/things-meg/sourcedata/sample_attributes_P{i+1}.csv" for i in range(4)
     ]
 
     save_dir_ = "/home/sensho/brain2face/data/preprocessed/thingsmeg/4_autoencoder_kl"
@@ -21,7 +20,7 @@ def run() -> None:
     device = "cuda:0"
 
     autoencoder = libs.autoencoder.get_model(
-        "uvit/assets/stable-diffusion/autoencoder_kl.pth", scale_factor=0.23010
+        "uvit/assets/stable-diffusion/autoencoder_kl.pth"  # , scale_factor=0.23010
     ).to(device)
 
     for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
@@ -29,9 +28,7 @@ def run() -> None:
         save_dir = os.path.join(save_dir_, f"Image_moments_P{subject_id+1}")
         os.makedirs(save_dir, exist_ok=True)
 
-        sample_attrs = np.loadtxt(
-            sample_attrs_path, dtype=str, delimiter=",", skiprows=1
-        )
+        sample_attrs = np.loadtxt(sample_attrs_path, dtype=str, delimiter=",", skiprows=1)
 
         # -----------------
         #      Images
