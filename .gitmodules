@@ -13,3 +13,6 @@
 [submodule "fairseq"]
 	path = fairseq
 	url = https://github.com/pytorch/fairseq
+[submodule "conformer"]
+	path = conformer
+	url = https://github.com/sooftware/conformer.git
