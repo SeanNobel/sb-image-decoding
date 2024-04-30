@@ -1,6 +1,3 @@
-[submodule "dalle2_video"]
-	path = dalle2-video
-	url = https://github.com/SeanNobel/DALLE2-video.git
 [submodule "vqtorch"]
 	path = vqtorch
 	url = https://github.com/SeanNobel/vqtorch.git
