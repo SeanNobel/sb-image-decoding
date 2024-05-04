@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 from typing import Optional
+from termcolor import cprint
 
 
 class SelfAttention(nn.Module):
@@ -127,9 +128,7 @@ class Residual(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(
-        self, emb_dim: int, mult: int = 4, residual: bool = True, ff_pdrop: float = 0.1
-    ):
+    def __init__(self, emb_dim: int, mult: int = 4, residual: bool = True, ff_pdrop: float = 0.1):
         super().__init__()
 
         self.net = PreNorm(
@@ -175,9 +174,7 @@ class PositionalEncoding(nn.Module):
         elif pos_enc == "sine":
             assert (emb_dim % 2 == 0), "Cannot use sin/cos positional encoding with odd dim"  # fmt: skip
 
-            self.register_buffer(
-                "dims", torch.arange(0, emb_dim, 2, dtype=torch.float32)
-            )
+            self.register_buffer("dims", torch.arange(0, emb_dim, 2, dtype=torch.float32))
             self.register_buffer(
                 "position", torch.arange(block_size, dtype=torch.float32).unsqueeze(1)
             )
@@ -187,12 +184,15 @@ class PositionalEncoding(nn.Module):
         else:
             raise NotImplementedError
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: torch.Tensor, transpose=False) -> torch.Tensor:
         if self.pos_enc == "learn":
             pe = self.pe
         elif self.pos_enc == "sine":
             # NOTE: Keeping PE method in forward for scale learning.
             pe = self._sinusoidal_pe(X.device)
+
+        if transpose:
+            pe = pe.T
 
         return X + pe.unsqueeze(0)
 
