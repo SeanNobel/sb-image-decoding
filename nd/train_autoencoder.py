@@ -14,34 +14,8 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from nd.datasets import ThingsMEGBrainDataset, ImageNetEEGBrainDataset
-from nd.models import BrainEncoder, BrainDecoder
+from nd.models import BrainAutoencoder, BrainMAE
 from nd.utils.train_utils import count_parameters
-
-
-class BrainAutoencoder(nn.Module):
-    def __init__(self, args, subjects) -> None:
-        super().__init__()
-
-        self.encoder = BrainEncoder(args, subjects)
-        self.decoder = BrainDecoder(
-            args.F_mse,
-            args.num_channels,
-            int(args.seq_len * args.brain_resample_sfreq),
-            mid_channels=args.decoder_dim,
-        )
-
-    def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor):
-        Z = self.encode(X, subject_idxs)
-
-        return self.decoder(Z)
-
-    def encode(self, X: torch.Tensor, subject_idxs: torch.Tensor):
-        Z = self.encoder(X, subject_idxs)["Z_mse"]
-
-        if Z.ndim == 3:
-            Z = rearrange(Z, "b () f -> b f")
-
-        return Z
 
 
 def train():
@@ -54,14 +28,9 @@ def train():
     if sweep:
         wandb.init(config=None)
 
-        run_name += "_" + "".join(
-            [
-                f"{k}-{v:.3f}_" if isinstance(v, float) else f"{k}-{v}_"
-                for k, v in wandb.config.items()
-            ]
-        )
-
+        run_name += "_" + "".join([f"{k}-{v:.3f}_" if isinstance(v, float) else f"{k}-{v}_" for k, v in wandb.config.items()])  # fmt: skip
         wandb.run.name = run_name
+
         args.__dict__.update(wandb.config)
         cprint(wandb.config, "cyan")
         wandb.config.update(args.__dict__)
@@ -77,15 +46,8 @@ def train():
     #       Dataloader
     # -----------------------
     dataset = eval(f"{args.dataset}Dataset")(args)
-
-    if hasattr(dataset, "train_idxs"):
-        train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
-        test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
-    else:
-        train_size = int(len(dataset) * 0.8)
-        train_set, test_set = torch.utils.data.random_split(
-            dataset, [train_size, len(dataset) - train_size]
-        )
+    train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+    test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
 
     loader_args = {
         "batch_size": args.batch_size,
@@ -101,7 +63,10 @@ def train():
     # ---------------------
     subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
 
-    model = BrainAutoencoder(args, subjects).to(device)
+    if args.masked:
+        model = BrainMAE(args, subjects, mask_ratio=args.mask_ratio).to(device)
+    else:
+        model = BrainAutoencoder(args, subjects).to(device)
 
     if sweep:
         wandb.config.update({"brain_encoder_params": count_parameters(model)})

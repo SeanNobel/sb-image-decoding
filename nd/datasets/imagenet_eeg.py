@@ -3,19 +3,30 @@ import torch
 
 
 class ImageNetEEGBrainDataset(torch.utils.data.Dataset):
-    def __init__(self, args):
-        data = torch.load(os.path.join(args.eeg_dir, "eeg_5_95_std.pth"))
+    def __init__(self, args, cv=0):
+        super().__init__()
 
         self.num_subjects = 6
+        self.preproc_dir = os.path.join(args.preproc_dir, args.preproc_name)
 
-        # make it start from 0
-        self.subject_idxs = torch.tensor([d["subject"] for d in data["dataset"]]) - 1
+        self.X = torch.load(os.path.join(self.preproc_dir, "eeg.pt"))
+        self.subject_idxs = torch.load(os.path.join(self.preproc_dir, "subject_idxs.pt"))
 
-        # The dataset authors say 'we discarded the first 20 samples (20 ms) to reduce interference from the previous image and then cut the signal to a common length of 440 samples'. https://github.com/perceivelab/eeg_visual_classification
-        self.eeg = torch.stack([d["eeg"][:, 20:][:, :440] for d in data["dataset"]])
+        self.train_idxs = torch.load(os.path.join(self.preproc_dir, "train_idxs", f"cv{cv+1}.pt"))
+        self.test_idxs = torch.load(os.path.join(self.preproc_dir, "test_idxs", f"cv{cv+1}.pt"))
 
-    def __len__(self):
-        return len(self.eeg)
+    def __len__(self) -> int:
+        return len(self.X)
 
-    def __getitem__(self, idx):
-        return self.eeg[idx], self.subject_idxs[idx]
+    def __getitem__(self, i):
+        return self.X[i], self.subject_idxs[i]
+
+
+class ImageNetEEGCLIPDataset(ImageNetEEGBrainDataset):
+    def __init__(self, args):
+        super().__init__(args)
+
+        self.Y = torch.load(os.path.join(self.preproc_dir, "images_clip.pt"))
+
+    def __getitem__(self, i):
+        return self.X[i], self.subject_idxs[i], self.Y[i]
