@@ -1,15 +1,13 @@
 # ==== Preprocessing ==== #
-preproc_name: 3_caption # 2_huggingface
+preproc_name: 0_init
 
-thingsmeg_dir: /mnt/tsukuyomi/things-meg/
-meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
+root: /home/sensho/neuro-diffusion
+eeg_dir: ${root}/data/raw/eeg_cvpr_2017/
+preprocessed_data_dir: ${root}/data/preprocessed/imageneteeg/
 
-things_dir: /mnt/tsukuyomi/things/osfstorage/THINGS/
-images_dir: ${things_dir}Images/
-metadata_dir: ${things_dir}Metadata/
-
-root: /home/sensho/brain2face/
-preprocessed_data_dir: ${root}data/preprocessed/thingsmeg/
+# things_dir: /mnt/tsukuyomi/things/osfstorage/THINGS/
+# images_dir: ${things_dir}Images/
+# metadata_dir: ${things_dir}Metadata/
 
 skip_meg: True
 skip_images: True
@@ -18,7 +16,7 @@ caption: True
 
 # brain_filter_low: 0.1 # Hz
 # brain_filter_high: 250 # Hz
-brain_resample_sfreq: 120 # Hz
+brain_resample_sfreq: 250 # Hz
 clamp_lim: 5.0 # Standard deviation
 
 # ==== Architecture ==== #
