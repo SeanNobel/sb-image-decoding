@@ -14,6 +14,9 @@ from termcolor import cprint
 from fairseq.fairseq.modules.conformer_layer import ConformerEncoderLayer
 from fairseq.fairseq.modules import RelPositionalEncoding
 
+# from conformer.encoder import ConformerBlock as ConformerBlock2
+from conformer.conformer.encoder import ConformerBlock as ConformerBlock2
+
 from nd.models.vector_quantizer import get_vector_quantizer, AggregatedVectorQuantizer
 from nd.models.transformer import (
     SelfAttention,
@@ -143,7 +146,6 @@ class SubjectBlock(nn.Module):
             self.spatial_attention = SpatialAttention(loc, self.D1, self.K, args.d_drop)
         else:
             cprint("Not using spatial attention.", "yellow")
-            self.spatial_attention = None
 
         self.conv = nn.Conv1d(
             in_channels=self.D1 if args.spatial_attention else args.num_channels,
@@ -165,15 +167,15 @@ class SubjectBlock(nn.Module):
         )
 
     def forward(self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]) -> torch.Tensor:
-        if self.spatial_attention is not None:
-            X = self.spatial_attention(X)  # ( B, 270, 256 )
+        if hasattr(self, "spatial_attention"):
+            X = self.spatial_attention(X)
 
-        X = self.conv(X)  # ( B, 270, 256 )
+        X = self.conv(X)
 
         if subject_idxs is not None:
             X = torch.cat(
                 [self.subject_layer[i](x.unsqueeze(dim=0)) for i, x in zip(subject_idxs, X)]
-            )  # ( B, 270, 256 )
+            )
 
         else:
             cprint("Unknown subject.", "yellow")
@@ -286,30 +288,21 @@ class ConvBlock(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(
         self,
-        k: int,
-        D1: int,
-        D2: int,
+        emb_dim: int,
         n_heads: int,
         block_size: int,
-        pos_enc: Optional[str] = None,
+        rel_pos: bool = False,
         p_drop: float = 0.1,
     ):
         super().__init__()
 
-        emb_dim = D2
+        self.rel_pos = rel_pos
 
-        if k == 0:
-            self.proj = nn.Linear(D1, emb_dim)
-
-        if is_in(pos_enc, "abs"):
-            self.pos_enc = PositionalEncoding(block_size, emb_dim, pos_enc.split("_")[0])
-        elif pos_enc == "sine_rel":
+        if rel_pos:
             self.register_buffer("pos_enc_k", relative_positional_encoding(block_size, self.d_qk))
             # ( t, t, d_qk )
             self.register_buffer("pos_enc_v", relative_positional_encoding(block_size, self.d_v))
             # ( t, t, d_v )
-        else:
-            assert pos_enc is None, f"Unknown positional encoding type: {pos_enc}"
 
         self.attn = Residual(PreNorm(SelfAttention(emb_dim, n_heads, block_size), emb_dim))
 
@@ -324,13 +317,7 @@ class TransformerBlock(nn.Module):
         """
         X = X.permute(0, 2, 1)
 
-        if hasattr(self, "proj"):
-            X = self.proj(X)
-
-        if hasattr(self, "pos_enc"):
-            X = self.pos_enc(X)
-
-        if hasattr(self, "pos_enc_k"):
+        if self.rel_pos:
             X = self.attn(X, self.pos_enc_k, self.pos_enc_v)
         else:
             X = self.attn(X)
@@ -340,51 +327,27 @@ class TransformerBlock(nn.Module):
         return X.permute(0, 2, 1)
 
 
-class CRATEBlock(TransformerBlock):
-    def __init__(
-        self,
-        *args,
-        D2: int,
-        n_heads: int,
-        dim_head: int = 64,
-        p_drop: float = 0.1,
-        step_size: float = 0.1,
-        **kwargs,
-    ):
-        super().__init__(D2=D2, n_heads=n_heads, p_drop=p_drop, *args, **kwargs)
-
-        emb_dim = D2
-
-        self.attn = Residual(
-            PreNorm(MSSA(emb_dim, heads=n_heads, dim_head=dim_head, dropout=p_drop), emb_dim)
-        )
-        self.ff = PreNorm(ISTA(emb_dim, step_size=step_size), emb_dim)
-
-
 class ConformerBlock(nn.Module):
     def __init__(
         self,
-        k: int,
-        D1: int,
-        D2: int,
+        emb_dim: int,
         n_heads: int,
+        block_size: int,
         depthwise_ksize: int,
         activation_fn: str = "swish",
-        attn_type: Optional[str] = "espnet",
-        pos_enc_type: str = "abs",
-        temporal_dim: Optional[int] = None,
+        attn_type: Optional[str] = None,
+        pos_enc: str = "sine_abs",
         p_drop: float = 0.1,
         use_fp16: bool = False,
     ):
         super().__init__()
 
-        emb_dim = D2
+        if attn_type is not None:
+            pe_dict = {"sine_abs": "abs", "sine_rel": "rel_pos", "rotary": "rope"}
+            pos_enc = pe_dict[pos_enc]
 
-        if k == 0:
-            self.proj = nn.Conv1d(D1, emb_dim, kernel_size=1)
-
-        if pos_enc_type == "rel_pos":
-            self.rel_pos = RelPositionalEncoding(temporal_dim, emb_dim)
+        if pos_enc == "rel_pos":
+            self.rel_pos = RelPositionalEncoding(block_size, emb_dim)
 
         self.attn = ConformerEncoderLayer(
             embed_dim=emb_dim,
@@ -395,20 +358,17 @@ class ConformerBlock(nn.Module):
             depthwise_conv_kernel_size=depthwise_ksize,
             activation_fn=activation_fn,
             attn_type=attn_type,
-            pos_enc_type=pos_enc_type,
+            pos_enc_type=pos_enc,
         )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            X ( b, c, t ): _description_
+            X ( b, d, t ): _description_
         Returns:
-            X ( b, c, t ): _description_
+            X ( b, d, t ): _description_
         """
-        if hasattr(self, "proj"):
-            X = self.proj(X)
-
-        X = rearrange(X, "b c t -> t b c")
+        X = rearrange(X, "b d t -> t b d")
 
         if hasattr(self, "rel_pos"):
             positions = self.rel_pos(X)
@@ -417,7 +377,33 @@ class ConformerBlock(nn.Module):
 
         X, _ = self.attn(X, encoder_padding_mask=None, position_emb=positions)
 
-        return rearrange(X, "t b c -> b c t")
+        return rearrange(X, "t b d -> b d t")
+
+
+class CRATEBlock(nn.Module):
+    def __init__(
+        self,
+        emb_dim: int,
+        n_heads: int,
+        dim_head: int = 64,
+        p_drop: float = 0.1,
+        step_size: float = 0.1,
+    ):
+        super().__init__()
+
+        self.attn = Residual(
+            PreNorm(MSSA(emb_dim, heads=n_heads, dim_head=dim_head, dropout=p_drop), emb_dim)
+        )
+        self.ff = PreNorm(ISTA(emb_dim, step_size=step_size), emb_dim)
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            X ( b, d, t ): _description_
+        Returns:
+            X ( b, d, t ): _description_
+        """
+        return self.ff(self.attn(X.permute(0, 2, 1))).permute(0, 2, 1)
 
 
 class Downsample1D(nn.Module):
@@ -542,7 +528,7 @@ class BrainEncoderBase(nn.Module):
         X: torch.Tensor,
         subject_idxs: Optional[torch.Tensor],
         return_mse: bool = True,
-        normalize: bool = True,
+        normalize: bool = False,
         swap_dims: bool = False,
         stats: Optional[Tuple[float]] = None,
         device=None,
@@ -592,12 +578,13 @@ class BrainEncoder(BrainEncoderBase):
         self,
         args,
         subjects: Union[int, List[str]],
+        temporal_dim: Optional[int] = None,
         unknown_subject: bool = False,
     ) -> None:
         super().__init__()
 
         # Parameters
-        self.init_temporal_dim: int = int(args.seq_len * args.brain_resample_sfreq)
+        self.init_temporal_dim: int = int(args.seq_len * args.resample_freq) if temporal_dim is None else temporal_dim  # fmt: skip
         self.vq = args.vq
         self.vae: Optional[str] = args.vae
         self.sample_l: int = args.sample_l
@@ -612,7 +599,7 @@ class BrainEncoder(BrainEncoderBase):
         layout: Union[ch_locations_2d, DynamicChanLoc2d] = eval(args.layout)
         spatial_attention: bool = args.spatial_attention
         pos_enc: str = args.pos_enc
-        blocks: Union[str, List[str]] = args.blocks
+        blocks: str = args.blocks
         conv_block_ksize: int = args.conv_block_ksize
         depthwise_ksize: int = args.depthwise_ksize
         downsample: Union[bool, List[bool]] = args.downsample
@@ -627,13 +614,6 @@ class BrainEncoder(BrainEncoderBase):
         dann: bool = args.dann
         dann_scale: float = args.dann_scale
         vae_zdim: int = args.vae_zdim
-
-        if isinstance(blocks, str):
-            blocks = [blocks] * num_blocks
-        else:
-            if len(blocks) != num_blocks:
-                num_blocks = len(blocks)
-                cprint(f"Updating num_blocks to {num_blocks}.", "yellow")
 
         if isinstance(downsample, bool):
             downsample = [downsample] * num_blocks
@@ -660,73 +640,69 @@ class BrainEncoder(BrainEncoderBase):
         else:
             raise TypeError(f"Unknown layout type: {layout}")
 
-        block_args = {"D1": D1, "D2": D2, "p_drop": p_drop}
-        self.blocks = nn.Sequential()
+        if blocks in ["transformer", "conformer", "crate"]:
+            self.tf_proj = nn.Conv1d(D1, D2, kernel_size=1)
 
-        for k, block in enumerate(blocks):
-            if block == "dilated_conv":
+            if is_in(pos_enc, "abs") and not (blocks == "conformer" and args.conformer_impl == 1):
+                self.pos_enc = PositionalEncoding(self.init_temporal_dim, D2, pos_enc.split("_")[0])
+                cprint("Putting PE at the beginning.", "yellow")
+            else:
+                cprint("No PE at the beginning.", "yellow")
+
+        self.blocks = nn.Sequential()
+        for k in range(num_blocks):
+            if blocks == "dilated_conv":
                 cprint(f"Block{k}: dilated_conv", "magenta")
 
                 self.blocks.add_module(
                     f"block{k}",
-                    ConvBlock(
-                        k,
-                        ksize=conv_block_ksize,
-                        drop_mode=drop_mode,
-                        **block_args,
-                    ),
+                    ConvBlock(k, D1, D2, ksize=conv_block_ksize, drop_mode=drop_mode, p_drop=p_drop),  # fmt: skip
                 )
-            elif block == "inception":
+            elif blocks == "inception":
                 cprint(f"Block{k}: inception", "magenta")
 
                 self.blocks.add_module(
                     f"block{k}",
-                    Inception1DBlock(k, drop_mode=drop_mode, **block_args),
+                    Inception1DBlock(k, D1, D2, drop_mode=drop_mode, p_drop=p_drop),
                 )
-            elif block == "transformer":
-                pe = pos_enc if k == blocks.index("transformer") else None
-                cprint(f"Block{k}: transformer with pos_enc {pe}", "magenta")
+            elif blocks == "transformer":
+                cprint(f"Block{k}: transformer", "magenta")
 
                 self.blocks.add_module(
                     f"block{k}",
                     TransformerBlock(
-                        k,
-                        n_heads=transformer_heads,
-                        # TODO: TransformerBlocks after downsampling with ConvBlocks
-                        block_size=self.init_temporal_dim,
-                        pos_enc=pe,
-                        **block_args,
+                        D2, transformer_heads, self.init_temporal_dim, rel_pos=is_in(pos_enc, "rel"), p_drop=p_drop  # fmt: skip
                     ),
                 )
-            elif block == "conformer":
-                pe = {"sine_abs": "abs", "sine_rel": "rel_pos", "rotary": "rope"}[pos_enc]  # fmt: skip
-                cprint(f"Block{k}: conformer", "magenta")
+            elif blocks == "conformer":
+                # NOTE: .index only returns the first occurrence
+                # attn_type = "espnet" if k == blocks.index("conformer") else None
+                # cprint(f"Block{k}: conformer with PE {'off' if attn_type is None else pos_enc}", "magenta")  # fmt: skip
+                cprint(f"Block{k}: conformer version {args.conformer_impl}", "magenta")
 
-                self.blocks.add_module(
-                    f"block{k}",
-                    ConformerBlock(
-                        k,
-                        n_heads=transformer_heads,
-                        depthwise_ksize=depthwise_ksize,
-                        pos_enc_type=pe,
-                        temporal_dim=self.init_temporal_dim,
-                        **block_args,
-                    ),
-                )
-            elif block == "crate":
+                if args.conformer_impl == 0:
+                    self.blocks.add_module(
+                        f"block{k}",
+                        ConformerBlock(
+                            D2, transformer_heads, self.init_temporal_dim, depthwise_ksize, pos_enc=pos_enc, p_drop=p_drop  # fmt: skip
+                        ),
+                    )
+                elif args.conformer_impl == 1:
+                    self.blocks.add_module(
+                        f"block{k}",
+                        nn.Sequential(
+                            Rearrange("b d t -> b t d"),
+                            ConformerBlock2(D2, transformer_heads),
+                            Rearrange("b t d -> b d t"),
+                        ),
+                    )
+            elif blocks == "crate":
                 pe = pos_enc if k == blocks.index("crate") else None
                 cprint(f"Block{k}: CRATE with pos_enc {pe}", "magenta")
 
                 self.blocks.add_module(
                     f"block{k}",
-                    CRATEBlock(
-                        k,
-                        n_heads=transformer_heads,
-                        # TODO: TransformerBlocks after downsampling with ConvBlocks
-                        block_size=self.init_temporal_dim,
-                        pos_enc=pe,
-                        **block_args,
-                    ),
+                    CRATEBlock(D2, transformer_heads, p_drop=p_drop),
                 )
             else:
                 raise NotImplementedError()
@@ -796,11 +772,18 @@ class BrainEncoder(BrainEncoderBase):
             X = self.subject_block(X, subject_idxs)
         else:
             X = self.spatial_attention(X)
+        # ( b, D1, t )
 
         if self.vq == "middle1":
             X, vq_loss, perplexity = self.vector_quantizer(X)
 
-        X = self.blocks(X)
+        if hasattr(self, "tf_proj"):
+            X = self.tf_proj(X)  # ( b, D2, t )
+
+        if hasattr(self, "pos_enc"):
+            X = self.pos_enc(X, transpose=True)
+
+        X = self.blocks(X)  # ( b, D2, t )
 
         if self.vq == "middle2":
             X, vq_loss, perplexity = self.vector_quantizer(X)
