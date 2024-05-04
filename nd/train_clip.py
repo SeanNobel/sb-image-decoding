@@ -24,7 +24,7 @@ from nd.datasets.datasets import (
     CollateFunctionForVideoHDF5,
     NeuroDiffusionCLIPDatasetBase,
 )
-from nd.datasets.things_meg import ThingsMEGCLIPDataset
+from nd.datasets import ThingsMEGCLIPDataset, ImageNetEEGCLIPDataset
 from nd.models import (
     BrainEncoderBase,
     BrainEncoder,
@@ -55,7 +55,7 @@ from nd.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categori
 
 
 def build_dataloaders(args, split=True):
-    dataset = eval(f"{args.dataset}CLIPDataset")(args)
+    dataset = eval(f"{args.dataset}Dataset")(args)
 
     if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
         if args.split in ["shallow", "mixed_shallow"]:
@@ -273,7 +273,7 @@ def train():
         # -----------------------
         trained_models.train()
         for batch in tqdm(train_loader, desc="Train"):
-            X, Y, subject_idxs, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
+            X, subject_idxs, Y, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
 
             if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
@@ -413,7 +413,7 @@ def train():
         # -----------------------
         trained_models.eval()
         for batch in tqdm(test_loader, desc="Test"):
-            X, Y, subject_idxs, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
+            X, subject_idxs, Y, y_idxs, classes, high_categories = *batch, *[None] * (6 - len(batch))  # fmt: skip
 
             if preprocess is not None:
                 Y = sequential_apply(Y.numpy(), preprocess, batch_size=1)
@@ -604,9 +604,9 @@ def train():
                 performance_now.update({"margin": loss_func.margin.item()})
             if hasattr(vision_encoder, "gumbel_temp"):
                 performance_now.update({"gumbel_temp": vision_encoder.gumbel_temp})
-            # FIXME: This doesn't work when args.blocks is a list of strings.
-            if args.blocks == "transformer" and args.pos_enc == "sine_abs":
-                performance_now.update({"pos_scale": brain_encoder.blocks[0].pos_enc.scale.item()})  # fmt: skip
+            # # FIXME: This doesn't work when args.blocks is a list of strings.
+            # if args.blocks == "transformer" and args.pos_enc == "sine_abs":
+            #     performance_now.update({"pos_scale": brain_encoder.blocks[0].pos_enc.scale.item()})  # fmt: skip
 
             if args.F == 2:
                 plots = plot_2d_latents_with_sorted_categories(
