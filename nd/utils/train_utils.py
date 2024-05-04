@@ -134,10 +134,7 @@ def sequential_apply(
     if isinstance(fn, transforms.Compose) and isinstance(X, np.ndarray):
         # NOTE: np.split needs number of subarrays, while torch.split needs the size of chunks.
         return torch.cat(
-            [
-                fn(Image.fromarray(_X.squeeze())).unsqueeze(0)
-                for _X in np.split(X, X.shape[0])
-            ]
+            [fn(Image.fromarray(_X.squeeze())).unsqueeze(0) for _X in np.split(X, X.shape[0])]
         )
 
     orig_device = X.device
@@ -149,14 +146,17 @@ def sequential_apply(
     if batch_size == X.shape[0]:
         # assert isinstance(X, torch.Tensor) and isinstance(model, nn.Module)
         if subject_idxs is None:
-            return fn(X.to(device)).to(orig_device)
+            output = fn(X.to(device))
         else:
-            return fn(X.to(device), subject_idxs.to(device)).to(orig_device)
+            output = fn(X.to(device), subject_idxs.to(device))
+
+        if isinstance(output, torch.Tensor):
+            return output.to(orig_device)
+        elif isinstance(output, dict):
+            return {key: value.to(orig_device) for key, value in output.items()}
 
     if subject_idxs is None:
-        output = [
-            fn(_X.to(device)) for _X in tqdm(torch.split(X, batch_size), desc=desc)
-        ]
+        output = [fn(_X.to(device)) for _X in tqdm(torch.split(X, batch_size), desc=desc)]
     else:
         output = [
             fn(_X.to(device), _subject_idxs.to(device))
