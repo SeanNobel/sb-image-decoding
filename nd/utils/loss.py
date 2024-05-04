@@ -152,16 +152,12 @@ class CLIPLoss(nn.Module):
         return similarity
 
     @torch.no_grad()
-    def accuracy(
-        self, Z: torch.Tensor, Y: torch.Tensor, sequential: bool = False
-    ) -> np.ndarray:
+    def accuracy(self, Z: torch.Tensor, Y: torch.Tensor, sequential: bool = False) -> np.ndarray:
         targets = torch.arange(Z.shape[0], device=Z.device, requires_grad=False)
 
         similarity = self._similarity(Z, Y, sequential)
 
-        topk_accs = np.array(
-            [self._top_k_accuracy(k, similarity, targets) for k in self.topk]
-        )
+        topk_accs = np.array([self._top_k_accuracy(k, similarity, targets) for k in self.topk])
 
         return topk_accs
 
@@ -181,9 +177,7 @@ class CLIPLoss(nn.Module):
         assert torch.all(labels.sum(dim=0) == 1)
         labels = labels.to(int).argmax(dim=0)  # ( b, )
 
-        topk_accs = np.array(
-            [self._top_k_accuracy(k, similarity, labels) for k in self.topk]
-        )
+        topk_accs = np.array([self._top_k_accuracy(k, similarity, labels) for k in self.topk])
 
         return topk_accs
 
@@ -248,9 +242,7 @@ class SubspaceCLIPLoss(CLIPLoss):
         return torch.stack(clip_loss).mean()
 
     @torch.no_grad()
-    def accuracy(
-        self, Z: torch.Tensor, Y: torch.Tensor, sequential: bool = False
-    ) -> np.ndarray:
+    def accuracy(self, Z: torch.Tensor, Y: torch.Tensor, sequential: bool = False) -> np.ndarray:
         b = Z.shape[0]
         targets = torch.arange(b, device=Z.device, requires_grad=False)
 
@@ -262,9 +254,7 @@ class SubspaceCLIPLoss(CLIPLoss):
 
         similarity /= self.num_subspaces
 
-        topk_accs = np.array(
-            [self._top_k_accuracy(k, similarity, targets) for k in self.topk]
-        )
+        topk_accs = np.array([self._top_k_accuracy(k, similarity, targets) for k in self.topk])
 
         return topk_accs
 
@@ -290,17 +280,13 @@ class SubspaceCLIPLoss(CLIPLoss):
         assert torch.all(labels.sum(dim=0) == 1)
         labels = labels.to(int).argmax(dim=0)  # ( b, )
 
-        topk_accs = np.array(
-            [self._top_k_accuracy(k, similarity, labels) for k in self.topk]
-        )
+        topk_accs = np.array([self._top_k_accuracy(k, similarity, labels) for k in self.topk])
 
         return topk_accs
 
     # FIXME
     @staticmethod
-    def _subspace_top_k_accuracy(
-        k: int, similarity: torch.Tensor, labels: torch.Tensor
-    ):
+    def _subspace_top_k_accuracy(k: int, similarity: torch.Tensor, labels: torch.Tensor):
         """Decides topks with majority votes from subspaces.
         Args:
             k (int): _description_
@@ -328,8 +314,11 @@ class NormRegularizedCLIPLoss(CLIPLoss):
     def forward(self, Z: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
         clip_loss = super().forward(Z, Y)
 
-        norm = Z.reshape(Z.shape[0], -1).norm(dim=-1)
-        norm_loss = F.mse_loss(norm, torch.ones_like(norm), reduction=self.reduction)
+        norm_loss = F.mse_loss(
+            Z.reshape(Z.shape[0], -1).norm(dim=-1),
+            Y.reshape(Y.shape[0], -1).norm(dim=-1),
+            reduction=self.reduction,
+        )
 
         return clip_loss + self.alpha * norm_loss
 
@@ -502,9 +491,7 @@ class KLRegCLIPLoss(CLIPLoss):
         X = X.reshape(b, -1)
         Y = Y.reshape(b, -1)
 
-        reg_loss = F.kl_div(
-            X.log_softmax(dim=0), Y.softmax(dim=0), reduction="batchmean"
-        )
+        reg_loss = F.kl_div(X.log_softmax(dim=0), Y.softmax(dim=0), reduction="batchmean")
 
         X = X / X.norm(dim=-1, keepdim=True)
         Y = Y / Y.norm(dim=-1, keepdim=True)
@@ -547,9 +534,7 @@ class LargeEntropyCLIPLoss(CLIPLoss):
             entropy_loss = -(self._entropy(similarity) + self._entropy(similarity.T))
 
         elif self.impl_type == 3:
-            entropy_loss = -(
-                self._perplexity(similarity) + self._perplexity(similarity.T)
-            )
+            entropy_loss = -(self._perplexity(similarity) + self._perplexity(similarity.T))
 
         elif self.impl_type == 4:
             entropy_loss = -(
@@ -629,8 +614,7 @@ class AdaptiveCLIPLoss(CLIPLoss):
         b = mat.shape[0]
 
         return torch.cat(
-            [torch.diag(mat, i) for i in range(1, b)]
-            + [torch.diag(mat, -i) for i in range(1, b)]
+            [torch.diag(mat, i) for i in range(1, b)] + [torch.diag(mat, -i) for i in range(1, b)]
         )
 
     def forward(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
@@ -819,9 +803,7 @@ class CircleCLIPLoss(CLIPLoss):
 
         return self._clip(similarity, targets)
 
-    def _scaling(
-        self, similarity: torch.Tensor, targets_onehot: torch.Tensor
-    ) -> torch.Tensor:
+    def _scaling(self, similarity: torch.Tensor, targets_onehot: torch.Tensor) -> torch.Tensor:
         """self.o_p = 1.2, self.o_n = -0.2
         Args:
             similarity ( b, b ): _description_
@@ -990,15 +972,11 @@ class GeometricCLIPLoss(CLIPLoss):
         o_p = 1 + m
         o_n = -m
 
-        return torch.where(
-            targets == 1, torch.relu(o_p - similarity), torch.relu(similarity - o_n)
-        )
+        return torch.where(targets == 1, torch.relu(o_p - similarity), torch.relu(similarity - o_n))
 
 
 class CLIPWithClassCosFaceLoss(CLIPLoss):
-    def __init__(
-        self, args, n_classes, n_high_categories: Optional[int] = None
-    ) -> None:
+    def __init__(self, args, n_classes, n_high_categories: Optional[int] = None) -> None:
         super().__init__(args)
 
         self.alpha = args.cosface_alpha
@@ -1070,9 +1048,7 @@ class CLIPWithClassCosFaceLoss(CLIPLoss):
         sim_x = (sim_x - self._margin(classes_onehot)) * self._scaling(sim_x, classes_onehot)  # fmt: skip
         sim_y = (sim_y - self._margin(classes_onehot)) * self._scaling(sim_y, classes_onehot)  # fmt: skip
 
-        return (
-            self.cross_entropy(sim_x, classes) + self.cross_entropy(sim_y, classes)
-        ) / 2
+        return (self.cross_entropy(sim_x, classes) + self.cross_entropy(sim_y, classes)) / 2
 
     def _scaling(self, *args, **kwargs) -> torch.Tensor:
         # FIXME: Probably exp is not needed, but keeping it for consistency.
