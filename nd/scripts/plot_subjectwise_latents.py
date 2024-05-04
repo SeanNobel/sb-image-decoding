@@ -10,8 +10,8 @@ from termcolor import cprint
 import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from nd.train_autoencoder import BrainAutoencoder
-from nd.datasets import ImageNetEEGBrainDataset, ThingsMEGBrainDataset
+from nd.models import BrainEncoder, BrainAutoencoder, BrainMAE
+from nd.datasets import ImageNetEEGBrainDataset, ImageNetEEGCLIPDataset
 from nd.utils.eval_utils import update_with_eval, get_run_dir
 from nd.utils.plots import plot_latents_2d
 
@@ -25,7 +25,7 @@ def run(args: DictConfig) -> None:
     run_dir = get_run_dir(args)
     cprint(f"Using model params in: {run_dir}", "cyan")
 
-    save_dir = os.path.join("figures/subjectwise_latents", run_dir.split("/")[-1])
+    save_dir = os.path.join("figures", args.dataset.lower(), run_dir.split("/")[-1])
     os.makedirs(save_dir, exist_ok=True)
 
     device = f"cuda:{args.cuda_id}"
@@ -35,7 +35,6 @@ def run(args: DictConfig) -> None:
     # -----------------------
     dataset = eval(f"{args.dataset}Dataset")(args)
 
-    # FIXME
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -49,19 +48,24 @@ def run(args: DictConfig) -> None:
     # ---------------------
     subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
 
-    model = BrainAutoencoder(args, subjects).to(device)
+    if args.dataset.endswith("CLIP"):
+        model = BrainEncoder(args, subjects).to(device)
+    else:
+        if args.masked:
+            model = BrainMAE(args, subjects, mask_ratio=0).to(device)
+        else:
+            model = BrainAutoencoder(args, subjects).to(device)
 
+    prefix = "brain_encoder" if args.dataset.endswith("CLIP") else "autoencoder"
     model.load_state_dict(
-        torch.load(os.path.join(run_dir, "autoencoder_best.pt"), map_location=device)
+        torch.load(os.path.join(run_dir, f"{prefix}_best.pt"), map_location=device)
     )
     model.eval()
 
     # -----------------------
     #       Evaluation
     # -----------------------
-    # for split, loader in zip(["train", "test"], [train_loader, test_loader]):
     Z_list = []
-    # Z_mse_list = []
     subject_idxs_list = []
 
     for batch in tqdm(dataloader, "Embedding for the whole set."):
@@ -76,7 +80,9 @@ def run(args: DictConfig) -> None:
     plot_latents_2d(
         np.concatenate(Z_list, axis=0),
         np.concatenate(subject_idxs_list, axis=0),
-        save_path=os.path.join(save_dir, f"latents.png"),
+        perplexities=[8],
+        pca=False,
+        save_path=os.path.join(save_dir, f"subjectwise_latents.png"),
     )
 
 
