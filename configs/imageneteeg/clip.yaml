@@ -3,26 +3,19 @@ preproc_name: 0_init
 
 root: /home/sensho/neuro-diffusion
 eeg_dir: ${root}/data/raw/eeg_cvpr_2017/
-preprocessed_data_dir: ${root}/data/preprocessed/imageneteeg/
+preproc_dir: ${root}/data/preprocessed/imageneteeg/
 
-# things_dir: /mnt/tsukuyomi/things/osfstorage/THINGS/
-# images_dir: ${things_dir}Images/
-# metadata_dir: ${things_dir}Metadata/
+images_dir: /home/neurotech_nas01/ImageNet/ILSVRC/Data/CLS-LOC/train/
 
-skip_meg: True
-skip_images: True
-skip_texts: False
-caption: True
-
-# brain_filter_low: 0.1 # Hz
-# brain_filter_high: 250 # Hz
-brain_resample_sfreq: 250 # Hz
+resample_freq: 1000 # Hz
 clamp_lim: 5.0 # Standard deviation
+
+skip_eeg: False
+skip_images: True
 
 # ==== Architecture ==== #
 F: 768 # 768 for OpenAI original / 1024 for Huggingface
-# F_orig: 768
-F_mse: 768
+F_mse: 4096
 
 align_to: vision # vision / text
 align_tokens: cls # all / cls / mean / list of those
@@ -43,14 +36,14 @@ gumbel_temp_decay: 0.9995
 
 brain_encoder: brain_encoder
 
-num_channels: 271
+num_channels: 128
 D1: 270
 D2: 320
 D3: 2048
 K: 32
 spatial_attention: True
 ignore_subjects: False
-blocks: conformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
+blocks: conformer # dilated_conv / inception / transformer / conformer / crate
 num_blocks: 2
 d_drop: 0.1 # Dropout rate for spatial-attention
 p_drop: 0.1 # Dropout rate for conv blocks
@@ -63,6 +56,8 @@ conv_block_ksize: 3
 depthwise_ksize: 31
 transformer_heads: 4
 pos_enc: sine_abs # learn / sine_abs / sine_rel / rotary
+
+conformer_impl: 0 # 0: fairseq / 1: sooftware
 
 # Where of the model to apply vector quantization.
 vq: null # null / middle1 (before blocks) / middle2 (after blocks) / end
@@ -138,24 +133,21 @@ leclip_alpha: 0.0
 orclip_alpha: 0.1
 klclip_alpha: 0.1
 kl_beta: 1.0 # Same meaning as alpha but using beta after variational inference.
-nrclip_alpha: 0.1
+nrclip_alpha: 0.001
 
 subspace_downs: [2, 3, 4, 4]
 
 # ==== Training ==== #
-project_name: nd_things_clip
-train_name: small_test
+project_name: bd_imneteeg_clip
+train_name: conformer
 
-# seq_onset: 0.0
-seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
+seq_len: 0.44 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
 
-dataset: ThingsMEG
+dataset: ImageNetEEGCLIP
 # image_size: 256
 
 montage_path: ${root}nd/utils/montages/things_meg.npy
 layout: ch_locations_2d # DynamicChanLoc2d
-
-large_test_set: False # True
 
 batch_size: 128
 lr: 3.0e-4 # 0.005
@@ -168,11 +160,11 @@ acc_topk: [1, 5]
 
 accum_grad: False
 
-patience: 15
+patience: 50
 
 chance: False
 
-test_with_whole: True
+test_with_whole: False
 
 plot_latents: False
 
@@ -182,365 +174,26 @@ cuda_id: 0
 
 sweep_count: 1
 sweep_config:
-  name: init # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
+  name: self-preproc # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    F_mse:
-      value: 4096
-
-    # loss:
-    #   value: normregclip
-    # nrclip_alpha:
-    #   values: [0.01, 0.0]
-
-    # loss:
-    #   value: subspaceclip
-    # subspace_downs:
-    #   values: [[2, 3, 4, 4]]
-    # blocks:
-    #   value: crate
-    # transformer_heads:
-    #   values: [4, 8, 16]
-    # num_blocks:
-    #   value: 4
-
-    # vae:
-    #   values: [vmf, ps]
-    # vae_zdim:
-    #   values: [10, 100, 768]
-    # sample_l:
-    #   value: 4
-    # kl_beta:
-    #   value: 2.0
-
-    # loss:
-    #   value: variationalclip
-    # kl_beta:
-    #   values: [1.0, 10.0, 100.0]
-
-    # loss:
-    #   value: klclip
-    # klclip_alpha:
-    #   values: [1.0, 5.0, 0.1]
-
-    # batch_size:
-    #   value: 8
-    # num_blocks:
-    #   values: [2, 4]
-
-    # blocks:
-    #   value: crate
-    # num_blocks:
-    #   value: 8
-    # transformer_heads:
-    #   values: [8, 16]
-
-    # loss:
-    #   value: orclip
-    # clip_temp_learn:
-    #   value: False
-    # clip_temp_init:
-    #   value: 2.0
-    # orclip_alpha:
-    #   values: [5.0, 0.5]
-
-    # blocks:
-    #   values: [conformer, dilated_conv]
-      
-    # loss:
-    #   value: leclip
-    # leclip_alpha:
-    #   values: [-0.5, -0.1, 0.1, 0.5]
-    # impl_type:
-    #   values: [0]
-
-    # chance:
-    #   values: [False, True]
-
-    # vq:
-    #   values: [middle1, middle2]
-    # vq_type:
-    #   value: gumbel
-    # vq_groups:
-    #   values: [8]
-    # gumbel_init_temp:
-    #   value: 2.0
-    # gumbel_min_temp:
-    #   values: [0.2]
-    # gumbel_temp_decay:
-    #   values: [0.9995]
-    # vq_alpha:
-    #   value: 0.1
-
-    # vision_quantize:
-    #   value: True
-    # vq_groups:
-    #   value: 16
-    # gumbel_min_temp:
-    #   values: [0.5]
-    # gumbel_temp_decay:
-    #   values: [0.999995, 0.9995]
-    # # preproc_name:
-    # #   value: 2_huggingface
-    # # F:
-    # #   value: 1024
-    # # align_tokens:
-    # #   value: all
-    # # orig_clip_tokens: 
-    # #   value: 257
-
-    # loss:
-    #   values: [adaptiveclip]
-    # # clip_margin_init:
-    # #   values: [0.0, 0.2, 0.4]
-    # use_negative:
-    #   value: True
-    # impl_type:
-    #   values: [2, 3]
-
-    # loss:
-    #   value: amclip
-    # clip_margin_init:
-    #   value: 0.1
-    # clip_temp_init:
-    #   values: [4.5]
-    # clip_temp_learn:
-    #   value: False
-    # # use_negative:
-    # #   value: True
-    # # num_blocks:
-    # #   value: 6
-    # # D1:
-    # #   value: 540
-    # # D2:
-    # #   value: 640
-    # # K:
-    # #   value: 64
-
-    # loss:
-    #   value: apclip
-    # positive_threshold:
-    #   values: [0.8, 0.9, 0.95, 0.98]
-    # batch_size:
-    #   value: 512
-
-    # loss:
-    #   value: arcfaceclip
-    # use_negative:
-    #   value: True
-    # clip_margin_init:
-    #   values: [0.05, 0.1, 0.2]
-    # clip_temp_learn:
-    #   value: False
-    # clip_temp_init:
-    #   values: [4.0, 3.0]
-    # num_blocks:
-    #   values: [4, 2]
-
-    # loss:
-    #   value: cosfaceclip
-    # clip_margin_init:
-    #   values: [0.2, 0.0]
-    # use_negative:
-    #   values: [False, True]
-
-    # loss:
-    #   value: circleclip
-    # clip_temp_init:
-    #   values: [4.5, 5.5, 6.2]
-    # clip_temp_learn:
-    #   value: False
-    # circle_relax:
-    #   values: [0.9, 0.4]
-    # impl_type:
-    #   values: [0, 1]
-
-    # loss:
-    #   values: [geomclip]
-    # impl_type:
-    #   values: [18,19]
-    # clip_temp_init:
-    #   value: 2.0
-
-    # plot_latents:
-    #   values: [True]
-
-    # preproc_name:
-    #   values: [3_caption]
-    # align_to:
-    #   values: [vision]
-    # align_tokens:
-    #   values: [cls]
-
-    # depthwise_ksize:
-    #   values: [31, 17, 9, 5]
-    
     # pos_enc:
-    #   value: sine_rel
-
-    # vq:
-    #   values: [middle1]
-    # vq_type:
-    #   values: [lu_residual]
-
-    # num_blocks:
-    #   values: [4]
-
-    # ignore_subjects:
-    #   values: [False, True]
-
-    # dann:
-    #   values: [False, True]
-
-    # clip_temp_learn:
-    #   values: [False]
-    # clip_temp_init:
-    #   values: [2.2, 2.4, 2.6, 2.8, 3.0, 3.2, 3.4, 3.6, 3.8]
-
-    # circle_relax:
-    #   values: [0.2, 0.1, 0.0, -0.1]
-
-    # blocks:
-    #   values: [
-    #     [dilated_conv, dilated_conv, transformer, transformer],
-    #     [dilated_conv, transformer, transformer],
-    #     [dilated_conv, dilated_conv, transformer],
-    #   ]
-
-    # transformer_heads:
-    #   values: [4, 8]
-
-    # lambd:
-    #   values: [0.0, 0.25, 0.5, 0.75, 1.0]
-
-    # vq_num_quantizers:
-    #   values: [16, 32]
-    # vq_groups:
-    #   values: [8, 4]
-    # vq_share:
-    #   values: [False, True]
-
-    # vq_alternate:
-    #   values: [False]
-
-    # D2:
-    #   values: [640, 320] # 320
-
-    # vq_affine_lr:
-    #   values: [0.1]
-    # vq_sync_nu:
-    #   values: [0.2, 0.5]
-    # vq_replace_freq:
-    #   values: [20]
-
-    # loss:
-    #   values: [clip]
-
-    # clip_margin_init:
-    #   values: [0.1]
-    # clip_margin_learn:
-    #   values: [True]
-
-    # use_high_categories:
-    #   values: [False, True]
-
-    # push_negative:
-    #   values: [False, True]
-
-    # cosface_alpha:
-    #   values: [1.0]
-
-    # drop_mode:
-    #   values: [dropblock, dropout1d, dropout]
-
-    # nnclip_k:
-    #   values: [4, 12]
-    # nnclip_symmetric:
-    #   values: [True]
-    # nnclip_support_size:
-    #   values: [20000, 200]
-    # nnclip_alpha:
-    #   values: [0.2, 1.0]
-
-    # spatial_attention:
-    #   values: [True]
-    # temporal_aggregation:
-    #   values: [original, affine]
-
-    # d_drop:
-    #   values: [0.1, 0.3] # 0.3
-    #   # distribution: uniform
-    #   # min: 0.1
-    #   # max: 0.7
-    # p_drop:
-    #   values: [0.1, 0.3] # 0.3
-    #   # distribution: uniform
-    #   # min: 0.1
-    #   # max: 0.7
-
-    # seq_onset:
-    #   values: [0.0, 0.5, 1.0, 1.5]
-    # seq_len:
-    #   values: [0.5, 0.3, 0.1]
-
-    # layout:
-    #   values: [DynamicChanLoc2d, ch_locations_2d]
-    # ksizes.conv_block:
-    #   values: [3, 5, 7]
-
-    # vq_type:
-    #   values: [raw, aggregated]
-    # vq_num_embeds:
-    #   values: [2048]
-    # vq_num_concepts:
-    #   values: [8, 32, 128]
-    # vq_use_ema:
-    #   values: [True]
-    # vq_alpha:
-    #   values: [1.0]
-    # vq_beta:
-    #   values: [0.1, 0.3, 0.5]
-    # vq_gamma:
-    #   values: [0.99, 0.95]
-
-    # learn_temperature:
-    #   values: [False]
+    #   value: sine_abs
+    loss:
+      value: normregclip
+    nrclip_alpha:
+      value: 0.001
+    clip_temp_init:
+      value: 4.7
 
 # ==== Evaluation ==== #
 eval:
-  loss: normregclip
-  nrclip_alpha: 0.01
-
-  # batch_size: 8
-  # num_blocks: 2
-
-  # blocks: crate
-  # num_blocks: 8
-  # transformer_heads: 8
-
-  # clip_temp_learn: False
-  # clip_temp_init: 2
-  # loss: orclip
-  # orclip_alpha: 0.5
-
-  # blocks: conformer
-
-  # chance: False
-  # large_test_set: False
-
-  # preproc_name: 3_caption
-  # align_tokens: mean
-
-  # num_blocks: 4
-  # vq: middle1 # null
-  # vq_type: lu_residual
-
-  # vq_num_quantizers: 16
-  # loss: clip
-  # pos_enc: sine_abs
+  loss: clip
+  pos_enc: sine_abs
+  clip_temp_init: 4.8
 
 save_vision: False
 as_h5: True

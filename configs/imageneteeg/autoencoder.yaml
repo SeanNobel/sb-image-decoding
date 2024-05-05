@@ -3,28 +3,24 @@ preproc_name: 0_init
 
 root: /home/sensho/neuro-diffusion
 eeg_dir: ${root}/data/raw/eeg_cvpr_2017/
-preprocessed_data_dir: ${root}/data/preprocessed/imageneteeg/
+preproc_dir: ${root}/data/preprocessed/imageneteeg/
 
-# brain_filter_low: 0.1 # Hz
-# brain_filter_high: 250 # Hz
-brain_resample_sfreq: 1000 # Hz
+images_dir: /home/neurotech_nas01/ImageNet/ILSVRC/Data/CLS-LOC/train/
+
+resample_freq: 1000 # Hz
 # clamp_lim: 5.0 # Standard deviation
 
 # ==== Architecture ==== #
 decoder_dim: 256
 
+masked: False
+mask_ratio: 0.75
+patch_size: 4
+
 F: 768 # 768 for OpenAI original / 1024 for Huggingface
-# F_orig: 768
 F_mse: 4096
 
 num_clip_tokens: 1
-
-vision:
-  pretrained: True
-  model: ViT # For face.pretrained=False
-  pretrained_model: ViT-L/14
-  # openai/clip-vit-large-patch14 (Huggingface) or ViT-L/14 (OpenAI)
-  encoded: False # False is basically only for StyleGAN
 
 num_channels: 128
 D1: 270
@@ -33,7 +29,7 @@ D3: 2048
 K: 32
 spatial_attention: True
 ignore_subjects: False
-blocks: conformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
+blocks: conformer # dilated_conv / inception / transformer / conformer / crate
 num_blocks: 2
 d_drop: 0.1 # Dropout rate for spatial-attention
 p_drop: 0.1 # Dropout rate for conv blocks
@@ -46,6 +42,8 @@ conv_block_ksize: 3
 depthwise_ksize: 31
 transformer_heads: 4
 pos_enc: sine_abs # learn / sine_abs / sine_rel / rotary
+
+conformer_impl: 0
 
 # =======================================================================================
 # This area is not related to AE training but necessary to reuse BrainEncoder from CLIP
@@ -94,9 +92,8 @@ reduction: mean
 
 # ==== Training ==== #
 project_name: bd_imneteeg_ae
-train_name: init
+train_name: conformer
 
-# seq_onset: 0.0
 seq_len: 0.44 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
 
 dataset: ImageNetEEGBrain
@@ -105,24 +102,16 @@ dataset: ImageNetEEGBrain
 montage_path: ${root}nd/utils/montages/things_meg.npy
 layout: ch_locations_2d # DynamicChanLoc2d
 
-large_test_set: False # True
-
 batch_size: 128
 lr: 3.0e-4 # 0.005
 lr_scheduler: multistep # cosine or multistep
-lr_multistep_mlstns: [0.4, 0.8]
+lr_multistep_mlstns: [0.6, 0.9]
 lr_step_gamma: 0.1
 epochs: 200
-
-# acc_topk: [1, 5]
-
-# accum_grad: False
 
 patience: 15
 
 chance: False
-
-# test_with_whole: True
 
 plot_latents: False
 
@@ -130,50 +119,30 @@ num_workers: 8
 seed: 1234
 cuda_id: 0
 
-sweep_count: 2
+sweep_count: 1
 sweep_config:
-  name: init
+  name: self-preproc
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    decoder_dim:
-      values: [256, 512]
+    # blocks:
+    #   value: conformer
+    pos_enc:
+      value: sine_abs
+    masked:
+      value: False
+
+    # decoder_dim:
+    #   values: [256, 512]
+    # mask_ratio:
+    #   values: [0.75, 0.4, 0.1]
 
 # ==== Evaluation ==== #
 eval:
-  loss: normregclip
-  nrclip_alpha: 0.01
-
-  # batch_size: 8
-  # num_blocks: 2
-
-  # blocks: crate
-  # num_blocks: 8
-  # transformer_heads: 8
-
-  # clip_temp_learn: False
-  # clip_temp_init: 2
-  # loss: orclip
-  # orclip_alpha: 0.5
-
+  # decoder_dim: 256
   # blocks: conformer
-
-  # chance: False
-  # large_test_set: False
-
-  # preproc_name: 3_caption
-  # align_tokens: mean
-
-  # num_blocks: 4
-  # vq: middle1 # null
-  # vq_type: lu_residual
-
-  # vq_num_quantizers: 16
-  # loss: clip
-  # pos_enc: sine_abs
-
-save_vision: False
-as_h5: True
-for_webdataset: False
+  masked: False
+  # mask_ratio: 0.75
+  pos_enc: sine_abs
