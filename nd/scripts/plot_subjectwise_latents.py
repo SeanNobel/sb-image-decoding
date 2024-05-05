@@ -80,9 +80,10 @@ def run(args: DictConfig) -> None:
     plot_latents_2d(
         np.concatenate(Z_list, axis=0),
         np.concatenate(subject_idxs_list, axis=0),
-        perplexities=[8],
+        perplexities=[10],
         pca=False,
         save_path=os.path.join(save_dir, f"subjectwise_latents.png"),
+        off_axis=True,
     )
 
 
