@@ -12,12 +12,12 @@ def get_config():
     config.seed = 1234
     config.pred = "noise_pred"
     config.z_shape = (4, 32, 32)
-    config.wandb_mode = "offline"
+    config.wandb_mode = "online"
 
-    config.joint = False  # Whether to train brain encoder jointly with the diffusion model
-    config.obs_T = False  # Whether to handle x_T as observed or latent variable
-    config.t_obs = 800  # 500 # < n_timestep (= 1000)
-    config.obs_ratio = 0.125
+    config.joint = False  # Whether to train brain encoder jointly with the diffusion model (must be False for Schrodinger bridge)
+    # config.obs_T = False  # Whether to handle x_T as observed or latent variable
+    # config.t_obs = 800  # 500 # < n_timestep (= 1000)
+    # config.obs_ratio = 0.125
 
     config.autoencoder = d(
         # pretrained_path="uvit/assets/stable-diffusion/autoencoder_kl_ema.pth",
@@ -28,14 +28,14 @@ def get_config():
     config.train = d(
         name="default",
         n_steps=500000,
-        batch_size=1536,
+        batch_size=1024,
         mode="uncond",
         log_interval=10,
         vis_interval=1000,
         save_interval=2000,
         eval_interval=10000,
-        accum_steps=4,
-        use_ema=False,
+        accum_steps=1,
+        use_ema=True,
     )
 
     config.optimizer = d(
@@ -48,7 +48,8 @@ def get_config():
     config.lr_scheduler = d(name="customized", warmup_steps=5000)
 
     config.brain_encoder = d(
-        pretrained_path="runs/thingsmeg/small_test_F_mse-4096_ignore_subjects-True_/brain_encoder_best.pt",
+        config_path="configs/imageneteeg/autoencoder.yaml",
+        pretrained_path="runs/imageneteegbrain/conformer_masked-False_pos_enc-sine_abs_/autoencoder_best.pt",
         arch=d(
             seq_len=169,
             depth=2,
@@ -80,11 +81,8 @@ def get_config():
     )
 
     config.dataset = d(
-        path="data/preprocessed/thingsmeg/4_autoencoder_kl",
-        thingsmeg_dir="/mnt/tsukuyomi/things-meg/",
-        large_test_set=False,
-        chance=False,
-        montage_path="nd/utils/montages/things_meg.npy",
+        preproc_dir="data/preprocessed/imageneteeg/",
+        preproc_name="0_init",
         n_vis_samples=8,
         # cfg=True,
         # p_uncond=0.15,
@@ -92,7 +90,7 @@ def get_config():
 
     config.sample = d(
         mini_batch_size=32,  # the decoder is large
-        algorithm="ddpm",  # "dpm_solver",
+        algorithm="ddpm",
         dpm_solver_steps=50,
         n_batches=10,  # Only used for DDPM, which takes longer time to sample and thus uses RandomSampler
         n_samples=10000,  # Only used when not training brain encoder jointly

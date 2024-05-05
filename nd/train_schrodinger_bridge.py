@@ -20,15 +20,16 @@ from uvit.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
 
 from uvit.tools.fid_score import calculate_fid_given_paths
 
+from nd.datasets.imagenet_eeg import ImageNetEEGMomentsDataset
 from nd.utils.uvit_utils import (
     Bridge,
-    ThingsMEGMomentsDataset,
     initialize_train_state,
     get_brain_encoder,
     get_config_name,
     get_hparams,
     sample2dir,
 )
+from nd.utils.timer import timer
 
 
 def p_losses(x_0, x_T, nnet, schedule: Bridge, **kwargs):
@@ -56,7 +57,7 @@ def train(config):
         torch.backends.cudnn.deterministic = False
 
     mp.set_start_method("spawn", force=True)
-    accelerator = accelerate.Accelerator()
+    accelerator = accelerate.Accelerator(gradient_accumulation_steps=config.train.accum_steps)
     device = accelerator.device
     accelerate.utils.set_seed(config.seed, device_specific=True)
     logging.info(f"Process {accelerator.process_index} using device: {device}")
@@ -87,17 +88,7 @@ def train(config):
         builtins.print = lambda *args: None
     logging.info(f"Run on {accelerator.num_processes} devices")
 
-    autoencoder = libs.autoencoder.get_model(config.autoencoder.pretrained_path)
-    autoencoder.to(device)
-
-    brain_encoder = get_brain_encoder(config)
-    brain_encoder.load_state_dict(
-        torch.load(config.brain_encoder.pretrained_path, map_location="cpu")
-    )
-    brain_encoder.eval().to(device)
-    brain_encoder.requires_grad_(False)
-
-    dataset = ThingsMEGMomentsDataset(config.dataset, brain_encoder, device)
+    dataset = ImageNetEEGMomentsDataset(config.dataset)
     assert os.path.exists(dataset.fid_stat)
 
     train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
@@ -108,12 +99,21 @@ def train(config):
         train_set, batch_size=mini_batch_size, shuffle=True, drop_last=True, **loader_args
     )
     test_loader = DataLoader(
-        test_set,
-        batch_size=config.sample.mini_batch_size,
-        sampler=RandomSampler(test_set, num_samples=config.sample.mini_batch_size * config.sample.n_batches),
-        drop_last=False,
-        **loader_args
+        test_set, batch_size=config.sample.mini_batch_size, shuffle=False, drop_last=False, **loader_args  # fmt: skip
     )
+    # test_loader = DataLoader(
+    #     test_set,
+    #     batch_size=config.sample.mini_batch_size,
+    #     sampler=RandomSampler(test_set, num_samples=config.sample.mini_batch_size * config.sample.n_batches),
+    #     drop_last=False,
+    #     **loader_args,
+    # )
+
+    autoencoder = libs.autoencoder.get_model(config.autoencoder.pretrained_path)
+    autoencoder.to(device)
+
+    brain_encoder = get_brain_encoder(config, dataset)
+    brain_encoder.eval().to(device).requires_grad_(False)
 
     train_state = initialize_train_state(config, device)
     assert train_state.brain_encoder is None, "Set joint=False for schrodinger bridge."
@@ -155,22 +155,20 @@ def train(config):
             )
             wandb.log({f"{split}_samples_gt": wandb.Image(samples_gt)})
 
+    @timer
     def train_step(_batch):
         """_summary_
         Args:
             _batch[0] ( b, c, t ): MEG
             _batch[1] ( b, c, h, w ): Image moments
             _batch[2] ( b, ): Subject idxs
-            _batch[3] ( b, ): Image idxs in whole dataset
-            _batch[4] ( b, ): Classes of the images
         Returns:
             _type_: _description_
         """
         optimizer.zero_grad()
 
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
-
-        x_T = _batch[0]  # ( b, 4, 32, 32 )
+        x_T = brain_encoder.encode(_batch[0], _batch[2]).reshape_as(x_0)  # ( b, 4, 32, 32 )
 
         loss = p_losses(x_0, x_T, nnet, schedule)
 
@@ -186,27 +184,6 @@ def train(config):
 
         return dict(lr=train_state.optimizer.param_groups[0]["lr"], **_metrics)
 
-    def dpm_solver_sample(x_init: torch.Tensor, _sample_steps, _betas: np.ndarray, **kwargs):
-        noise_schedule = NoiseScheduleVP(
-            schedule="discrete", betas=torch.tensor(_betas, device=device).float()
-        )
-
-        def model_fn(x, t_continuous):
-            t = t_continuous * schedule.T
-            pred = nnet_ema(x, t, **kwargs)
-
-            t = t.cpu().numpy().astype(int)
-            eps = x - schedule._stp(schedule._var_fwd[t - 1] ** 0.5, pred)
-            eps = x - schedule._stp(schedule.cum_alphas[t] ** 0.5, eps)
-            eps = schedule._stp(1 / schedule.cum_betas[t] ** 0.5, eps)
-
-            return eps
-
-        dpm_solver = DPM_Solver(model_fn, noise_schedule, predict_x0=True, thresholding=False)
-        x_0 = dpm_solver.sample(x_init, steps=_sample_steps, eps=1.0 / schedule.T, T=1.0)
-
-        return decode(x_0)
-
     @torch.no_grad()
     def ddpm_sample(x_init: torch.Tensor):
         """_summary_
@@ -217,7 +194,9 @@ def train(config):
 
         def pred_x0_fn(x_t, t: int):  # t: [1000, 999, ..., 2]
             t = np.full(x_t.shape[0], t, dtype=int)
-            pred = nnet_ema(x_t, torch.from_numpy(t).to(x_t))
+
+            _nnet = nnet_ema if config.train.use_ema else nnet
+            pred = _nnet(x_t, torch.from_numpy(t).to(x_t))
 
             std_fwd = np.sqrt(schedule._var_fwd[t - 1])
             return x_t - schedule._stp(std_fwd, pred)
@@ -241,11 +220,9 @@ def train(config):
         )
 
         def sample_fn(batch):
-            x_init = batch[0].to(device)
+            x_init = brain_encoder.encode(batch[0].to(device), batch[2].to(device)).reshape(-1, *dataset.data_shape)  # fmt: skip
 
-            if config.sample.algorithm == "dpm_solver":
-                return dpm_solver_sample(x_init, config.sample.dpm_solver_steps, schedule._betas)
-            elif config.sample.algorithm == "ddpm":
+            if config.sample.algorithm == "ddpm":
                 return ddpm_sample(x_init)
             else:
                 raise ValueError(f"Unknown sampling algorithm: {config.sample.algorithm}")
@@ -294,7 +271,10 @@ def train(config):
         if train_state.step % config.train.vis_interval == 0:
             # NOTE: training stucks by calling the forward pass only in the main process
             x_eval = {
-                split: dataset.vis_samples[f"{split}_brain"].to(device)
+                split: brain_encoder.encode(
+                    dataset.vis_samples[f"{split}_brain"].to(device),
+                    dataset.vis_samples[f"{split}_subject_idxs"].to(device),
+                ).reshape(-1, *dataset.data_shape)
                 for split in ["train", "test"]
             }
 
@@ -303,11 +283,7 @@ def train(config):
                 logging.info("Save a grid of images...")
 
                 for split, x_init in x_eval.items():
-                    if config.sample.algorithm == "dpm_solver":
-                        samples = dpm_solver_sample(
-                            x_init, config.sample.dpm_solver_steps, schedule._betas
-                        )
-                    elif config.sample.algorithm == "ddpm":
+                    if config.sample.algorithm == "ddpm":
                         samples = ddpm_sample(x_init)
                     else:
                         raise ValueError(f"Unknown sampling algorithm: {config.sample.algorithm}")
@@ -334,10 +310,7 @@ def train(config):
             torch.cuda.empty_cache()
             accelerator.wait_for_everyone()
 
-        if (
-            train_state.step % config.train.eval_interval == 0
-            or train_state.step == config.train.n_steps
-        ):
+        if train_state.step % config.train.eval_interval == 0 or train_state.step == config.train.n_steps:  # fmt: skip
             # calculate fid of the saved checkpoint
             fid = eval_step()
 
