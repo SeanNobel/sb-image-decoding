@@ -4,25 +4,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
-import ml_collections
 from pathlib import Path
 from absl import logging
 from typing import Tuple, Dict, Optional
 from termcolor import cprint
 from tqdm import tqdm
-import gc
-import itertools
+from omegaconf import OmegaConf
 
 from uvit import utils
 
-from nd.models.brain_encoder import (
-    SpatialAttention,
-    ConformerBlock,
-    TemporalAggregation,
-    MLPHead,
-)
-from nd.datasets.things_meg import ThingsCLIPDatasetBase
-from nd.utils.layout import min_max_norm
+from nd.models import BrainEncoder, BrainAutoencoder, BrainMAE
+from nd.utils.eval_utils import update_with_eval, get_run_dir
 
 
 def get_config_name():
@@ -108,6 +100,214 @@ class ScheduleBase(object):
 
     def __repr__(self):
         return f"Schedule({self.betas[:10]}..., {self.T})"
+
+
+class Bridge(ScheduleBase):
+    def __init__(self, linear_start: float = 1e-4, linear_end: float = 2e-2, T: int = 1000):
+        super().__init__(linear_start, linear_end, T)
+
+        self._var_fwd = self._betas.cumsum()
+        self._var_bwd = np.flip(np.flip(self._betas).cumsum())
+
+    @staticmethod
+    def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
+        """symmetric beta schedule"""
+        assert n_timestep % 2 == 0
+        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
+        _betas = (_betas**2).numpy()[: n_timestep // 2]
+
+        return np.concatenate([_betas, np.flip(_betas)])
+
+    @staticmethod
+    def _gaussian_product_coef(var1, var2):
+        denom = var1 + var2
+        mu1 = var2 / denom
+        mu2 = var1 / denom
+        var = var1 * var2 / denom
+
+        return mu1, mu2, var**0.5
+
+    def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
+        t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
+
+        var_fwd = self._var_fwd[t - 1]
+        var_bwd = self._var_bwd[t - 1]
+
+        mu_0, mu_T, sigma = self._gaussian_product_coef(var_fwd, var_bwd)
+        mu = self._stp(mu_0, x_0) + self._stp(mu_T, x_T)
+
+        x_t = mu + self._stp(sigma, torch.randn_like(mu))
+
+        eps = self._stp(1 / np.sqrt(var_fwd), x_t - x_0)
+
+        return torch.tensor(t, device=x_0.device), eps.detach(), x_t.detach()
+
+    def p_posterior(self, t_prev: int, t: int, x_t, x_0):
+        """_summary_
+        Args:
+            t_prev (int): [999, ..., 1]
+            t (int): [1000, ..., 2]
+            x_t (_type_): _description_
+            x_0 (_type_): _description_
+        Returns:
+            _type_: _description_
+        """
+        var = self._var_fwd[t - 1]
+        var_prev = self._var_fwd[t_prev - 1]
+        var_delta = var - var_prev
+
+        mu_0, mu_t, sigma = self._gaussian_product_coef(var_prev, var_delta)
+
+        x_t_prev = mu_0 * x_0 + mu_t * x_t
+
+        if t_prev > 1:
+            x_t_prev += sigma * torch.randn_like(x_t_prev)
+
+        return x_t_prev
+
+
+class TrainState(object):
+    def __init__(
+        self,
+        optimizer,
+        lr_scheduler,
+        step,
+        nnet=None,
+        nnet_ema=None,
+        brain_encoder=None,
+    ):
+        self.optimizer = optimizer
+        self.lr_scheduler = lr_scheduler
+        self.step = step
+        self.nnet = nnet
+        self.nnet_ema = nnet_ema
+        self.brain_encoder = brain_encoder
+
+    def ema_update(self, rate=0.9999):
+        if self.nnet_ema is not None:
+            utils.ema(self.nnet_ema, self.nnet, rate)
+
+    def save(self, path):
+        os.makedirs(path, exist_ok=True)
+        torch.save(self.step, os.path.join(path, "step.pth"))
+        for key, val in self.__dict__.items():
+            if key != "step" and val is not None:
+                torch.save(val.state_dict(), os.path.join(path, f"{key}.pth"))
+
+    def load(self, path):
+        logging.info(f"load from {path}")
+        self.step = torch.load(os.path.join(path, "step.pth"))
+        for key, val in self.__dict__.items():
+            if key != "step" and val is not None:
+                val.load_state_dict(
+                    torch.load(os.path.join(path, f"{key}.pth"), map_location="cpu")
+                )
+
+    def resume(self, ckpt_root, step=None):
+        if not os.path.exists(ckpt_root):
+            return
+        if step is None:
+            ckpts = list(filter(lambda x: ".ckpt" in x, os.listdir(ckpt_root)))
+            if not ckpts:
+                return
+            steps = map(lambda x: int(x.split(".")[0]), ckpts)
+            step = max(steps)
+        ckpt_path = os.path.join(ckpt_root, f"{step}.ckpt")
+        logging.info(f"resume from {ckpt_path}")
+        self.load(ckpt_path)
+
+    def to(self, device):
+        for key, val in self.__dict__.items():
+            if isinstance(val, nn.Module):
+                val.to(device)
+
+
+def get_brain_encoder(config, dataset):
+    args = OmegaConf.load(config.brain_encoder.config_path)
+    args = update_with_eval(args)
+
+    subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
+
+    if args.dataset.endswith("CLIP"):
+        model = BrainEncoder(args, subjects)
+    else:
+        if args.masked:
+            model = BrainMAE(args, subjects, mask_ratio=0)
+        else:
+            model = BrainAutoencoder(args, subjects)
+
+    prefix = "brain_encoder" if args.dataset.endswith("CLIP") else "autoencoder"
+    model.load_state_dict(
+        torch.load(os.path.join(get_run_dir(args), f"{prefix}_best.pt"), map_location="cpu")
+    )
+
+    return model
+
+
+# def get_brain_encoder(config):
+#     loc = min_max_norm(np.load(config.dataset.montage_path))
+#     loc = torch.from_numpy(loc.astype(np.float32))
+
+#     use_fp16 = config.mixed_precision == "fp16"
+
+#     return BrainEncoder(config.z_shape, loc, use_fp16, **config.brain_encoder.arch)
+
+
+def initialize_train_state(config, device):
+    params = []
+
+    nnet = utils.get_nnet(**config.nnet)
+    params += nnet.parameters()
+    logging.info(f"nnet has {utils.cnt_params(nnet)} parameters")
+
+    nnet_ema = utils.get_nnet(**config.nnet).eval() if config.train.use_ema else None
+
+    # Build brain encoder
+    if config.joint:
+        brain_encoder = get_brain_encoder(config)
+        params += brain_encoder.parameters()
+        logging.info(f"brain_encoder has {utils.cnt_params(brain_encoder)} parameters")
+    else:
+        brain_encoder = None
+        logging.info(f"Not learning brain encoder jointly.")
+
+    optimizer = utils.get_optimizer(params, **config.optimizer)
+    lr_scheduler = utils.get_lr_scheduler(optimizer, **config.lr_scheduler)
+
+    train_state = TrainState(
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        step=0,
+        nnet=nnet,
+        nnet_ema=nnet_ema,
+        brain_encoder=brain_encoder,
+    )
+    train_state.ema_update(0)
+    train_state.to(device)
+
+    return train_state
+
+
+def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn=None):
+    os.makedirs(path, exist_ok=True)
+    idx = 0
+
+    if dataloader is None:
+        dataloader = utils.amortize(config.n_samples, config.mini_batch_size)
+
+    for batch in tqdm(
+        dataloader,
+        disable=not accelerator.is_main_process,
+        desc="sample2dir",
+    ):
+        samples = unpreprocess_fn(sample_fn(batch))
+
+        _batch_size = len(samples)
+        samples = accelerator.gather(samples.contiguous())[:_batch_size]
+        if accelerator.is_main_process:
+            for sample in samples:
+                save_image(sample, os.path.join(path, f"{idx}.png"))
+                idx += 1
 
 
 class Schedule(ScheduleBase):
@@ -200,373 +400,58 @@ class Interpolate(ScheduleBase):
         return x_obs.view(b, c, h, w)
 
 
-class Bridge(ScheduleBase):
-    def __init__(self, linear_start: float = 1e-4, linear_end: float = 2e-2, T: int = 1000):
-        super().__init__(linear_start, linear_end, T)
-
-        self._var_fwd = self._betas.cumsum()
-        self._var_bwd = np.flip(np.flip(self._betas).cumsum())
-
-    @staticmethod
-    def _beta_schedule(linear_start, linear_end, n_timestep) -> np.ndarray:
-        """symmetric beta schedule"""
-        assert n_timestep % 2 == 0
-        _betas = torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64)
-        _betas = (_betas**2).numpy()[: n_timestep // 2]
-
-        return np.concatenate([_betas, np.flip(_betas)])
-
-    @staticmethod
-    def _gaussian_product_coef(var1, var2):
-        denom = var1 + var2
-        mu1 = var2 / denom
-        mu2 = var1 / denom
-        var = var1 * var2 / denom
-
-        return mu1, mu2, var**0.5
-
-    def sample(self, x_0: torch.Tensor, x_T: torch.Tensor):
-        t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
-
-        var_fwd = self._var_fwd[t - 1]
-        var_bwd = self._var_bwd[t - 1]
-
-        mu_0, mu_T, sigma = self._gaussian_product_coef(var_fwd, var_bwd)
-        mu = self._stp(mu_0, x_0) + self._stp(mu_T, x_T)
-
-        x_t = mu + self._stp(sigma, torch.randn_like(mu))
-
-        eps = self._stp(1 / np.sqrt(var_fwd), x_t - x_0)
-
-        return torch.tensor(t, device=x_0.device), eps.detach(), x_t.detach()
-
-    def p_posterior(self, t_prev: int, t: int, x_t, x_0):
-        """_summary_
-        Args:
-            t_prev (int): [999, ..., 1]
-            t (int): [1000, ..., 2]
-            x_t (_type_): _description_
-            x_0 (_type_): _description_
-        Returns:
-            _type_: _description_
-        """
-        var = self._var_fwd[t - 1]
-        var_prev = self._var_fwd[t_prev - 1]
-        var_delta = var - var_prev
-
-        mu_0, mu_t, sigma = self._gaussian_product_coef(var_prev, var_delta)
-
-        x_t_prev = mu_0 * x_0 + mu_t * x_t
-
-        if t_prev > 1:
-            x_t_prev += sigma * torch.randn_like(x_t_prev)
-
-        return x_t_prev
-
-
-class ThingsMEGMomentsDataset(ThingsCLIPDatasetBase):
-    def __init__(
-        self,
-        args: ml_collections.FrozenConfigDict,
-        brain_encoder: Optional[nn.Module] = None,
-        device: Optional[torch.device] = None,
-    ) -> None:
-        """Loads MEG samples in __getitem__ if brain_encoder is None,
-        else loads and encodes all of them in __init__.
-        Args:
-            args (ml_collections.FrozenConfigDict): _description_
-            brain_encoder (Optional[nn.Module], optional): _description_. Defaults to None.
-        """
-        super().__init__()
-
-        self.preproc_dir = args.path
-        self.large_test_set = args.large_test_set
-        self.num_subjects = 4
-
-        sample_attrs_paths = [
-            os.path.join(args.thingsmeg_dir, f"sourcedata/sample_attributes_P{i+1}.csv")
-            for i in range(self.num_subjects)
-        ]
-
-        subject_idxs_list = []
-        categories_list = []
-        y_idxs_list = []
-        train_idxs_list = []
-        test_idxs_list = []
-        for subject_id, sample_attrs_path in enumerate(sample_attrs_paths):
-            # Indexes
-            sample_attrs = np.loadtxt(
-                sample_attrs_path, dtype=str, delimiter=",", skiprows=1
-            )  # ( 27048, 18 )
-
-            categories_list.append(torch.from_numpy(sample_attrs[:, 2].astype(int)))
-            y_idxs_list.append(torch.from_numpy(sample_attrs[:, 1].astype(int)))
-
-            subject_idxs_list.append(torch.ones(len(sample_attrs), dtype=int) * subject_id)
-
-            # Split
-            train_idxs, test_idxs = self.make_split(
-                sample_attrs, large_test_set=self.large_test_set
-            )
-            idx_offset = len(sample_attrs) * subject_id
-            train_idxs_list.append(train_idxs + idx_offset)
-            test_idxs_list.append(test_idxs + idx_offset)
-
-        assert len(set([len(s) for s in subject_idxs_list])) == 1
-        self.num_samples = len(subject_idxs_list[0])
-
-        self.subject_idxs = torch.cat(subject_idxs_list, dim=0)
-
-        self.categories = torch.cat(categories_list) - 1
-        assert torch.equal(self.categories.unique(), torch.arange(self.categories.max() + 1))  # fmt: skip
-        self.num_categories = len(self.categories.unique())
-
-        if brain_encoder is not None:
-            self.X = self._load_encode_brain(brain_encoder, device)
-
-        self.y_idxs = torch.cat(y_idxs_list) - 1
-        assert torch.equal(self.y_idxs.unique(), torch.arange(self.y_idxs.max() + 1))
-
-        self.train_idxs = torch.cat(train_idxs_list, dim=0)
-        self.test_idxs = torch.cat(test_idxs_list, dim=0)
-
-        self.vis_samples: Dict[str, torch.Tensor] = self._load_vis_samples(
-            args.n_vis_samples, brain_encoder, device
-        )
-
-        cprint(f"X: {self.X.shape if hasattr(self, 'X') else 'loaded in __getitem__'} | Y: loaded in __getitem__ | subject_idxs: {self.subject_idxs.shape} | train_idxs: {self.train_idxs.shape} | test_idxs: {self.test_idxs.shape}", "cyan")  # fmt: skip
-
-        del categories_list, y_idxs_list, subject_idxs_list, train_idxs_list, test_idxs_list  # fmt: skip
-        gc.collect()
-
-    def _load_encode_brain(self, brain_encoder: nn.Module, device: torch.device) -> torch.Tensor:
-        return torch.cat(
-            [
-                brain_encoder(
-                    self._load_sample(i, sample_type="MEG").unsqueeze(0).to(device)
-                ).cpu()
-                for i in tqdm(range(len(self)), desc="Encoding all MEG samples.", total=len(self))
-            ]
-        )
-
-    def _load_vis_samples(
-        self,
-        num_vis_samples: int,
-        brain_encoder: Optional[nn.Module],
-        device: Optional[torch.device],
-    ) -> Dict[str, torch.Tensor]:
-        vis_samples = {}
-        for split, sample_type in itertools.product(
-            ["train", "test"], [("brain", "MEG"), ("moments", "Image_moments")]
-        ):
-            samples = torch.stack(
-                [
-                    self._load_sample(i, sample_type=sample_type[1])
-                    for i in getattr(self, f"{split}_idxs")[:num_vis_samples]
-                ]
-            )
-            if brain_encoder is not None and sample_type[1] == "MEG":
-                samples = brain_encoder(samples.to(device)).cpu()
-
-            vis_samples[f"{split}_{sample_type[0]}"] = samples
-
-        return vis_samples
-
-    def unpreprocess(self, v: torch.Tensor):
-        return (0.5 * (v + 1.0)).clamp(0.0, 1.0)
-
-    @property
-    def data_shape(self):
-        return 4, 32, 32
-
-    @property
-    def fid_stat(self):
-        return os.path.join(self.preproc_dir, "fid_stats_thingsmeg_test.npz")
-
-    def __len__(self) -> int:
-        return self.num_samples * self.num_subjects
-
-    def __getitem__(self, i):
-        X = self.X[i] if hasattr(self, "X") else self._load_sample(i, sample_type="MEG")
-        Y = self._load_sample(i, sample_type="Image_moments")
-
-        return X, Y, self.subject_idxs[i], self.y_idxs[i], self.categories[i]
-
-
-class BrainEncoder(nn.Module):
-    def __init__(
-        self,
-        out_dims: Tuple[int],
-        loc: torch.Tensor,
-        use_fp16: bool,
-        seq_len: int,
-        depth: int = 2,
-        D1: int = 270,
-        D2: int = 320,
-        D3: int = 2048,
-        K: int = 32,
-        n_heads: int = 4,
-        depthwise_ksize: int = 31,
-        pos_enc_type: str = "abs",
-        d_drop: float = 0.1,
-        p_drop: float = 0.1,
-    ):
-        super().__init__()
-
-        self.out_dims = out_dims  # ( 4, 32, 32 )
-
-        self.spatial_attention = nn.Sequential(
-            SpatialAttention(loc, D1, K, d_drop),
-            nn.Conv1d(D1, D1, kernel_size=1, stride=1),
-        )
-
-        self.blocks = nn.Sequential()
-        for k in range(depth):
-            self.blocks.add_module(
-                f"block{k}",
-                ConformerBlock(
-                    k, D1, D2, n_heads, depthwise_ksize, pos_enc_type=pos_enc_type, p_drop=p_drop, use_fp16=use_fp16  # fmt: skip
-                ),
-                # TransformerBlock(k, D1, D2, n_heads, seq_len, "sine_abs"),
-            )
-
-        self.conv_final = nn.Conv1d(D2, D3, kernel_size=1, stride=1)
-
-        self.temporal_aggregation = TemporalAggregation(seq_len, D3)
-
-        self.clip_head = MLPHead(in_dim=D3, out_dim=768)
-        self.mse_head = MLPHead(in_dim=D3, out_dim=np.prod(out_dims))
-
-    def forward(self, X: torch.Tensor):
-        X = self.spatial_attention(X)
-
-        X = self.blocks(X)  # ( b, D2, t )
-        X = F.gelu(self.conv_final(X))  # ( b, D3, t )
-
-        X = self.temporal_aggregation(X)  # ( b, D3, 1 )
-
-        X = self.mse_head(X)  # ( b, 1, 4096 )
-
-        return X.reshape(X.shape[0], *self.out_dims)
-
-
-class TrainState(object):
-    def __init__(
-        self,
-        optimizer,
-        lr_scheduler,
-        step,
-        nnet=None,
-        nnet_ema=None,
-        brain_encoder=None,
-    ):
-        self.optimizer = optimizer
-        self.lr_scheduler = lr_scheduler
-        self.step = step
-        self.nnet = nnet
-        self.nnet_ema = nnet_ema
-        self.brain_encoder = brain_encoder
-
-    def ema_update(self, rate=0.9999):
-        if self.nnet_ema is not None:
-            utils.ema(self.nnet_ema, self.nnet, rate)
-
-    def save(self, path):
-        os.makedirs(path, exist_ok=True)
-        torch.save(self.step, os.path.join(path, "step.pth"))
-        for key, val in self.__dict__.items():
-            if key != "step" and val is not None:
-                torch.save(val.state_dict(), os.path.join(path, f"{key}.pth"))
-
-    def load(self, path):
-        logging.info(f"load from {path}")
-        self.step = torch.load(os.path.join(path, "step.pth"))
-        for key, val in self.__dict__.items():
-            if key != "step" and val is not None:
-                val.load_state_dict(
-                    torch.load(os.path.join(path, f"{key}.pth"), map_location="cpu")
-                )
-
-    def resume(self, ckpt_root, step=None):
-        if not os.path.exists(ckpt_root):
-            return
-        if step is None:
-            ckpts = list(filter(lambda x: ".ckpt" in x, os.listdir(ckpt_root)))
-            if not ckpts:
-                return
-            steps = map(lambda x: int(x.split(".")[0]), ckpts)
-            step = max(steps)
-        ckpt_path = os.path.join(ckpt_root, f"{step}.ckpt")
-        logging.info(f"resume from {ckpt_path}")
-        self.load(ckpt_path)
-
-    def to(self, device):
-        for key, val in self.__dict__.items():
-            if isinstance(val, nn.Module):
-                val.to(device)
-
-
-def get_brain_encoder(config):
-    loc = min_max_norm(np.load(config.dataset.montage_path))
-    loc = torch.from_numpy(loc.astype(np.float32))
-
-    use_fp16 = config.mixed_precision == "fp16"
-
-    return BrainEncoder(config.z_shape, loc, use_fp16, **config.brain_encoder.arch)
-
-
-def initialize_train_state(config, device):
-    params = []
-
-    nnet = utils.get_nnet(**config.nnet)
-    params += nnet.parameters()
-    nnet_ema = utils.get_nnet(**config.nnet)
-    nnet_ema.eval()
-    logging.info(f"nnet has {utils.cnt_params(nnet)} parameters")
-
-    # Build brain encoder
-    if config.joint:
-        brain_encoder = get_brain_encoder(config)
-        params += brain_encoder.parameters()
-        logging.info(f"brain_encoder has {utils.cnt_params(brain_encoder)} parameters")
-    else:
-        brain_encoder = None
-        logging.info(f"Not learning brain encoder jointly.")
-
-    optimizer = utils.get_optimizer(params, **config.optimizer)
-    lr_scheduler = utils.get_lr_scheduler(optimizer, **config.lr_scheduler)
-
-    train_state = TrainState(
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
-        step=0,
-        nnet=nnet,
-        nnet_ema=nnet_ema,
-        brain_encoder=brain_encoder,
-    )
-    train_state.ema_update(0)
-    train_state.to(device)
-
-    return train_state
-
-
-def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn=None):
-    os.makedirs(path, exist_ok=True)
-    idx = 0
-
-    if dataloader is None:
-        dataloader = utils.amortize(config.n_samples, config.mini_batch_size)
-
-    for batch in tqdm(
-        dataloader,
-        disable=not accelerator.is_main_process,
-        desc="sample2dir",
-    ):
-        samples = unpreprocess_fn(sample_fn(batch))
-
-        _batch_size = len(samples)
-        samples = accelerator.gather(samples.contiguous())[:_batch_size]
-        if accelerator.is_main_process:
-            for sample in samples:
-                save_image(sample, os.path.join(path, f"{idx}.png"))
-                idx += 1
+# class BrainEncoder(nn.Module):
+#     def __init__(
+#         self,
+#         out_dims: Tuple[int],
+#         loc: torch.Tensor,
+#         use_fp16: bool,
+#         seq_len: int,
+#         depth: int = 2,
+#         D1: int = 270,
+#         D2: int = 320,
+#         D3: int = 2048,
+#         K: int = 32,
+#         n_heads: int = 4,
+#         depthwise_ksize: int = 31,
+#         pos_enc_type: str = "abs",
+#         d_drop: float = 0.1,
+#         p_drop: float = 0.1,
+#     ):
+#         super().__init__()
+
+#         self.out_dims = out_dims  # ( 4, 32, 32 )
+
+#         self.spatial_attention = nn.Sequential(
+#             SpatialAttention(loc, D1, K, d_drop),
+#             nn.Conv1d(D1, D1, kernel_size=1, stride=1),
+#         )
+
+#         self.blocks = nn.Sequential()
+#         for k in range(depth):
+#             self.blocks.add_module(
+#                 f"block{k}",
+#                 ConformerBlock(
+#                     k, D1, D2, n_heads, depthwise_ksize, pos_enc_type=pos_enc_type, p_drop=p_drop, use_fp16=use_fp16  # fmt: skip
+#                 ),
+#                 # TransformerBlock(k, D1, D2, n_heads, seq_len, "sine_abs"),
+#             )
+
+#         self.conv_final = nn.Conv1d(D2, D3, kernel_size=1, stride=1)
+
+#         self.temporal_aggregation = TemporalAggregation(seq_len, D3)
+
+#         self.clip_head = MLPHead(in_dim=D3, out_dim=768)
+#         self.mse_head = MLPHead(in_dim=D3, out_dim=np.prod(out_dims))
+
+#     def forward(self, X: torch.Tensor):
+#         X = self.spatial_attention(X)
+
+#         X = self.blocks(X)  # ( b, D2, t )
+#         X = F.gelu(self.conv_final(X))  # ( b, D3, t )
+
+#         X = self.temporal_aggregation(X)  # ( b, D3, 1 )
+
+#         X = self.mse_head(X)  # ( b, 1, 4096 )
+
+#         return X.reshape(X.shape[0], *self.out_dims)
