@@ -48,8 +48,10 @@ def get_config():
     config.lr_scheduler = d(name="customized", warmup_steps=5000)
 
     config.brain_encoder = d(
-        config_path="configs/imageneteeg/autoencoder.yaml",
-        pretrained_path="runs/imageneteegbrain/conformer_masked-False_pos_enc-sine_abs_/autoencoder_best.pt",
+        # config_path="configs/imageneteeg/autoencoder.yaml",
+        # pretrained_path="runs/imageneteegbrain/conformer_masked-False_pos_enc-sine_abs_/autoencoder_best.pt",
+        config_path="configs/imageneteeg/clip.yaml",
+        pretrained_path="runs/imageneteegclip/conformer_clip_temp_init-4.800_loss-clip_pos_enc-sine_abs_/brain_encoder_best.pt",
         arch=d(
             seq_len=169,
             depth=2,

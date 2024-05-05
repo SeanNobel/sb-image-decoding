@@ -35,3 +35,5 @@ huggingface_hub
 accelerate
 transformers
 ml-collections
+
+pytorch-fid==0.3.0
