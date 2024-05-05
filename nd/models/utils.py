@@ -2,6 +2,7 @@ import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
 from einops.layers.torch import Rearrange
 from typing import List, Optional
 
@@ -77,7 +78,6 @@ class MLP(nn.Module):
         hid_dim = in_dim if hid_dim is None else hid_dim
 
         self.net = nn.Sequential(
-            Rearrange("b t d -> b (t d)"),
             nn.Linear(in_dim, hid_dim),
             nn.LayerNorm(hid_dim),
             nn.GELU(),
@@ -85,6 +85,9 @@ class MLP(nn.Module):
         )
 
     def forward(self, X):
+        if X.ndim == 3:
+            X = rearrange(X, "b t d -> b (t d)")
+
         return self.net(X)
 
     def encode(self, X):

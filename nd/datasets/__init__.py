@@ -4,4 +4,4 @@ from nd.datasets.things_meg import (
     ThingsMEGCLIPDataset,
     # ThingsMEGDecoderDataset,
 )
-from nd.datasets.imagenet_eeg import ImageNetEEGBrainDataset
+from nd.datasets.imagenet_eeg import ImageNetEEGBrainDataset, ImageNetEEGCLIPDataset

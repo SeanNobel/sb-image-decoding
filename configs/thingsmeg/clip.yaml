@@ -1,14 +1,15 @@
 # ==== Preprocessing ==== #
 preproc_name: 3_caption # 2_huggingface
 
-thingsmeg_dir: /mnt/tsukuyomi/things-meg/
+root: /home/sensho/neuro-diffusion/ # /home/sensho/brain2face/
+
+thingsmeg_dir: ${root}data/raw/thingsmeg/ # /mnt/tsukuyomi/things-meg/
 meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
 
-things_dir: /mnt/tsukuyomi/things/osfstorage/THINGS/
+things_dir: ${thingsmeg_dir} # /mnt/tsukuyomi/things/osfstorage/THINGS/
 images_dir: ${things_dir}Images/
 metadata_dir: ${things_dir}Metadata/
 
-root: /home/sensho/brain2face/
 preprocessed_data_dir: ${root}data/preprocessed/thingsmeg/
 
 skip_meg: True
@@ -23,8 +24,7 @@ clamp_lim: 5.0 # Standard deviation
 
 # ==== Architecture ==== #
 F: 768 # 768 for OpenAI original / 1024 for Huggingface
-# F_orig: 768
-F_mse: 768
+F_mse: 4096
 
 align_to: vision # vision / text
 align_tokens: cls # all / cls / mean / list of those
@@ -52,7 +52,7 @@ D3: 2048
 K: 32
 spatial_attention: True
 ignore_subjects: False
-blocks: conformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
+blocks: transformer # dilated_conv / inception / transformer. Can be a list of strings with length num_blocks.
 num_blocks: 2
 d_drop: 0.1 # Dropout rate for spatial-attention
 p_drop: 0.1 # Dropout rate for conv blocks
@@ -151,7 +151,7 @@ train_name: small_test
 # seq_onset: 0.0
 seq_len: 1.41 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
 
-dataset: ThingsMEG
+dataset: ThingsMEGCLIP
 # image_size: 256
 
 montage_path: ${root}nd/utils/montages/things_meg.npy
@@ -184,14 +184,14 @@ cuda_id: 0
 
 sweep_count: 1
 sweep_config:
-  name: init # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
+  name: check # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
-    F_mse:
-      value: 4096
+    blocks:
+      value: transformer
 
     # loss:
     #   value: normregclip
