@@ -37,7 +37,6 @@ class BrainAutoencoder(nn.Module):
 class BrainMAE(BrainAutoencoder):
     def __init__(self, args, subjects, mask_ratio: float = 0.75) -> None:
         super().__init__(args, subjects)
-        assert args.blocks == "transformer"
 
         self.mask_ratio = mask_ratio
 
@@ -55,6 +54,7 @@ class BrainMAE(BrainAutoencoder):
             Rearrange("b d t -> b t d"),
         )
 
+        # Override
         self.pos_enc = PositionalEncoding(
             init_temporal_dim // patch_size, D2, pos_enc.split("_")[0]
         )
