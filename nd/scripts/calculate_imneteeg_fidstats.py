@@ -2,20 +2,12 @@ import os, sys
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
 import numpy as np
-import torch
-import torchvision.transforms as TF
-from PIL import Image
-from scipy import linalg
-from torch.nn.functional import adaptive_avg_pool2d
-
 from tqdm import tqdm
-
-from hydra import initialize, compose
+from glob import glob
 
 from pytorch_fid.fid_score import calculate_activation_statistics
 from pytorch_fid.inception import InceptionV3
 
-from datasets import ThingsMEGDatabase
 
 # fmt: off
 parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
@@ -32,9 +24,7 @@ IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm', 'tif', 'tiff', 'w
 # fmt: on
 
 
-def save_fid_stats(
-    files, save_path, batch_size, device, dims, num_workers=1, resize_to=None
-):
+def save_fid_stats(files, save_path, batch_size, device, dims, num_workers=1, resize_to=None):
     block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
 
     model = InceptionV3([block_idx]).to(device)
@@ -47,12 +37,9 @@ def save_fid_stats(
 
 
 def main():
-    with initialize(version_base=None, config_path="../../configs/thingsmeg"):
-        dataset_args = compose(config_name="clip")
-
-    dataset = ThingsMEGDatabase(dataset_args)
-    train_filenames = dataset.Y_paths[dataset.train_idxs].tolist()
-    test_filenames = dataset.Y_paths[dataset.test_idxs].tolist()
+    filenames = [
+        os.path.abspath(path) for path in glob("data/preprocessed/imageneteeg/0_init/images/*.jpg")
+    ]
 
     # Args for FID calculation
     args = parser.parse_args()
@@ -69,18 +56,15 @@ def main():
     else:
         num_workers = args.num_workers
 
-    save_paths = [args.save_path + "_train", args.save_path + "_test"]
-
-    for files, save_path in zip([train_filenames, test_filenames], save_paths):
-        save_fid_stats(
-            files,
-            save_path,
-            args.batch_size,
-            device,
-            args.dims,
-            num_workers,
-            args.resize_to,
-        )
+    save_fid_stats(
+        filenames,
+        args.save_path,
+        args.batch_size,
+        device,
+        args.dims,
+        num_workers,
+        args.resize_to,
+    )
 
 
 if __name__ == "__main__":
