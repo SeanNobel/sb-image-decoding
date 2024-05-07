@@ -50,8 +50,6 @@ def p_losses(x_0, x_T, nnet, schedule: Bridge, **kwargs):
 
 
 def train(config):
-    assert config.train.mode == "uncond", "Conditioning is not supprted."
-
     if config.get("benchmark", False):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
@@ -162,6 +160,7 @@ def train(config):
             _batch[0] ( b, c, t ): MEG
             _batch[1] ( b, c, h, w ): Image moments
             _batch[2] ( b, ): Subject idxs
+            _batch[3] ( b, ): Subject idxs (randomly replaced with empty token)
         Returns:
             _type_: _description_
         """
@@ -170,7 +169,12 @@ def train(config):
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
         x_T = brain_encoder.encode(_batch[0], _batch[2]).reshape_as(x_0)  # ( b, 4, 32, 32 )
 
-        loss = p_losses(x_0, x_T, nnet, schedule)
+        if config.train.mode == "uncond":
+            loss = p_losses(x_0, x_T, nnet, schedule)
+        elif config.train.mode == "cond":
+            loss = p_losses(x_0, x_T, nnet, schedule, y=_batch[3])
+        else:
+            raise ValueError(f"Unknown training mode: {config.train.mode}")
 
         _metrics = dict()
         _metrics["p_loss"] = accelerator.gather(loss.detach()).mean()
@@ -185,7 +189,7 @@ def train(config):
         return dict(lr=train_state.optimizer.param_groups[0]["lr"], **_metrics)
 
     @torch.no_grad()
-    def ddpm_sample(x_init: torch.Tensor):
+    def ddpm_sample(x_init: torch.Tensor, **kwargs):
         """_summary_
         https://github.com/NVlabs/I2SB/blob/1ffdfaaf05495ef883ece2c1fe991b3049f814cc/i2sb/diffusion.py
         Args:
@@ -196,7 +200,7 @@ def train(config):
             t = np.full(x_t.shape[0], t, dtype=int)
 
             _nnet = nnet_ema if config.train.use_ema else nnet
-            pred = _nnet(x_t, torch.from_numpy(t).to(x_t))
+            pred = _nnet(x_t, torch.from_numpy(t).to(x_t), **kwargs)
 
             std_fwd = np.sqrt(schedule._var_fwd[t - 1])
             return x_t - schedule._stp(std_fwd, pred)
@@ -222,10 +226,13 @@ def train(config):
         def sample_fn(batch):
             x_init = brain_encoder.encode(batch[0].to(device), batch[2].to(device)).reshape(-1, *dataset.data_shape)  # fmt: skip
 
-            if config.sample.algorithm == "ddpm":
+            if config.train.mode == "uncond":
                 return ddpm_sample(x_init)
+            elif config.train.mode == "cond":
+                # NOTE: using non-empty token for conditional sampling
+                return ddpm_sample(x_init, y=batch[2].to(device))
             else:
-                raise ValueError(f"Unknown sampling algorithm: {config.sample.algorithm}")
+                raise ValueError(f"Unknown training mode: {config.train.mode}")
 
         with tempfile.TemporaryDirectory() as temp_path:
             path = config.sample.path or temp_path
@@ -283,8 +290,13 @@ def train(config):
                 logging.info("Save a grid of images...")
 
                 for split, x_init in x_eval.items():
-                    if config.sample.algorithm == "ddpm":
+                    if config.train.mode == "uncond":
                         samples = ddpm_sample(x_init)
+                    elif config.train.mode == "cond":
+                        # NOTE: using non-empty token for conditional sampling
+                        samples = ddpm_sample(
+                            x_init, y=dataset.vis_samples[f"{split}_subject_idxs"].to(device)
+                        )
                     else:
                         raise ValueError(f"Unknown sampling algorithm: {config.sample.algorithm}")
 

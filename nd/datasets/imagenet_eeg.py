@@ -1,10 +1,10 @@
 import os
+import random
 import torch
 import torch.nn as nn
 import ml_collections
 import omegaconf
 from typing import Dict, Union, Optional
-import itertools
 
 
 class ImageNetEEGBrainDataset(torch.utils.data.Dataset):
@@ -16,6 +16,7 @@ class ImageNetEEGBrainDataset(torch.utils.data.Dataset):
 
         self.X = torch.load(os.path.join(self.preproc_dir, "eeg.pt"))
         self.subject_idxs = torch.load(os.path.join(self.preproc_dir, "subject_idxs.pt"))
+        assert self.subject_idxs.max() == self.num_subjects - 1
 
         self.train_idxs = torch.load(os.path.join(self.preproc_dir, "train_idxs", f"cv{cv+1}.pt"))
         self.test_idxs = torch.load(os.path.join(self.preproc_dir, "test_idxs", f"cv{cv+1}.pt"))
@@ -41,6 +42,9 @@ class ImageNetEEGMomentsDataset(ImageNetEEGBrainDataset):
     def __init__(self, args: ml_collections.FrozenConfigDict):
         super().__init__(args)
 
+        self.p_uncond = args.p_uncond
+        self.empty_token = torch.tensor(self.num_subjects)
+
         self.Y = torch.load(os.path.join(self.preproc_dir, "image_moments.pt"))
 
         self.vis_samples: Dict[str, torch.Tensor] = {
@@ -53,7 +57,9 @@ class ImageNetEEGMomentsDataset(ImageNetEEGBrainDataset):
         }
 
     def __getitem__(self, i):
-        return self.X[i], self.Y[i], self.subject_idxs[i]
+        cond = self.empty_token if random.random() < self.p_uncond else self.subject_idxs[i]
+
+        return self.X[i], self.Y[i], self.subject_idxs[i], cond
 
     def unpreprocess(self, v: torch.Tensor):
         return (0.5 * (v + 1.0)).clamp(0.0, 1.0)

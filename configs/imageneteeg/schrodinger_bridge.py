@@ -15,9 +15,6 @@ def get_config():
     config.wandb_mode = "online"
 
     config.joint = False  # Whether to train brain encoder jointly with the diffusion model (must be False for Schrodinger bridge)
-    # config.obs_T = False  # Whether to handle x_T as observed or latent variable
-    # config.t_obs = 800  # 500 # < n_timestep (= 1000)
-    # config.obs_ratio = 0.125
 
     config.autoencoder = d(
         # pretrained_path="uvit/assets/stable-diffusion/autoencoder_kl_ema.pth",
@@ -29,7 +26,7 @@ def get_config():
         name="default",
         n_steps=500000,
         batch_size=1024,
-        mode="uncond",
+        mode="cond",
         log_interval=10,
         vis_interval=1000,
         save_interval=2000,
@@ -78,7 +75,7 @@ def get_config():
         mlp_ratio=4,
         qkv_bias=False,
         mlp_time_embed=False,
-        num_classes=-1,
+        num_classes=7,  # num subjects + 1 for unconditioned
         use_checkpoint=True,
     )
 
@@ -86,8 +83,7 @@ def get_config():
         preproc_dir="data/preprocessed/imageneteeg/",
         preproc_name="0_init",
         n_vis_samples=8,
-        # cfg=True,
-        # p_uncond=0.15,
+        p_uncond=0.15,
     )
 
     config.sample = d(
