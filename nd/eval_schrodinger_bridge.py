@@ -1,6 +1,7 @@
 from tools.fid_score import calculate_fid_given_paths
 import ml_collections
 import torch
+from torch.utils.data import DataLoader
 from torch import multiprocessing as mp
 import accelerate
 import utils
@@ -10,6 +11,12 @@ from dpm_solver_pp import NoiseScheduleVP, DPM_Solver
 from absl import logging
 import builtins
 import libs.autoencoder
+from einops import repeat
+import numpy as np
+from tqdm import tqdm
+
+from nd.datasets.imagenet_eeg import ImageNetEEGMomentsDataset
+from nd.utils.uvit_utils import Bridge, get_brain_encoder, sample2dir
 
 
 def stable_diffusion_beta_schedule(linear_start=0.00085, linear_end=0.0120, n_timestep=1000):
@@ -24,7 +31,7 @@ def evaluate(config):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
 
-    mp.set_start_method("spawn")
+    mp.set_start_method("spawn", force=True)
     accelerator = accelerate.Accelerator()
     device = accelerator.device
     accelerate.utils.set_seed(config.seed, device_specific=True)
@@ -32,22 +39,43 @@ def evaluate(config):
 
     config.mixed_precision = accelerator.mixed_precision
     config = ml_collections.FrozenConfigDict(config)
+
     if accelerator.is_main_process:
         utils.set_logger(log_level="info", fname=config.output_path)
     else:
         utils.set_logger(log_level="error")
         builtins.print = lambda *args: None
 
-    dataset = get_dataset(**config.dataset)
+    dataset = ImageNetEEGMomentsDataset(config.dataset)
+    train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+    test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
+
+    loader_args = {
+        "batch_size": config.sample.mini_batch_size,
+        "shuffle": False,
+        "drop_last": False,
+        "num_workers": 8,
+        "pin_memory": True,
+        "persistent_workers": True,
+    }
+    train_loader = DataLoader(train_set, **loader_args)
+    test_loader = DataLoader(test_set, **loader_args)
 
     nnet = utils.get_nnet(**config.nnet)
-    nnet = accelerator.prepare(nnet)
+
+    nnet, train_loader, test_loader = accelerator.prepare(nnet, train_loader, test_loader)
+
     logging.info(f"load nnet from {config.nnet_path}")
     accelerator.unwrap_model(nnet).load_state_dict(torch.load(config.nnet_path, map_location="cpu"))
     nnet.eval()
 
     autoencoder = libs.autoencoder.get_model(config.autoencoder.pretrained_path)
     autoencoder.to(device)
+
+    brain_encoder = get_brain_encoder(config, dataset)
+    brain_encoder.eval().to(device).requires_grad_(False)
+
+    schedule = Bridge()
 
     @torch.cuda.amp.autocast()
     def encode(_batch):
@@ -57,31 +85,19 @@ def evaluate(config):
     def decode(_batch):
         return autoencoder.decode(_batch)
 
-    def decode_large_batch(_batch):
-        decode_mini_batch_size = 50  # use a small batch size since the decoder is large
-        xs = []
-        pt = 0
-        for _decode_mini_batch_size in utils.amortize(_batch.size(0), decode_mini_batch_size):
-            x = decode(_batch[pt : pt + _decode_mini_batch_size])
-            pt += _decode_mini_batch_size
-            xs.append(x)
-        xs = torch.concat(xs, dim=0)
-        assert xs.size(0) == _batch.size(0)
-        return xs
+    if config.train.mode == "cond" and config.sample.guidance and config.sample.scale > 0:
+        # domain convergent guidance
+        logging.info(f"Use domain convergent guidance with scale={config.sample.scale}")
 
-    if (
-        "cfg" in config.sample and config.sample.cfg and config.sample.scale > 0
-    ):  # classifier free guidance
-        logging.info(f"Use classifier free guidance with scale={config.sample.scale}")
-
-        def cfg_nnet(x, timesteps, y):
+        def dcg_nnet(x, timesteps, y):
             _cond = nnet(x, timesteps, y=y)
-            _uncond = nnet(x, timesteps, y=torch.tensor([dataset.K] * x.size(0), device=device))
-            return _cond + config.sample.scale * (_cond - _uncond)
+            _uncond = nnet(x, timesteps, y=repeat(dataset.empty_token, "-> b", b=x.shape[0]).to(x.device))  # fmt: skip
+
+            return (1 + config.sample.scale) * _uncond - config.sample.scale * _cond
 
     else:
 
-        def cfg_nnet(x, timesteps, y):
+        def dcg_nnet(x, timesteps, y):
             _cond = nnet(x, timesteps, y=y)
             return _cond
 
@@ -91,53 +107,47 @@ def evaluate(config):
         f"sample: n_samples={config.sample.n_samples}, mode={config.train.mode}, mixed_precision={config.mixed_precision}"
     )
 
-    _betas = stable_diffusion_beta_schedule()
-    N = len(_betas)
+    @torch.no_grad()
+    def ddpm_sample(x_init: torch.Tensor, **kwargs):
 
-    def sample_z(_n_samples, _sample_steps, **kwargs):
-        _z_init = torch.randn(_n_samples, *config.z_shape, device=device)
+        def pred_x0_fn(x_t, t: int):  # t: [1000, 999, ..., 2]
+            t = np.full(x_t.shape[0], t, dtype=int)
 
-        if config.sample.algorithm == "dpm_solver":
-            noise_schedule = NoiseScheduleVP(
-                schedule="discrete", betas=torch.tensor(_betas, device=device).float()
-            )
+            pred = dcg_nnet(x_t, torch.from_numpy(t).to(x_t), **kwargs)
 
-            def model_fn(x, t_continuous):
-                t = t_continuous * N
-                eps_pre = cfg_nnet(x, t, **kwargs)
-                return eps_pre
+            std_fwd = np.sqrt(schedule._var_fwd[t - 1])
+            return x_t - schedule._stp(std_fwd, pred)
 
-            dpm_solver = DPM_Solver(model_fn, noise_schedule, predict_x0=True, thresholding=False)
-            _z = dpm_solver.sample(_z_init, steps=_sample_steps, eps=1.0 / N, T=1.0)
+        x_t = x_init
 
-        else:
-            raise NotImplementedError
+        steps = np.arange(1, schedule.T + 1)[::-1]  # [1000, 999, ..., 2, 1]
+        for prev_step, step in tqdm(
+            zip(steps[1:], steps[:-1]), desc="DDPM sampling", total=schedule.T - 1
+        ):
+            pred_x_0 = pred_x0_fn(x_t, step)
+            x_t = schedule.p_posterior(prev_step, step, x_t, pred_x_0)
 
-        return _z
+        return decode(x_t)
 
-    def sample_fn(_n_samples):
+    def sample_fn(batch):
+        x_init = brain_encoder.encode(batch[0].to(device), batch[2].to(device)).reshape(-1, *dataset.data_shape)  # fmt: skip
+
         if config.train.mode == "uncond":
-            kwargs = dict()
+            return ddpm_sample(x_init)
         elif config.train.mode == "cond":
-            kwargs = dict(y=dataset.sample_label(_n_samples, device=device))
+            # NOTE: using non-empty token for conditional sampling
+            return ddpm_sample(x_init, y=batch[2].to(device))
         else:
-            raise NotImplementedError
-        _z = sample_z(_n_samples, _sample_steps=config.sample.sample_steps, **kwargs)
-        return decode_large_batch(_z)
+            raise ValueError(f"Unknown training mode: {config.train.mode}")
 
     with tempfile.TemporaryDirectory() as temp_path:
         path = config.sample.path or temp_path
         if accelerator.is_main_process:
             os.makedirs(path, exist_ok=True)
         logging.info(f"Samples are saved in {path}")
-        utils.sample2dir(
-            accelerator,
-            path,
-            config.sample.n_samples,
-            config.sample.mini_batch_size,
-            sample_fn,
-            dataset.unpreprocess,
-        )
+
+        sample2dir(accelerator, path, test_loader, sample_fn, dataset.unpreprocess)
+
         if accelerator.is_main_process:
             fid = calculate_fid_given_paths((dataset.fid_stat, path))
             logging.info(f"nnet_path={config.nnet_path}, fid={fid}")
