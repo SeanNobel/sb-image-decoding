@@ -49,6 +49,7 @@ def make_split(subject_idxs: torch.Tensor, labels: torch.Tensor, train_ratio: fl
 
 
 USE_PROCESSED = False
+SPLIT = "subject"
 
 
 @hydra.main(version_base=None, config_path="../../configs/imageneteeg", config_name="clip")
@@ -66,21 +67,38 @@ def run(args: DictConfig) -> None:
 
     # make it starts from 0
     subject_idxs = torch.tensor([d["subject"] for d in data["dataset"]]) - 1
-    torch.save(subject_idxs, os.path.join(save_dir, "subject_idxs.pt"))
-
     labels = torch.tensor([d["label"] for d in data["dataset"]])
-    torch.save(labels, os.path.join(save_dir, "labels.pt"))
 
-    splits = torch.load(os.path.join(args.eeg_dir, "block_splits_by_image_all.pth"))
     # train_idxs, test_idxs = make_split(subject_idxs, labels)
-    for cv in range(len(splits["splits"])):
-        train_idxs = splits["splits"][cv]["train"] + splits["splits"][cv]["val"]
-        train_idxs = torch.tensor(train_idxs).sort().values
+    if SPLIT == "original":
+        splits = torch.load(os.path.join(args.eeg_dir, "block_splits_by_image_all.pth"))
 
-        test_idxs = torch.tensor(splits["splits"][cv]["test"])
+        for cv in range(len(splits["splits"])):
+            train_idxs = splits["splits"][cv]["train"] + splits["splits"][cv]["val"]
+            train_idxs = torch.tensor(train_idxs).sort().values
 
-        torch.save(train_idxs, os.path.join(save_dir, "train_idxs", f"cv{cv+1}.pt"))
-        torch.save(test_idxs, os.path.join(save_dir, "test_idxs", f"cv{cv+1}.pt"))
+            test_idxs = torch.tensor(splits["splits"][cv]["test"])
+
+            torch.save(train_idxs, os.path.join(save_dir, "train_idxs", f"cv{cv+1}.pt"))
+            torch.save(test_idxs, os.path.join(save_dir, "test_idxs", f"cv{cv+1}.pt"))
+
+    elif SPLIT == "subject":
+        for i in range(subject_idxs.max().item() + 1):
+            train_idxs = torch.where(subject_idxs != i)[0]
+            test_idxs = torch.where(subject_idxs == i)[0]
+            assert len(train_idxs) + len(test_idxs) == len(subject_idxs)
+
+            cprint(
+                f"Train (first 10): {train_idxs[:10]}, test (first 10): {test_idxs[:10]}", "yellow"
+            )
+
+            torch.save(train_idxs, os.path.join(save_dir, "train_idxs", f"cv{i+1}.pt"))
+            torch.save(test_idxs, os.path.join(save_dir, "test_idxs", f"cv{i+1}.pt"))
+    else:
+        raise ValueError(f"Unknown split {SPLIT}")
+
+    torch.save(labels, os.path.join(save_dir, "labels.pt"))
+    torch.save(subject_idxs, os.path.join(save_dir, "subject_idxs.pt"))
 
     cprint(f"Saved subject_idxs {subject_idxs.shape}, {subject_idxs.dtype} | labels {labels.shape}, {labels.dtype} | train_idxs {train_idxs.shape}, {train_idxs.dtype} | test_idxs {test_idxs.shape}, {test_idxs.dtype} to {save_dir}", "cyan")  # fmt: skip
 
@@ -128,8 +146,15 @@ def run(args: DictConfig) -> None:
             os.path.join(args.images_dir, name.split("_")[0], f"{name}.JPEG")
             for name in data["images"]
         ]
+        image_save_paths = [
+            os.path.join(images_dir, os.path.basename(path).replace(".JPEG", ".jpg"))
+            for path in image_set_paths
+        ]
+
         clip_embeds, moments = [], []
-        for path in tqdm(image_set_paths, desc="Embedding images"):
+        for path, save_path in tqdm(
+            zip(image_set_paths, image_save_paths), desc="Embedding images"
+        ):
             image = Image.open(path).convert("RGB")
 
             # ------------------------------
@@ -144,7 +169,7 @@ def run(args: DictConfig) -> None:
             crop_size = min(image.size)
             image = TF.center_crop(image, [crop_size, crop_size])
             image = TF.resize(image, 256, Image.LANCZOS)
-            image.save(os.path.join(images_dir, os.path.basename(path).replace(".JPEG", ".jpg")))
+            image.save(save_path)
 
             image = np.array(image, dtype=np.float32) / 127.5 - 1.0
             image = torch.from_numpy(image).permute(2, 0, 1)
@@ -155,7 +180,11 @@ def run(args: DictConfig) -> None:
         clip_embeds = torch.cat(clip_embeds).cpu()
         moments = torch.cat(moments).cpu()
 
-        image_idxs = torch.tensor([d["image"] for d in data["dataset"]])
+        image_idxs = [d["image"] for d in data["dataset"]]
+        image_save_paths = [image_save_paths[i] for i in image_idxs]
+        np.savetxt(os.path.join(save_dir, "image_paths.txt"), image_save_paths, fmt="%s")
+
+        image_idxs = torch.tensor(image_idxs)
         clip_embeds = torch.index_select(clip_embeds, 0, image_idxs)
         moments = torch.index_select(moments, 0, image_idxs)
 
