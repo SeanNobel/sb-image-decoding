@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: 0_init
+preproc_name: 2_subject
 
 root: /home/sensho/neuro-diffusion
 eeg_dir: ${root}/data/raw/eeg_cvpr_2017/
@@ -109,7 +109,7 @@ lr_multistep_mlstns: [0.6, 0.9]
 lr_step_gamma: 0.1
 epochs: 200
 
-patience: 15
+patience: 200
 
 chance: False
 
@@ -119,20 +119,23 @@ num_workers: 8
 seed: 1234
 cuda_id: 0
 
-sweep_count: 1
+sweep_count: 2
 sweep_config:
-  name: self-preproc
+  name: ignore-subjects
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
+    ignore_subjects:
+      values: [True, False]
+
     # blocks:
     #   value: conformer
-    pos_enc:
-      value: sine_abs
-    masked:
-      value: False
+    # pos_enc:
+    #   value: sine_abs
+    # masked:
+    #   value: False
 
     # decoder_dim:
     #   values: [256, 512]
@@ -143,6 +146,7 @@ sweep_config:
 eval:
   # decoder_dim: 256
   # blocks: conformer
-  masked: False
+  # masked: False
   # mask_ratio: 0.75
-  pos_enc: sine_abs
+  # pos_enc: sine_abs
+  ignore_subjects: False
