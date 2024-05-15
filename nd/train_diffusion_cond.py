@@ -20,7 +20,7 @@ from uvit.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
 
 from uvit.tools.fid_score import calculate_fid_given_paths
 
-from nd.datasets.imagenet_eeg import ImageNetEEGMomentsDataset
+from nd.datasets.imagenet_eeg import ImageNetEEGMomentsDatasetCond
 from nd.utils.uvit_utils import (
     Schedule,
     initialize_train_state,
@@ -87,7 +87,7 @@ def train(config):
         builtins.print = lambda *args: None
     logging.info(f"Run on {accelerator.num_processes} devices")
 
-    dataset = ImageNetEEGMomentsDataset(config.dataset)
+    dataset = ImageNetEEGMomentsDatasetCond(config.dataset)
     assert os.path.exists(dataset.fid_stat)
 
     train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
@@ -153,15 +153,15 @@ def train(config):
             _batch[0] ( b, c, t ): MEG
             _batch[1] ( b, c, h, w ): Image moments
             _batch[2] ( b, ): Subject idxs
-            _batch[3] ( b, ): Image idxs in whole dataset
-            _batch[4] ( b, ): Classes of the images
+            _batch[3] ( b, c, t ): MEG (randomly replaced with zeros)
+            _batch[4] ( b, ): Subject idxs (randomly replaced with zeros)
         Returns:
             _type_: _description_
         """
         optimizer.zero_grad()
 
         x_0 = autoencoder.sample(_batch[1])  # ( b, 4, 32, 32 )
-        cond = brain_encoder.encode(_batch[0], _batch[2])  # ( b, 4096 )
+        cond = brain_encoder.encode(_batch[3], _batch[4]).squeeze()  # ( b, 4096 )
 
         loss = p_losses(x_0, nnet, schedule, cond=cond)
 
@@ -183,7 +183,7 @@ def train(config):
             t = np.full(x_t.shape[0], t, dtype=int)
 
             _nnet = nnet_ema if config.train.use_ema is not None else nnet
-            return _nnet(x_t, t, cond=cond)
+            return _nnet(x_t, torch.from_numpy(t).to(x_t), cond=cond)
 
         x_t = x_init
 
@@ -191,6 +191,7 @@ def train(config):
         for prev_step, step in tqdm(
             zip(steps[1:], steps[:-1]), desc="DDPM sampling", total=schedule.T - 1
         ):
+            # prev_step: [999, ..., 1] step: [1000, ..., 2]
             eps = model_fn(x_t, step)
             x_t = schedule.p_sample(prev_step, step, x_t, eps)
 
@@ -204,7 +205,7 @@ def train(config):
         )
 
         def sample_fn(batch):
-            cond = brain_encoder(batch[0].to(device), batch[2].to(device))
+            cond = brain_encoder.encode(batch[0].to(device), batch[2].to(device)).squeeze()
             x_init = torch.randn(cond.shape[0], *config.z_shape, device=device)
 
             return ddpm_sample(x_init, cond=cond)
@@ -256,7 +257,7 @@ def train(config):
                 split: brain_encoder.encode(
                     dataset.vis_samples[f"{split}_brain"].to(device),
                     dataset.vis_samples[f"{split}_subject_idxs"].to(device),
-                )
+                ).squeeze()
                 for split in ["train", "test"]
             }
 

@@ -57,7 +57,7 @@ class Schedule(object):
         for n>=1, betas[n] is the variance of q(xn|xn-1)
         for n=0,  betas[0]=0
         """
-        self._betas = self._beta_schedule(linear_start, linear_end, T)
+        self._betas = self._beta_schedule(linear_start, linear_end, T) # ( 1000, )
         self.betas = np.append(0.0, self._betas)
         self.alphas = 1.0 - self.betas
         self.T = len(self._betas)
@@ -68,7 +68,7 @@ class Schedule(object):
 
         # skip_alphas[s, t] = alphas[s + 1: t + 1].prod()
         self.skip_alphas, self.skip_betas = self._get_skip(self.alphas, self.betas)
-        self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
+        self.cum_alphas = self.skip_alphas[0]  # ( 1001, )
         self.cum_betas = self.skip_betas[0]
         self.snr = self.cum_alphas / self.cum_betas
 
@@ -83,13 +83,13 @@ class Schedule(object):
 
     def p_sample(self, t_prev: int, t: int, x_t, eps):
         coef = self._betas[t - 1] / (1 - self.cum_alphas[t]) ** 0.5
-        x_t = x_t - self._stp(coef, eps)
+        x_t = x_t - coef * eps
 
-        x_t = self._stp(1 / (1 - self._betas[t - 1]) ** 0.5, x_t)
+        x_t = x_t / (1 - self._betas[t - 1]) ** 0.5
 
         if t_prev > 1:
             posterior_var = self._betas[t - 1] * (1 - self.cum_alphas[t_prev]) / (1 - self.cum_alphas[t])  # fmt: skip
-            x_t = x_t + self._stp(posterior_var**0.5, torch.randn_like(x_t))
+            x_t = x_t + (posterior_var ** 0.5) * torch.randn_like(x_t)
 
         return x_t
 
