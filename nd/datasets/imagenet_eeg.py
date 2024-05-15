@@ -1,10 +1,14 @@
-import os
+import os, sys
 import random
+import numpy as np
 import torch
 import torch.nn as nn
+from torchvision.transforms.functional import to_tensor
 import ml_collections
+from PIL import Image
 import omegaconf
 from typing import Dict, Union, Optional
+from termcolor import cprint
 
 
 class ImageNetEEGBrainDataset(torch.utils.data.Dataset):
@@ -71,3 +75,18 @@ class ImageNetEEGMomentsDataset(ImageNetEEGBrainDataset):
     @property
     def fid_stat(self):
         return os.path.join(self.preproc_dir, "fid_stats_imneteeg.npz")
+
+
+class ImageNetEEGEvalDataset(ImageNetEEGMomentsDataset):
+    def __init__(self, args: ml_collections.FrozenConfigDict):
+        super().__init__(args)
+
+        del self.Y, self.vis_samples
+
+        self.image_paths = np.loadtxt(os.path.join(self.preproc_dir, "image_paths.txt"), dtype=str)
+        assert len(self.image_paths) == len(self.X)
+
+    def __getitem__(self, i):
+        Y = Image.open(self.image_paths[i]).convert("RGB")
+
+        return self.X[i], to_tensor(Y), self.subject_idxs[i]
