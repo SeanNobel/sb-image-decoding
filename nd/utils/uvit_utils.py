@@ -3,7 +3,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from torchvision.utils import save_image
+from torchmetrics.functional.image import structural_similarity_index_measure as ssim_fn
+from torchmetrics.image.inception import InceptionScore
 from pathlib import Path
 from absl import logging
 from typing import Tuple, Dict, Optional
@@ -11,6 +14,7 @@ from termcolor import cprint
 from tqdm import tqdm
 from omegaconf import OmegaConf
 
+import clip
 from uvit import utils
 
 from nd.models import BrainEncoder, BrainAutoencoder, BrainMAE
@@ -41,8 +45,14 @@ def get_hparams():
     return hparams
 
 
-class ScheduleBase(object):
-    def __init__(self, linear_start: float, linear_end: float, T: int):
+class Schedule(object):
+    def __init__(
+        self,
+        linear_start: float = 1e-4,
+        linear_end: float = 2e-2,
+        T: int = 1000,
+    ):
+        # self, linear_start: float = 0.00085, linear_end: float = 0.012, T: int = 1000
         """_betas[0...999] = betas[1...1000]
         for n>=1, betas[n] is the variance of q(xn|xn-1)
         for n=0,  betas[0]=0
@@ -61,6 +71,27 @@ class ScheduleBase(object):
         self.cum_alphas = self.skip_alphas[0]  # cum_alphas = alphas.cumprod()
         self.cum_betas = self.skip_betas[0]
         self.snr = self.cum_alphas / self.cum_betas
+
+    def sample(self, x_0: torch.Tensor):
+        t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
+
+        eps = torch.randn_like(x_0)
+
+        x_t = self._sample(t, x_0, eps)
+
+        return torch.tensor(t, device=x_0.device), eps, x_t
+
+    def p_sample(self, t_prev: int, t: int, x_t, eps):
+        coef = self._betas[t - 1] / (1 - self.cum_alphas[t]) ** 0.5
+        x_t = x_t - self._stp(coef, eps)
+
+        x_t = self._stp(1 / (1 - self._betas[t - 1]) ** 0.5, x_t)
+
+        if t_prev > 1:
+            posterior_var = self._betas[t - 1] * (1 - self.cum_alphas[t_prev]) / (1 - self.cum_alphas[t])  # fmt: skip
+            x_t = x_t + self._stp(posterior_var**0.5, torch.randn_like(x_t))
+
+        return x_t
 
     def _sample(self, t: int, x_0: torch.Tensor, eps: torch.Tensor):
         return self._stp(self.cum_alphas[t] ** 0.5, x_0) + self._stp(self.cum_betas[t] ** 0.5, eps)
@@ -102,7 +133,7 @@ class ScheduleBase(object):
         return f"Schedule({self.betas[:10]}..., {self.T})"
 
 
-class Bridge(ScheduleBase):
+class Bridge(Schedule):
     def __init__(self, linear_start: float = 1e-4, linear_end: float = 2e-2, T: int = 1000):
         super().__init__(linear_start, linear_end, T)
 
@@ -224,7 +255,8 @@ class TrainState(object):
 
 def get_brain_encoder(config, dataset):
     args = OmegaConf.load(config.brain_encoder.config_path)
-    args = update_with_eval(args)
+    # FIXME
+    # args = update_with_eval(args)
 
     subjects = dataset.subject_names if hasattr(dataset, "subject_names") else dataset.num_subjects  # fmt: skip
 
@@ -236,10 +268,11 @@ def get_brain_encoder(config, dataset):
         else:
             model = BrainAutoencoder(args, subjects)
 
-    prefix = "brain_encoder" if args.dataset.endswith("CLIP") else "autoencoder"
-    model.load_state_dict(
-        torch.load(os.path.join(get_run_dir(args), f"{prefix}_best.pt"), map_location="cpu")
-    )
+    # prefix = "brain_encoder" if args.dataset.endswith("CLIP") else "autoencoder"
+    # model.load_state_dict(
+    #     torch.load(os.path.join(get_run_dir(args), f"{prefix}_best.pt"), map_location="cpu")
+    # )
+    model.load_state_dict(torch.load(config.brain_encoder.pretrained_path, map_location="cpu"))
 
     return model
 
@@ -288,9 +321,37 @@ def initialize_train_state(config, device):
     return train_state
 
 
-def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn=None):
-    os.makedirs(path, exist_ok=True)
+class CLIPMetric:
+    def __init__(self, device):
+        model, preproc = clip.load("ViT-L/14")
+
+        self.model = model.eval().requires_grad_(False).to(device)
+        self.normalize = preproc.transforms.pop()
+
+    def preproc(self, samples):
+        samples = TF.resize(samples, 224, interpolation=TF.InterpolationMode.BICUBIC)
+        samples = self.normalize(samples)
+
+        return samples
+
+    @torch.no_grad()
+    def __call__(self, samples, samples_gt):
+        samples = self.model.encode_image(self.preproc(samples))
+        samples_gt = self.model.encode_image(self.preproc(samples_gt))
+
+        samples /= samples.norm(dim=-1, keepdim=True)
+        samples_gt /= samples_gt.norm(dim=-1, keepdim=True)
+
+        return torch.diagonal(samples @ samples_gt.T).mean()
+
+
+def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn=None, eval=False):
+    os.makedirs(os.path.join(path, "with_gt"), exist_ok=True)
     idx = 0
+
+    if eval:
+        ssim, clip = [], []
+        clip_fn = CLIPMetric(accelerator.device)
 
     if dataloader is None:
         dataloader = utils.amortize(config.n_samples, config.mini_batch_size)
@@ -300,17 +361,32 @@ def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn
         disable=not accelerator.is_main_process,
         desc="sample2dir",
     ):
-        samples = unpreprocess_fn(sample_fn(batch))
-
+        samples = unpreprocess_fn(sample_fn(batch))  # ( b=32, c=3, h=256, w=256 )
         _batch_size = len(samples)
+
+        if eval:
+            samples_gt = batch[1]
+
+            ssim.append(ssim_fn(samples, samples_gt).item())
+            clip.append(clip_fn(samples, samples_gt).item())
+
+            samples_gt = torch.cat([samples_gt, samples], dim=2)  # ( b=32, c=3, h=512, w=256 )
+            samples_gt = accelerator.gather(samples_gt.contiguous())[:_batch_size]
+
         samples = accelerator.gather(samples.contiguous())[:_batch_size]
+
         if accelerator.is_main_process:
-            for sample in samples:
-                save_image(sample, os.path.join(path, f"{idx}.png"))
+            for i in range(_batch_size):
+                save_image(samples[i], os.path.join(path, f"{idx}.png"))
+                if eval:
+                    save_image(samples_gt[i], os.path.join(path, "with_gt", f"{idx}.png"))
+
                 idx += 1
+    if eval:
+        return np.mean(ssim), np.mean(clip)
 
 
-class Schedule(ScheduleBase):
+class Observe(Schedule):
     def __init__(
         self,
         t_obs: int,
@@ -323,15 +399,6 @@ class Schedule(ScheduleBase):
         self.t_obs = t_obs
         self._betas_obs = self._betas[:t_obs]  # + 1]
 
-    def sample(self, x_0: torch.Tensor):
-        t = np.random.choice(list(range(1, self.T + 1)), (len(x_0),))
-
-        eps = torch.randn_like(x_0)
-
-        x_t = self._sample(t, x_0, eps)
-
-        return torch.tensor(t, device=x_0.device), eps, x_t
-
     def sample_obs(self, x_0: torch.Tensor):
         t = np.full(len(x_0), self.t_obs)
 
@@ -340,7 +407,7 @@ class Schedule(ScheduleBase):
         return self._sample(t, x_0, eps)
 
 
-class Interpolate(ScheduleBase):
+class Interpolate(Schedule):
     def __init__(
         self,
         t_obs: int,
