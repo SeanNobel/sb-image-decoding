@@ -9,7 +9,7 @@ def d(**kwargs):
 def get_config():
     config = ml_collections.ConfigDict()
 
-    config.seed = 0
+    config.seed = 1234
     config.pred = "noise_pred"
     config.z_shape = (4, 32, 32)
     config.wandb_mode = "online"
@@ -45,8 +45,8 @@ def get_config():
     config.lr_scheduler = d(name="customized", warmup_steps=5000)
 
     config.brain_encoder = d(
-        config_path="configs/imageneteeg/autoencoder.yaml",
-        pretrained_path="runs/imageneteegbrain/conformer_masked-False_pos_enc-sine_abs_/autoencoder_best.pt",
+        config_path="configs/imageneteeg/clip.yaml",
+        pretrained_path="runs/imageneteegclip/conformer_clip_temp_init-4.800_loss-clip_pos_enc-sine_abs_/brain_encoder_best.pt",
         arch=d(
             seq_len=169,
             depth=2,
@@ -90,10 +90,9 @@ def get_config():
         # dpm_solver_steps=50,
         # n_batches=10,  # Only used for DDPM, which takes longer time to sample and thus uses RandomSampler
         # n_samples=10000,  # Only used when not training brain encoder jointly
-        guidance=False,
-        randomize=True,
-        scale=1.0,
-        path="figures/sb_samples/ae_62000_randomize/",
+        guidance=True,
+        scale=0.7,
+        path="figures/sb_samples/clip_guidance=0.7/",
     )
 
     return config
