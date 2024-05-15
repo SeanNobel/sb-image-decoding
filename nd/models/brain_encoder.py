@@ -579,22 +579,22 @@ class BrainEncoder(BrainEncoderBase):
         args,
         subjects: Union[int, List[str]],
         temporal_dim: Optional[int] = None,
-        unknown_subject: bool = False,
+        # unknown_subject: bool = False,
     ) -> None:
         super().__init__()
 
         # Parameters
+        self.ignore_subjects: bool = args.ignore_subjects or args.dann or subjects == 1
         self.init_temporal_dim: int = int(args.seq_len * args.resample_freq) if temporal_dim is None else temporal_dim  # fmt: skip
         self.vq = args.vq
         self.vae: Optional[str] = args.vae
         self.sample_l: int = args.sample_l
-        self.unknown_subject = unknown_subject
+        # self.unknown_subject = unknown_subject
 
         D1, D2, D3, F, K = args.D1, args.D2, args.D3, args.F, args.K
         F_mse: int = args.F_mse
         num_clip_tokens: int = args.num_clip_tokens
         num_blocks: int = args.num_blocks
-        ignore_subjects: bool = args.ignore_subjects or args.dann or subjects == 1
         num_subjects: int = subjects if isinstance(subjects, int) else len(subjects)
         layout: Union[ch_locations_2d, DynamicChanLoc2d] = eval(args.layout)
         spatial_attention: bool = args.spatial_attention
@@ -621,7 +621,7 @@ class BrainEncoder(BrainEncoderBase):
             assert len(downsample) == num_blocks, "downsample and num_blocks should have the same length."  # fmt: skip
 
         if layout == ch_locations_2d:
-            if ignore_subjects:
+            if self.ignore_subjects:
                 self.spatial_attention = nn.Sequential(
                     SpatialAttention(layout(args), D1, K, d_drop),
                     nn.Conv1d(D1, D1, kernel_size=1, stride=1),
@@ -631,7 +631,7 @@ class BrainEncoder(BrainEncoderBase):
 
         elif layout == DynamicChanLoc2d:
             assert isinstance(subjects, list), "subjects should be list of str when using DynamicChanLoc2d."  # fmt: skip
-            assert not ignore_subjects, "Cannot ignore subjects when channel locations are different among them."  # fmt: skip
+            assert not self.ignore_subjects, "Cannot ignore subjects when channel locations are different among them."  # fmt: skip
 
             if spatial_attention:
                 self.subject_block = SubjectBlockSA(args, len(subjects), layout(args, subjects))  # fmt: skip
@@ -766,7 +766,7 @@ class BrainEncoder(BrainEncoderBase):
             )
 
     def forward(self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]) -> torch.Tensor:
-        assert self.unknown_subject or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject."  # fmt: skip
+        assert self.ignore_subjects or subject_idxs is not None, "You need to provide subject_idxs when it's not unknown subject."  # fmt: skip
 
         if hasattr(self, "subject_block"):
             X = self.subject_block(X, subject_idxs)
