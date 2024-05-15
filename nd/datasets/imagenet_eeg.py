@@ -90,3 +90,40 @@ class ImageNetEEGEvalDataset(ImageNetEEGMomentsDataset):
         Y = Image.open(self.image_paths[i]).convert("RGB")
 
         return self.X[i], to_tensor(Y), self.subject_idxs[i]
+
+
+class ImageNetEEGMomentsDatasetCond(ImageNetEEGBrainDataset):
+    def __init__(self, args: ml_collections.FrozenConfigDict):
+        super().__init__(args)
+
+        self.p_uncond = args.p_uncond
+
+        self.Y = torch.load(os.path.join(self.preproc_dir, "image_moments.pt"))
+
+        self.vis_samples: Dict[str, torch.Tensor] = {
+            "train_brain": self.X[self.train_idxs[: args.n_vis_samples]],
+            "train_moments": self.Y[self.train_idxs[: args.n_vis_samples]],
+            "train_subject_idxs": self.subject_idxs[self.train_idxs[: args.n_vis_samples]],
+            "test_brain": self.X[self.test_idxs[: args.n_vis_samples]],
+            "test_moments": self.Y[self.test_idxs[: args.n_vis_samples]],
+            "test_subject_idxs": self.subject_idxs[self.test_idxs[: args.n_vis_samples]],
+        }
+
+    def __getitem__(self, i):
+        if random.random() < self.p_uncond:
+            cond, cond_subject_idx = torch.zeros_like(self.X[i]),  torch.tensor(0)
+        else:
+            cond, cond_subject_idx = self.X[i], self.subject_idxs[i]
+
+        return self.X[i], self.Y[i], self.subject_idxs[i], cond, cond_subject_idx
+
+    def unpreprocess(self, v: torch.Tensor):
+        return (0.5 * (v + 1.0)).clamp(0.0, 1.0)
+
+    @property
+    def data_shape(self):
+        return 4, 32, 32
+
+    @property
+    def fid_stat(self):
+        return os.path.join(self.preproc_dir, "fid_stats_imneteeg.npz")
