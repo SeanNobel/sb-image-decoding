@@ -15,6 +15,9 @@ from nd.datasets import ImageNetEEGBrainDataset, ImageNetEEGCLIPDataset
 from nd.utils.eval_utils import update_with_eval, get_run_dir
 from nd.utils.plots import plot_latents_2d
 
+POSTFIX = "last"
+PERPLEXITY = 5
+
 
 @torch.no_grad()
 def run(args: DictConfig) -> None:
@@ -34,9 +37,10 @@ def run(args: DictConfig) -> None:
     #       Dataloader
     # -----------------------
     dataset = eval(f"{args.dataset}Dataset")(args)
+    train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
 
     dataloader = torch.utils.data.DataLoader(
-        dataset,
+        train_set,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
@@ -58,7 +62,7 @@ def run(args: DictConfig) -> None:
 
     prefix = "brain_encoder" if args.dataset.endswith("CLIP") else "autoencoder"
     model.load_state_dict(
-        torch.load(os.path.join(run_dir, f"{prefix}_best.pt"), map_location=device)
+        torch.load(os.path.join(run_dir, f"{prefix}_{POSTFIX}.pt"), map_location=device)
     )
     model.eval()
 
@@ -80,9 +84,9 @@ def run(args: DictConfig) -> None:
     plot_latents_2d(
         np.concatenate(Z_list, axis=0),
         np.concatenate(subject_idxs_list, axis=0),
-        perplexities=[10],
+        perplexities=[PERPLEXITY],
         pca=False,
-        save_path=os.path.join(save_dir, f"subjectwise_latents.png"),
+        save_path=os.path.join(save_dir, f"subjectwise_latents_{POSTFIX}.png"),
         off_axis=True,
     )
 

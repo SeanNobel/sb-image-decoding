@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from einops.layers.torch import Rearrange
 from einops import rearrange
 from termcolor import cprint
+from typing import Optional
 
 from nd.models import BrainEncoder, BrainDecoder
 from nd.models.transformer import PositionalEncoding
@@ -22,7 +23,7 @@ class BrainAutoencoder(nn.Module):
             mid_channels=args.decoder_dim,
         )
 
-    def forward(self, X: torch.Tensor, subject_idxs: torch.Tensor):
+    def forward(self, X: torch.Tensor, subject_idxs: Optional[torch.Tensor]):
         Z = self.encode(X, subject_idxs)
 
         if Z.ndim == 3:
