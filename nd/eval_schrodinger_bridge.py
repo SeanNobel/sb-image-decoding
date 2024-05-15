@@ -1,29 +1,22 @@
-from tools.fid_score import calculate_fid_given_paths
+import sys
 import ml_collections
 import torch
 from torch.utils.data import DataLoader
 from torch import multiprocessing as mp
 import accelerate
-import utils
-from datasets import get_dataset
 import tempfile
-from dpm_solver_pp import NoiseScheduleVP, DPM_Solver
 from absl import logging
 import builtins
-import libs.autoencoder
 from einops import repeat
 import numpy as np
 from tqdm import tqdm
+from termcolor import cprint
 
-from nd.datasets.imagenet_eeg import ImageNetEEGMomentsDataset
+from uvit import libs, utils
+from uvit.tools.fid_score import calculate_fid_given_paths
+
+from nd.datasets.imagenet_eeg import ImageNetEEGEvalDataset
 from nd.utils.uvit_utils import Bridge, get_brain_encoder, sample2dir
-
-
-def stable_diffusion_beta_schedule(linear_start=0.00085, linear_end=0.0120, n_timestep=1000):
-    _betas = (
-        torch.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=torch.float64) ** 2
-    )
-    return _betas.numpy()
 
 
 def evaluate(config):
@@ -46,7 +39,7 @@ def evaluate(config):
         utils.set_logger(log_level="error")
         builtins.print = lambda *args: None
 
-    dataset = ImageNetEEGMomentsDataset(config.dataset)
+    dataset = ImageNetEEGEvalDataset(config.dataset)
     train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
     test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
 
@@ -87,15 +80,25 @@ def evaluate(config):
 
     if config.train.mode == "cond" and config.sample.guidance and config.sample.scale > 0:
         # domain convergent guidance
-        logging.info(f"Use domain convergent guidance with scale={config.sample.scale}")
+        cprint(f"Using domain convergent guidance with scale={config.sample.scale}", "cyan")
 
         def dcg_nnet(x, timesteps, y):
             _cond = nnet(x, timesteps, y=y)
             _uncond = nnet(x, timesteps, y=repeat(dataset.empty_token, "-> b", b=x.shape[0]).to(x.device))  # fmt: skip
 
-            return (1 + config.sample.scale) * _uncond - config.sample.scale * _cond
+            # return -config.sample.scale * _uncond + (1 + config.sample.scale) * _cond
+            return config.sample.scale * _uncond + (1 - config.sample.scale) * _cond
+            # return (1 + config.sample.scale) * _uncond - config.sample.scale * _cond
+
+    elif config.sample.randomize:
+        cprint("Randomizing the domain information", "yellow")
+
+        def dcg_nnet(x, timesteps, y):
+            y = torch.randint_like(y, 0, dataset.num_subjects)
+            return nnet(x, timesteps, y=y)
 
     else:
+        cprint("Not using domain convergent guidance", "cyan")
 
         def dcg_nnet(x, timesteps, y):
             _cond = nnet(x, timesteps, y=y)
@@ -103,9 +106,7 @@ def evaluate(config):
 
     logging.info(config.sample)
     assert os.path.exists(dataset.fid_stat)
-    logging.info(
-        f"sample: n_samples={config.sample.n_samples}, mode={config.train.mode}, mixed_precision={config.mixed_precision}"
-    )
+    logging.info(f"sample: mode={config.train.mode}, mixed_precision={config.mixed_precision}")
 
     @torch.no_grad()
     def ddpm_sample(x_init: torch.Tensor, **kwargs):
@@ -146,11 +147,21 @@ def evaluate(config):
             os.makedirs(path, exist_ok=True)
         logging.info(f"Samples are saved in {path}")
 
-        sample2dir(accelerator, path, test_loader, sample_fn, dataset.unpreprocess)
+        ssim, clip = sample2dir(
+            accelerator,
+            path,
+            test_loader,
+            config.sample,
+            sample_fn,
+            dataset.unpreprocess,
+            eval=True,
+        )
 
         if accelerator.is_main_process:
             fid = calculate_fid_given_paths((dataset.fid_stat, path))
-            logging.info(f"nnet_path={config.nnet_path}, fid={fid}")
+
+            cprint(f"fid={fid:.3f}, ssim={ssim:.3f}, clip={clip:.3f}", "cyan")
+            np.savetxt(os.path.join(path, "metrics.txt"), [fid, ssim, clip], fmt="%.5f")
 
 
 from absl import flags
