@@ -178,12 +178,15 @@ def train(config):
         return dict(lr=train_state.optimizer.param_groups[0]["lr"], **_metrics)
 
     @torch.no_grad()
-    def ddpm_sample(x_init, cond):
-        def model_fn(x_t, t: int):
-            t = np.full(x_t.shape[0], t, dtype=int)
-
+    def ddpm_sample(x_init, cond, empty_context):
+        def guide_fn(x_t, t: int):
+            t = torch.from_numpy(np.full(x_t.shape[0], t, dtype=int)).to(x_t)
             _nnet = nnet_ema if config.train.use_ema is not None else nnet
-            return _nnet(x_t, torch.from_numpy(t).to(x_t), cond=cond)
+
+            _cond = _nnet(x_t, t, cond=cond)
+            _uncond = _nnet(x_t, t, cond=empty_context)
+
+            return _cond + config.sample.scale * (_cond - _uncond)
 
         x_t = x_init
 
@@ -192,10 +195,27 @@ def train(config):
             zip(steps[1:], steps[:-1]), desc="DDPM sampling", total=schedule.T - 1
         ):
             # prev_step: [999, ..., 1] step: [1000, ..., 2]
-            eps = model_fn(x_t, step)
+            eps = guide_fn(x_t, step)
             x_t = schedule.p_sample(prev_step, step, x_t, eps)
 
         return decode(x_t)
+
+    # def dpm_solver_sample(x_init: torch.Tensor, cond):
+    #     noise_schedule = NoiseScheduleVP(
+    #         schedule="discrete", betas=torch.tensor(schedule._betas, device=device).float()
+    #     )
+
+    #     @torch.no_grad()
+    #     def model_fn(x_t, t_continuous):
+    #         t = t_continuous * schedule.T
+    #         _nnet = nnet_ema if nnet_ema is not None else nnet
+
+    #         return _nnet(x_t, t, cond=cond)
+
+    #     dpm_solver = DPM_Solver(model_fn, noise_schedule, predict_x0=True, thresholding=False)
+    #     x_0 = dpm_solver.sample(x_init, steps=50, eps=1.0 / schedule.T, T=1.0)
+
+    #     return decode(x_0)
 
     def eval_step():
         n_samples = len(dataset.test_idxs)
@@ -205,10 +225,13 @@ def train(config):
         )
 
         def sample_fn(batch):
-            cond = brain_encoder.encode(batch[0].to(device), batch[2].to(device)).squeeze()
+            sample, subject_idxs = batch[0].to(device), batch[2].to(device)
+            cond = brain_encoder.encode(sample, subject_idxs).squeeze()
+            empty_context = brain_encoder.encode(torch.zeros_like(sample), torch.zeros_like(subject_idxs)).squeeze()  # fmt: skip
             x_init = torch.randn(cond.shape[0], *config.z_shape, device=device)
 
-            return ddpm_sample(x_init, cond=cond)
+            return ddpm_sample(x_init, cond=cond, empty_context=empty_context)
+            # return dpm_solver_sample(x_init, cond=cond)
 
         with tempfile.TemporaryDirectory() as temp_path:
             path = config.sample.path or temp_path
@@ -260,6 +283,7 @@ def train(config):
                 ).squeeze()
                 for split in ["train", "test"]
             }
+            empty_context = brain_encoder.encode(torch.zeros_like(dataset.vis_samples["train_brain"]).to(device), torch.zeros_like(dataset.vis_samples["train_subject_idxs"]).to(device)).squeeze()  # fmt: skip
 
             if accelerator.is_main_process:
                 torch.cuda.empty_cache()
@@ -267,7 +291,8 @@ def train(config):
 
                 for split, cond in cond_eval.items():
                     x_init = torch.randn(cond.shape[0], *config.z_shape, device=device)
-                    samples = ddpm_sample(x_init, cond=cond)
+                    samples = ddpm_sample(x_init, cond=cond, empty_context=empty_context)
+                    # samples = dpm_solver_sample(x_init, cond=cond)
 
                     samples = make_grid(
                         dataset.unpreprocess(samples), config.dataset.n_vis_samples // 2
