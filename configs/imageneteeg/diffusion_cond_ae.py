@@ -92,9 +92,8 @@ def get_config():
         # n_batches=10,  # Only used for DDPM, which takes longer time to sample and thus uses RandomSampler
         # n_samples=10000,  # Only used when not training brain encoder jointly
         guidance=False,
-        randomize=True,
-        scale=1.0,
-        path="figures/sb_samples/ae_62000_randomize/",
+        scale=0.7,
+        path="figures/sb_samples/ae_guidance-0.7/",
     )
 
     return config
