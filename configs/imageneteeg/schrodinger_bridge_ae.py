@@ -33,6 +33,7 @@ def get_config():
         eval_interval=10000,
         accum_steps=1,
         use_ema=True,
+        resume_step=None,
     )
 
     config.optimizer = d(

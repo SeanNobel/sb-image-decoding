@@ -110,15 +110,16 @@ def train(config):
     train_state = initialize_train_state(config, device)
     assert train_state.brain_encoder is None
 
-    nnet, nnet_ema, optimizer, train_loader, test_loader = accelerator.prepare(
+    nnet, nnet_ema, brain_encoder, optimizer, train_loader, test_loader = accelerator.prepare(
         train_state.nnet,
         train_state.nnet_ema,
+        brain_encoder,
         train_state.optimizer,
         train_loader,
         test_loader,
     )
     lr_scheduler = train_state.lr_scheduler
-    train_state.resume(config.ckpt_root)
+    train_state.resume(config.ckpt_root, step=config.train.resume_step)
 
     @torch.cuda.amp.autocast()
     def encode(_batch):
@@ -155,6 +156,7 @@ def train(config):
             _batch[2] ( b, ): Subject idxs
             _batch[3] ( b, c, t ): MEG (randomly replaced with zeros)
             _batch[4] ( b, ): Subject idxs (randomly replaced with zeros)
+            _batch[5] ( b, ): Subject idxs (randomly replaced with num_subjects)
         Returns:
             _type_: _description_
         """
