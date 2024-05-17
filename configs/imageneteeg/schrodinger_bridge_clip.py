@@ -90,9 +90,10 @@ def get_config():
         # dpm_solver_steps=50,
         # n_batches=10,  # Only used for DDPM, which takes longer time to sample and thus uses RandomSampler
         # n_samples=10000,  # Only used when not training brain encoder jointly
-        guidance=True,
+        guidance=False,
+        randomize=False,
         scale=0.7,
-        path="figures/sb_samples/clip_guidance=0.7/",
+        path="figures/sb_samples/clip_100000_uncond/",
     )
 
     return config
