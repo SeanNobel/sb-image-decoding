@@ -90,19 +90,19 @@ def evaluate(config):
             return config.sample.scale * _uncond + (1 - config.sample.scale) * _cond
             # return (1 + config.sample.scale) * _uncond - config.sample.scale * _cond
 
-    elif config.sample.randomize:
-        cprint("Randomizing the domain information", "yellow")
+    elif config.sample.cond:
+        cprint("Conditioning with domain information", "cyan")
 
         def dcg_nnet(x, timesteps, y):
-            y = torch.randint_like(y, 0, dataset.num_subjects)
             return nnet(x, timesteps, y=y)
 
     else:
-        cprint("Not using domain convergent guidance", "cyan")
+        cprint("Not conditioning with domain information", "cyan")
 
         def dcg_nnet(x, timesteps, y):
-            _cond = nnet(x, timesteps, y=y)
-            return _cond
+            return nnet(
+                x, timesteps, y=repeat(dataset.empty_token, "-> b", b=x.shape[0]).to(x.device)
+            )
 
     logging.info(config.sample)
     assert os.path.exists(dataset.fid_stat)
