@@ -92,7 +92,7 @@ def get_config():
         # n_samples=10000,  # Only used when not training brain encoder jointly
         guidance=False,
         scale=0.7,
-        cond=False,
+        cond=True,
         path="figures/sb_samples/ae_100000/",
     )
 
