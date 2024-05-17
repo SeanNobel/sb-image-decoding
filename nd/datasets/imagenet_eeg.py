@@ -85,11 +85,13 @@ class ImageNetEEGMomentsDatasetCond(ImageNetEEGMomentsDataset):
 
     def __getitem__(self, i):
         if random.random() < self.p_uncond:
-            cond, cond_subject_idx = torch.zeros_like(self.X[i]), torch.tensor(0)
+            cond = torch.zeros_like(self.X[i])
+            cond_subject_be, cond_subject_sb = torch.tensor(0), torch.tensor(self.num_subjects)
         else:
-            cond, cond_subject_idx = self.X[i], self.subject_idxs[i]
+            cond = self.X[i]
+            cond_subject_be, cond_subject_sb = self.subject_idxs[i], self.subject_idxs[i]
 
-        return self.X[i], self.Y[i], self.subject_idxs[i], cond, cond_subject_idx
+        return self.X[i], self.Y[i], self.subject_idxs[i], cond, cond_subject_be, cond_subject_sb
 
 
 class ImageNetEEGEvalDataset(ImageNetEEGMomentsDataset):
