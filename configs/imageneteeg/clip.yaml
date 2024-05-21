@@ -1,5 +1,5 @@
 # ==== Preprocessing ==== #
-preproc_name: 2_subject
+preproc_name: 0_init # 2_subject
 
 root: /home/sensho/neuro-diffusion
 eeg_dir: ${root}/data/raw/eeg_cvpr_2017/
@@ -160,7 +160,7 @@ acc_topk: [1, 5]
 
 accum_grad: False
 
-patience: 50
+patience: 20
 
 chance: False
 
@@ -169,25 +169,29 @@ test_with_whole: False
 plot_latents: False
 
 num_workers: 8
-seed: 1234
+seed: 1 # 1234
 cuda_id: 0
 
-sweep_count: 1
+sweep_count: 6
 sweep_config:
-  name: self-preproc # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
+  name: seeds # self-preproc # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
   method: grid
   metric:
     name: test_top5_acc
     goal: maximize
   parameters:
+    seed:
+      values: [0,1,2,3,4,5]
+    # blocks:
+    #   values: [dilated_conv, conformer]
     # pos_enc:
-    #   value: sine_abs
-    loss:
-      value: normregclip
-    nrclip_alpha:
-      value: 0.001
-    clip_temp_init:
-      value: 4.7
+    #   value: learn
+    # loss:
+    #   value: normregclip
+    # nrclip_alpha:
+    #   value: 0.001
+    # clip_temp_init:
+    #   value: 4.7
 
 # ==== Evaluation ==== #
 eval:

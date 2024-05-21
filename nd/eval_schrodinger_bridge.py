@@ -54,19 +54,21 @@ def evaluate(config):
     train_loader = DataLoader(train_set, **loader_args)
     test_loader = DataLoader(test_set, **loader_args)
 
-    nnet = utils.get_nnet(**config.nnet)
-
-    nnet, train_loader, test_loader = accelerator.prepare(nnet, train_loader, test_loader)
-
-    logging.info(f"load nnet from {config.nnet_path}")
-    accelerator.unwrap_model(nnet).load_state_dict(torch.load(config.nnet_path, map_location="cpu"))
-    nnet.eval()
-
     autoencoder = libs.autoencoder.get_model(config.autoencoder.pretrained_path)
     autoencoder.to(device)
 
     brain_encoder = get_brain_encoder(config, dataset)
     brain_encoder.eval().to(device).requires_grad_(False)
+
+    nnet = utils.get_nnet(**config.nnet)
+
+    nnet, brain_encoder, train_loader, test_loader = accelerator.prepare(
+        nnet, brain_encoder, train_loader, test_loader
+    )
+
+    logging.info(f"load nnet from {config.nnet_path}")
+    accelerator.unwrap_model(nnet).load_state_dict(torch.load(config.nnet_path, map_location="cpu"))
+    nnet.eval()
 
     schedule = Bridge()
 
@@ -112,7 +114,7 @@ def evaluate(config):
     def ddpm_sample(x_init: torch.Tensor, **kwargs):
 
         def pred_x0_fn(x_t, t: int):  # t: [1000, 999, ..., 2]
-            t = np.full(x_t.shape[0], t, dtype=int)
+            t = torch.from_numpy(np.full(x_t.shape[0], t, dtype=int)).to(x_t)
 
             pred = dcg_nnet(x_t, torch.from_numpy(t).to(x_t), **kwargs)
 
@@ -161,7 +163,7 @@ def evaluate(config):
             fid = calculate_fid_given_paths((dataset.fid_stat, path))
 
             cprint(f"fid={fid:.3f}, ssim={ssim:.3f}, clip={clip:.3f}", "cyan")
-            np.savetxt(os.path.join(path, "metrics.txt"), [fid, ssim, clip], fmt="%.5f")
+            np.savetxt(os.path.join(path, "grid", "metrics.txt"), [fid, ssim, clip], fmt="%.5f")
 
 
 from absl import flags
