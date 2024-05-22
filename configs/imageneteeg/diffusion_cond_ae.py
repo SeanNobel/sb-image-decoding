@@ -9,7 +9,7 @@ def d(**kwargs):
 def get_config():
     config = ml_collections.ConfigDict()
 
-    config.seed = 0
+    config.seed = 1234
     config.pred = "noise_pred"
     config.z_shape = (4, 32, 32)
     config.wandb_mode = "online"
@@ -33,6 +33,7 @@ def get_config():
         eval_interval=10000,
         accum_steps=1,
         use_ema=True,
+        resume_step=14000,
     )
 
     config.optimizer = d(
