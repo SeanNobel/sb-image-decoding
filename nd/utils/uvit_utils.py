@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from torchvision.utils import save_image
+from torchvision.utils import save_image, make_grid
+from torchvision.io import read_image
 from torchmetrics.functional.image import structural_similarity_index_measure as ssim_fn
 from torchmetrics.image.inception import InceptionScore
 from pathlib import Path
@@ -342,20 +343,21 @@ class CLIPMetric:
         samples /= samples.norm(dim=-1, keepdim=True)
         samples_gt /= samples_gt.norm(dim=-1, keepdim=True)
 
-        return torch.diagonal(samples @ samples_gt.T).mean()
+        return torch.diagonal(samples @ samples_gt.T)
 
 
 def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn=None, eval=False):
-    os.makedirs(os.path.join(path, "with_gt"), exist_ok=True)
-    idx = 0
-
     if eval:
+        os.makedirs(os.path.join(path, "with_gt"), exist_ok=True)
+        os.makedirs(os.path.join(path, "grid"), exist_ok=True)
+
         ssim, clip = [], []
         clip_fn = CLIPMetric(accelerator.device)
 
     if dataloader is None:
         dataloader = utils.amortize(config.n_samples, config.mini_batch_size)
 
+    idx = 0
     for batch in tqdm(
         dataloader,
         disable=not accelerator.is_main_process,
@@ -367,8 +369,8 @@ def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn
         if eval:
             samples_gt = batch[1]
 
-            ssim.append(ssim_fn(samples, samples_gt).item())
-            clip.append(clip_fn(samples, samples_gt).item())
+            ssim.append(ssim_fn(samples, samples_gt).item())  # averaged
+            clip.append(clip_fn(samples, samples_gt))  # not averaged
 
             samples_gt = torch.cat([samples_gt, samples], dim=2)  # ( b=32, c=3, h=512, w=256 )
             samples_gt = accelerator.gather(samples_gt.contiguous())[:_batch_size]
@@ -382,8 +384,24 @@ def sample2dir(accelerator, path, dataloader, config, sample_fn, unpreprocess_fn
                     save_image(samples_gt[i], os.path.join(path, "with_gt", f"{idx}.png"))
 
                 idx += 1
+
+    def save_grid(idxs, tag: str):
+        images = [read_image(os.path.join(path, "with_gt", f"{idx}.png")) for idx in idxs]
+        images = torch.cat(images, dim=-1).to(torch.float32) / 255
+
+        save_image(images, os.path.join(path, "grid", f"{tag}.png"))
+
     if eval:
-        return np.mean(ssim), np.mean(clip)
+        clip = torch.cat(clip)
+
+        if accelerator.is_main_process:
+            _, clip_idxs = clip.sort(descending=True)
+
+            save_grid(clip_idxs[:12], "best")
+            save_grid(clip_idxs[len(clip_idxs) // 2 - 6 : len(clip_idxs) // 2 + 6], "average")
+            save_grid(clip_idxs[-12:], "worst")
+
+        return np.mean(ssim), clip.mean().item()
 
 
 class Observe(Schedule):

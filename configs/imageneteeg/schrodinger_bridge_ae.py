@@ -94,7 +94,7 @@ def get_config():
         guidance=False,
         scale=0.7,
         cond=False,
-        path="figures/sb_samples/ae_100000/",
+        path="figures/sb_samples/ae_100000_uncond/",
     )
 
     return config

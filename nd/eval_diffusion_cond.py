@@ -80,46 +80,31 @@ def evaluate(config):
     def decode(_batch):
         return autoencoder.decode(_batch)
 
-    if config.train.mode == "cond" and config.sample.guidance and config.sample.scale > 0:
-        # domain convergent guidance
-        cprint(f"Using domain convergent guidance with scale={config.sample.scale}", "cyan")
+    # guidance
+    cprint(f"Guidance with scale={config.sample.scale}", "cyan")
 
-        def dcg_nnet(x, timesteps, y):
-            _cond = nnet(x, timesteps, y=y)
-            _uncond = nnet(x, timesteps, y=repeat(dataset.empty_token, "-> b", b=x.shape[0]).to(x.device))  # fmt: skip
+    def guide_nnet(x, timesteps, y):
+        _cond = nnet(x, timesteps, y=y)
+        _uncond = nnet(x, timesteps, y=repeat(dataset.empty_token, "-> b", b=x.shape[0]).to(x.device))  # fmt: skip
 
-            # return -config.sample.scale * _uncond + (1 + config.sample.scale) * _cond
-            return config.sample.scale * _uncond + (1 - config.sample.scale) * _cond
-            # return (1 + config.sample.scale) * _uncond - config.sample.scale * _cond
-
-    elif config.sample.cond:
-        cprint("Conditioning with domain information", "cyan")
-
-        def dcg_nnet(x, timesteps, y):
-            return nnet(x, timesteps, y=y)
-
-    else:
-        cprint("Not conditioning with domain information", "cyan")
-
-        def dcg_nnet(x, timesteps, y):
-            return nnet(
-                x, timesteps, y=repeat(dataset.empty_token, "-> b", b=x.shape[0]).to(x.device)
-            )
+        # return -config.sample.scale * _uncond + (1 + config.sample.scale) * _cond
+        return config.sample.scale * _uncond + (1 - config.sample.scale) * _cond
+        # return (1 + config.sample.scale) * _uncond - config.sample.scale * _cond
 
     logging.info(config.sample)
     assert os.path.exists(dataset.fid_stat)
     logging.info(f"sample: mode={config.train.mode}, mixed_precision={config.mixed_precision}")
 
     @torch.no_grad()
-    def ddpm_sample(x_init: torch.Tensor, **kwargs):
+    def ddpm_sample(x_init: torch.Tensor, cond, empty_context):
 
-        def pred_x0_fn(x_t, t: int):  # t: [1000, 999, ..., 2]
+        def guide_fn(x_t, t: int):  # t: [1000, 999, ..., 2]
             t = torch.from_numpy(np.full(x_t.shape[0], t, dtype=int)).to(x_t)
 
-            pred = dcg_nnet(x_t, torch.from_numpy(t).to(x_t), **kwargs)
+            _cond = nnet(x_t, t, cond=cond)
+            _uncond = nnet(x_t, t, cond=empty_context)
 
-            std_fwd = np.sqrt(schedule._var_fwd[t - 1])
-            return x_t - schedule._stp(std_fwd, pred)
+            return _cond + config.sample.scale * (_cond - _uncond)
 
         x_t = x_init
 
@@ -127,21 +112,18 @@ def evaluate(config):
         for prev_step, step in tqdm(
             zip(steps[1:], steps[:-1]), desc="DDPM sampling", total=schedule.T - 1
         ):
-            pred_x_0 = pred_x0_fn(x_t, step)
-            x_t = schedule.p_posterior(prev_step, step, x_t, pred_x_0)
+            eps = guide_fn(x_t, step)
+            x_t = schedule.p_sample(prev_step, step, x_t, eps)
 
         return decode(x_t)
 
     def sample_fn(batch):
-        x_init = brain_encoder.encode(batch[0].to(device), batch[2].to(device)).reshape(-1, *dataset.data_shape)  # fmt: skip
+        sample, subject_idxs = batch[0].to(device), batch[2].to(device)
+        cond = brain_encoder.encode(sample, subject_idxs).squeeze()
+        empty_context = brain_encoder.encode(torch.zeros_like(sample), torch.zeros_like(subject_idxs)).squeeze()  # fmt: skip
+        x_init = torch.randn(cond.shape[0], *config.z_shape, device=device)
 
-        if config.train.mode == "uncond":
-            return ddpm_sample(x_init)
-        elif config.train.mode == "cond":
-            # NOTE: using non-empty token for conditional sampling
-            return ddpm_sample(x_init, y=batch[2].to(device))
-        else:
-            raise ValueError(f"Unknown training mode: {config.train.mode}")
+        return ddpm_sample(x_init, cond=cond, empty_context=empty_context)
 
     with tempfile.TemporaryDirectory() as temp_path:
         path = config.sample.path or temp_path
@@ -163,7 +145,7 @@ def evaluate(config):
             fid = calculate_fid_given_paths((dataset.fid_stat, path))
 
             cprint(f"fid={fid:.3f}, ssim={ssim:.3f}, clip={clip:.3f}", "cyan")
-            np.savetxt(os.path.join(path, "grid", "metrics.txt"), [fid, ssim, clip], fmt="%.5f")
+            np.savetxt(os.path.join(path, "metrics.txt"), [fid, ssim, clip], fmt="%.5f")
 
 
 from absl import flags
