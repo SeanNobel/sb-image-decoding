@@ -11,8 +11,8 @@ from functools import partial
 from typing import Optional, Union, Callable, List, Tuple
 from termcolor import cprint
 
-from fairseq.fairseq.modules.conformer_layer import ConformerEncoderLayer
-from fairseq.fairseq.modules import RelPositionalEncoding
+from fairseq.modules.conformer_layer import ConformerEncoderLayer
+from fairseq.modules import RelPositionalEncoding
 
 # from conformer.encoder import ConformerBlock as ConformerBlock2
 from conformer.conformer.encoder import ConformerBlock as ConformerBlock2
