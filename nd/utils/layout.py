@@ -104,6 +104,12 @@ def ch_locations_2d(args, training=True) -> Union[torch.Tensor, mne.Info]:
         positions["FFT10h"] = (positions["F8"] + positions["FT10"]) / 2
 
         loc = np.stack([positions[key] for key in channels])[:, :2]  # ( 128, 2 )
+    elif "ThingsEEG2" in args.dataset:
+        channels = ["O1", "Oz", "O2", "PO7", "PO3", "POz", "PO4", "PO8", "P7", "P5", "P3", "P1", "Pz", "P2", "P4", "P6", "P8"]
+        
+        montage = mne.channels.make_standard_montage("easycap-M1")
+        positions = montage.get_positions()["ch_pos"]
+        loc = np.stack([positions[key] for key in channels])[:, :2]  # ( 17, 2 )
     else:
         raise ValueError()
 
