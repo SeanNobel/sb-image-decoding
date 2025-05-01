@@ -1,0 +1,204 @@
+# ==== Preprocessing ==== #
+# preproc_name: 0_init # 2_subject
+
+root: /home/sensho/neuro-diffusion
+data_dir: ${root}/data/preprocessed/thingseeg2/
+# preproc_dir: ${root}/data/preprocessed/imageneteeg/
+
+# images_dir: /home/neurotech_nas01/ImageNet/ILSVRC/Data/CLS-LOC/train/
+
+resample_freq: 100 # Hz
+# clamp_lim: 5.0 # Standard deviation
+
+# skip_eeg: True
+# skip_images: True
+
+# ==== Architecture ==== #
+F: 768 # 768 for OpenAI original / 1024 for Huggingface
+# F_mse: 4096
+
+# align_to: vision # vision / text
+# align_tokens: cls # all / cls / mean / list of those
+# orig_clip_tokens: 1 # 257
+# num_clip_tokens: 1
+
+vision:
+  pretrained: True
+  model: ViT # For face.pretrained=False
+  pretrained_model: ViT-L/14
+  # openai/clip-vit-large-patch14 (Huggingface) or ViT-L/14 (OpenAI)
+  encoded: False # False is basically only for StyleGAN
+vision_quantize: False
+vision_quantize_lr: 1.0e-4 # For when training the quantizer with a separate optimizer.
+gumbel_init_temp: 2.0
+gumbel_min_temp: 0.5
+gumbel_temp_decay: 0.9995
+
+brain_encoder: brain_encoder
+
+num_channels: 128
+D1: 270
+D2: 320
+D3: 2048
+K: 32
+spatial_attention: True
+ignore_subjects: False
+blocks: conformer # dilated_conv / inception / transformer / conformer / crate
+num_blocks: 2
+d_drop: 0.1 # Dropout rate for spatial-attention
+p_drop: 0.1 # Dropout rate for conv blocks
+downsample: False # Can be a list of bools with length num_blocks
+final_ksize: 1
+final_stride: 1
+temporal_aggregation: affine # original or affine or pool. This is somewhat overlapping with reduce_time, but this is for model and reduce_time is for data.
+head_activation: True
+conv_block_ksize: 3
+depthwise_ksize: 31
+transformer_heads: 4
+pos_enc: sine_abs # learn / sine_abs / sine_rel / rotary
+
+conformer_impl: 0 # 0: fairseq / 1: sooftware
+
+# Where of the model to apply vector quantization.
+vq: null # null / middle1 (before blocks) / middle2 (after blocks) / end
+vq_type: gumbel # original / affine (= vqtorch basic) / group / residual
+vq_aggregated: False
+vq_num_embeds: 2048
+vq_num_concepts: 16 # Only for aggregated vq. Should correspond to the minimal number of concepts to explain an image with text.
+vq_alpha: 1.0 # How much to weight vq loss(es) against CLIP loss.
+vq_beta: 0.3 # How much to weight encoder regularization term against codebook loss.
+# NOTE that this beta is (1 - beta) in vqtorch paper.
+vq_affine_lr: 0.1 # lr scale for affine parameters
+# EMA. When using EMA for codebook, beta should be zero? https://arxiv.org/abs/2305.08842
+vq_use_ema: False
+vq_gamma: 0.99 # Decay for EMA of codebook.
+vq_epsilon: 1e-5 # Epsilon for EMA of codebook.
+# vqtorch
+vq_kmeans_init: False # Whether to use kmeans++ init
+vq_norm: null # Noralization for input vectors
+vq_cb_norm: null # Normalization for codebook vectors
+vq_sync_nu: 0.2 # Codebook synchronization contribution
+vq_replace_freq: 20 # Frequency to replace dead codes
+vq_alternate: False # Whether to alternate between task loss and vq loss
+# NOTE that vq_beta will be overwritten by 0.0 when vq_alternate is True.
+vq_groups: 4 # Number of groups for group VQ
+vq_share: False # If True, codebook is shared for each sub-vector.
+# lucidrains
+vq_num_quantizers: 16 # Number of quantizers to use
+
+dann: False
+dann_scale: 1.0
+
+drop_mode: dropout
+
+reduce_time: False
+
+vae: null # ps / vmf / normal / null
+vae_zdim: 10
+sample_l: 2
+
+# ==== Loss ==== #
+loss: clip
+reduction: mean
+impl_type: 0
+
+lambd: 0.75 # Weighting of CLIP and MSE loss
+
+use_negative: False
+
+use_high_categories: False
+
+clip_temp_init: 5.0 # This value is exponentiated in the loss.
+clip_temp_learn: True
+clip_temp_min: null
+clip_temp_max: null
+
+clip_margin_init: 0.1
+clip_margin_learn: False
+clip_margin_min: null
+clip_margin_max: null
+
+cosface_alpha: 1.0
+
+circle_relax: 0.0
+
+positive_threshold: 0.8 # Threshold of cosine similarity (for Additional Positives CLIP)
+
+nnclip_k: 10
+nnclip_symmetric: True
+nnclip_support_size: 20000
+nnclip_alpha: 0.5
+
+leclip_alpha: 0.0
+orclip_alpha: 0.1
+klclip_alpha: 0.1
+kl_beta: 1.0 # Same meaning as alpha but using beta after variational inference.
+nrclip_alpha: 0.001
+
+subspace_downs: [2, 3, 4, 4]
+
+# ==== Training ==== #
+project_name: bd_thingseeg2_clip
+train_name: conformer
+
+seq_len: 1.0 # Original number of samples at 200Hz is 281, and 169 at 120Hz.
+
+dataset: ThingsEEG2CLIP
+# image_size: 256
+
+montage_path: ${root}nd/utils/montages/things_meg.npy
+layout: ch_locations_2d # DynamicChanLoc2d
+
+batch_size: 128
+lr: 3.0e-4 # 0.005
+lr_scheduler: null # cosine or multistep
+lr_multistep_mlstns: [0.4, 0.6, 0.8, 0.9]
+lr_step_gamma: 0.5
+epochs: 1000
+
+acc_topk: [1, 5]
+
+accum_grad: False
+
+patience: 20
+
+chance: False
+
+test_with_whole: False
+
+plot_latents: False
+
+num_workers: 8
+seed: 1 # 1234
+cuda_id: 0
+
+sweep_count: 6
+sweep_config:
+  name: seeds # self-preproc # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
+  method: grid
+  metric:
+    name: test_top5_acc
+    goal: maximize
+  parameters:
+    seed:
+      values: [0,1,2,3,4,5]
+    # blocks:
+    #   values: [dilated_conv, conformer]
+    # pos_enc:
+    #   value: learn
+    # loss:
+    #   value: normregclip
+    # nrclip_alpha:
+    #   value: 0.001
+    # clip_temp_init:
+    #   value: 4.7
+
+# ==== Evaluation ==== #
+eval:
+  loss: clip
+  pos_enc: sine_abs
+  clip_temp_init: 4.8
+
+save_vision: False
+as_h5: True
+for_webdataset: False
