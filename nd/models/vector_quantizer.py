@@ -7,27 +7,29 @@ from einops.layers.torch import Rearrange
 from typing import Tuple, Optional
 from termcolor import cprint
 
-from fairseq.fairseq.modules import (
+from fairseq.modules import (
     GumbelVectorQuantizer as GumbelVectorQuantizerFairseq,
 )
 
-from vqtorch.nn import (
-    VectorQuant,
-    AffineTransform,
-    GroupVectorQuant,
-    ResidualVectorQuant,
-)
+# FIXME: Vector quantizers are not used in the current implementation.
 
-from vector_quantize_pytorch import (
-    ResidualVQ,
-    GroupedResidualVQ,
-    FSQ,
-    LFQ,
-    ResidualLFQ,
-    GroupedResidualLFQ,
-    ResidualFSQ,
-    GroupedResidualFSQ,
-)
+# from vqtorch.nn import (
+#     VectorQuant,
+#     AffineTransform,
+#     GroupVectorQuant,
+#     ResidualVectorQuant,
+# )
+
+# from vector_quantize_pytorch import (
+#     ResidualVQ,
+#     GroupedResidualVQ,
+#     FSQ,
+#     LFQ,
+#     ResidualLFQ,
+#     GroupedResidualLFQ,
+#     ResidualFSQ,
+#     GroupedResidualFSQ,
+# )
 
 
 def get_vector_quantizer(args, dim: int, beta: Optional[float] = None) -> nn.Module:
@@ -130,7 +132,7 @@ def get_vector_quantizer(args, dim: int, beta: Optional[float] = None) -> nn.Mod
 
 
 class VQtorchWrapper(nn.Module):
-    def __init__(self, vq: VectorQuant, alpha: float) -> None:
+    def __init__(self, vq, alpha: float) -> None:
         super().__init__()
 
         self.vq = vq
@@ -143,7 +145,7 @@ class VQtorchWrapper(nn.Module):
 
 
 class LucidrainsWrapper(nn.Module):
-    def __init__(self, vq: ResidualVQ, alpha: float, codebook_size: int) -> None:
+    def __init__(self, vq, alpha: float, codebook_size: int) -> None:
         super().__init__()
 
         self.vq = vq
