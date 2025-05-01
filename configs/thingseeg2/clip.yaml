@@ -15,12 +15,12 @@ resample_freq: 100 # Hz
 
 # ==== Architecture ==== #
 F: 768 # 768 for OpenAI original / 1024 for Huggingface
-# F_mse: 4096
+F_mse: 4096
 
 # align_to: vision # vision / text
 # align_tokens: cls # all / cls / mean / list of those
-# orig_clip_tokens: 1 # 257
-# num_clip_tokens: 1
+orig_clip_tokens: 1 # 257
+num_clip_tokens: 1
 
 vision:
   pretrained: True
@@ -172,7 +172,7 @@ num_workers: 8
 seed: 1 # 1234
 cuda_id: 0
 
-sweep_count: 6
+sweep_count: 1
 sweep_config:
   name: seeds # self-preproc # F_mse_4096 # subspace-clip-crate # hypersphere-vae # variational-clip # additional-positives-clip # large-batch-size # orthogonality # crate # more-heads # conv-vs-conformer # large-entropy-clip_vision-quantize # margin-on-positives # gumbel-vq-brain # vision-quantize # _from-all-tokens # adaptive-margin-clip_large # adaptive-clip
   method: grid
@@ -181,7 +181,7 @@ sweep_config:
     goal: maximize
   parameters:
     seed:
-      values: [0,1,2,3,4,5]
+      values: [0]
     # blocks:
     #   values: [dilated_conv, conformer]
     # pos_enc:
