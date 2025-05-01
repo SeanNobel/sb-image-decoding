@@ -1,5 +1,5 @@
 termcolor
-hydra-core
+hydra-core==1.0.7
 mne
 einops
 scikit-learn

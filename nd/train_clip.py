@@ -24,7 +24,7 @@ from nd.datasets.datasets import (
     CollateFunctionForVideoHDF5,
     NeuroDiffusionCLIPDatasetBase,
 )
-from nd.datasets import ThingsMEGCLIPDataset, ImageNetEEGCLIPDataset
+from nd.datasets import ThingsMEGCLIPDataset, ImageNetEEGCLIPDataset, ThingsEEG2CLIPDataset
 from nd.models import (
     BrainEncoderBase,
     BrainEncoder,
@@ -83,10 +83,16 @@ def build_dataloaders(args, split=True):
             )
         else:
             collate_fn = None
+            
+    elif isinstance(dataset, ThingsEEG2CLIPDataset):
+        train_set = dataset
+        test_set = ThingsEEG2CLIPDataset(args, train=False)
+        
+        collate_fn = None
     else:
         train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
         test_set = torch.utils.data.Subset(dataset, dataset.test_idxs)
-
+        
         collate_fn = None
 
     loader_args = {
@@ -657,18 +663,18 @@ def train():
         plot_latents_2d(np.concatenate(test_Z_list), np.concatenate(test_categories_list), save_path=os.path.join(run_dir, "plots/brain_latents/last_test.png"))  # fmt: skip
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="default")
+@hydra.main(config_path="../configs", config_name="default")
 def run(_args: DictConfig) -> None:
     global args, sweep
 
     # NOTE: Using default.yaml only for specifying the experiment settings yaml.
-    args = OmegaConf.load(os.path.join("configs", _args.config_path))
+    args = OmegaConf.load(os.path.join("../../..", "configs", _args.config_path))
 
     sweep = _args.sweep
 
     if sweep:
         sweep_config = OmegaConf.to_container(
-            args.sweep_config, resolve=True, throw_on_missing=True
+            args.sweep_config, resolve=True # , throw_on_missing=True
         )
 
         sweep_id = wandb.sweep(sweep_config, project=args.project_name)
