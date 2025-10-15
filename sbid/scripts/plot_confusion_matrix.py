@@ -9,10 +9,10 @@ import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 import csv
 
-from nd.models import LabelClassifier
-from nd.train_clip import build_dataloaders, build_models
-from nd.utils.eval_utils import update_with_eval, get_run_dir
-from nd.utils.plots import plot_latents_2d
+from sbid.models import LabelClassifier
+from sbid.train_clip import build_dataloaders, build_models
+from sbid.utils.eval_utils import update_with_eval, get_run_dir
+from sbid.utils.plots import plot_latents_2d
 
 
 @torch.no_grad()

@@ -25,10 +25,10 @@ import uvit.libs as libs
 from uvit.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
 from uvit.datasets import ThingsMEGDatabase
 
-from nd.datasets import ThingsMEGCLIPDataset
-from nd.models.brain_encoder import BrainEncoder
-from nd.utils.layout import ch_locations_2d
-from nd.utils.eval_utils import get_run_dir
+from sbid.datasets import ThingsMEGCLIPDataset
+from sbid.models.brain_encoder import BrainEncoder
+from sbid.utils.layout import ch_locations_2d
+from sbid.utils.eval_utils import get_run_dir
 
 
 def set_seed(seed: int):

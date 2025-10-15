@@ -10,13 +10,14 @@ from termcolor import cprint
 import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from nd.models import BrainEncoder, BrainAutoencoder, BrainMAE
-from nd.datasets import ImageNetEEGBrainDataset, ImageNetEEGCLIPDataset
-from nd.utils.eval_utils import update_with_eval, get_run_dir
-from nd.utils.plots import plot_latents_2d
+from sbid.train_clip import build_dataloaders
+from sbid.models import BrainEncoder, BrainAutoencoder, BrainMAE
+from sbid.datasets import ImageNetEEGBrainDataset, ImageNetEEGCLIPDataset
+from sbid.utils.eval_utils import update_with_eval, get_run_dir
+from sbid.utils.plots import plot_latents_2d
 
 POSTFIX = "last"
-PERPLEXITY = 5
+PERPLEXITY = 50
 
 
 @torch.no_grad()
@@ -36,16 +37,18 @@ def run(args: DictConfig) -> None:
     # -----------------------
     #       Dataloader
     # -----------------------
-    dataset = eval(f"{args.dataset}Dataset")(args)
-    train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
+    train_loader, test_loader, dataset = build_dataloaders(args)
+    
+    # dataset = eval(f"{args.dataset}Dataset")(args)
+    # train_set = torch.utils.data.Subset(dataset, dataset.train_idxs)
 
-    dataloader = torch.utils.data.DataLoader(
-        train_set,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True,
-    )
+    # dataloader = torch.utils.data.DataLoader(
+    #     train_set,
+    #     batch_size=args.batch_size,
+    #     shuffle=False,
+    #     num_workers=args.num_workers,
+    #     pin_memory=True,
+    # )
 
     # ---------------------
     #        Models
@@ -61,8 +64,9 @@ def run(args: DictConfig) -> None:
             model = BrainAutoencoder(args, subjects).to(device)
 
     prefix = "brain_encoder" if args.dataset.endswith("CLIP") else "autoencoder"
+    # FIXME!!!!!!!!!!!!!
     model.load_state_dict(
-        torch.load(os.path.join(run_dir, f"{prefix}_{POSTFIX}.pt"), map_location=device)
+        torch.load(os.path.join("../../..", run_dir, f"{prefix}_{POSTFIX}.pt"), map_location=device)
     )
     model.eval()
 
@@ -72,14 +76,25 @@ def run(args: DictConfig) -> None:
     Z_list = []
     subject_idxs_list = []
 
-    for batch in tqdm(dataloader, "Embedding for the whole set."):
+    for batch in tqdm(test_loader, "Embedding for the whole set."):
         X, subject_idxs, _, = *batch, *[None] * (3 - len(batch))  # fmt: skip
-        X = X.to(device)
+        # X = X.to(device)
 
-        Z = model.encode(X, subject_idxs)
+        # Z = model.encode(X, subject_idxs, return_mse=False)
 
-        Z_list.append(Z.cpu().numpy())
+        # Z_list.append(Z.cpu().numpy())
+        Z_list.append(X.numpy())
         subject_idxs_list.append(subject_idxs.cpu().numpy())
+        
+    Z = np.concatenate(Z_list, axis=0)
+    Z = Z.reshape(Z.shape[0], -1)[::80]
+    Z /= np.linalg.norm(Z, axis=-1, keepdims=True)
+    sim = Z @ Z.T
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(sim)
+    fig.savefig(os.path.join(save_dir, f"similarity_{POSTFIX}.png"), dpi=300)
+    sys.exit()
 
     plot_latents_2d(
         np.concatenate(Z_list, axis=0),
@@ -91,9 +106,9 @@ def run(args: DictConfig) -> None:
     )
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="default")
+@hydra.main(config_path="../../configs", config_name="default")
 def run_(args_: DictConfig) -> None:
-    args = OmegaConf.load(os.path.join("configs", args_.config_path))
+    args = OmegaConf.load(os.path.join("../../..", "configs", args_.config_path))
 
     args = update_with_eval(args)
 

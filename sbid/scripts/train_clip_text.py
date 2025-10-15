@@ -15,10 +15,10 @@ from omegaconf import DictConfig, OmegaConf
 
 import clip
 
-from nd.datasets.things_text import ThingsTextCLIPDataset
-from nd.utils.loss import build_clip
-from nd.utils.train_utils import sequential_apply
-from nd.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categories
+from sbid.datasets.things_text import ThingsTextCLIPDataset
+from sbid.utils.loss import build_clip
+from sbid.utils.train_utils import sequential_apply
+from sbid.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categories
 
 
 # https://github.com/openai/CLIP/issues/57
