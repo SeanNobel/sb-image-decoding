@@ -15,7 +15,7 @@ from itertools import product
 import clip
 from uvit import libs
 
-from nd.utils.brain_preproc import baseline_correction
+from sbid.utils.brain_preproc import baseline_correction
 
 
 def make_split(subject_idxs: torch.Tensor, labels: torch.Tensor, train_ratio: float = 0.8):

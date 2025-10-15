@@ -29,8 +29,8 @@ import clip
 
 from uvit.libs import clip as uvit_clip
 
-from nd.utils.brain_preproc import scale_clamp
-from nd.utils.train_utils import sequential_apply
+from sbid.utils.brain_preproc import scale_clamp
+from sbid.utils.train_utils import sequential_apply
 
 
 @torch.no_grad()
