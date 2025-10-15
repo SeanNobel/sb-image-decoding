@@ -13,9 +13,9 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from nd.datasets import ThingsMEGBrainDataset, ImageNetEEGBrainDataset
-from nd.models import BrainAutoencoder, BrainMAE
-from nd.utils.train_utils import count_parameters
+from sbid.datasets import ThingsMEGBrainDataset, ImageNetEEGBrainDataset
+from sbid.models import BrainAutoencoder, BrainMAE
+from sbid.utils.train_utils import count_parameters
 
 
 def train():

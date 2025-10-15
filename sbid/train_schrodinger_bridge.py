@@ -20,8 +20,8 @@ from uvit.dpm_solver_pp import NoiseScheduleVP, DPM_Solver
 
 from uvit.tools.fid_score import calculate_fid_given_paths
 
-from nd.datasets.imagenet_eeg import ImageNetEEGMomentsDataset
-from nd.utils.uvit_utils import (
+from sbid.datasets.imagenet_eeg import ImageNetEEGMomentsDataset
+from sbid.utils.uvit_utils import (
     Bridge,
     initialize_train_state,
     get_brain_encoder,
@@ -29,7 +29,7 @@ from nd.utils.uvit_utils import (
     get_hparams,
     sample2dir,
 )
-from nd.utils.timer import timer
+from sbid.utils.timer import timer
 
 
 def p_losses(x_0, x_T, nnet, schedule: Bridge, **kwargs):

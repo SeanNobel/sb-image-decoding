@@ -16,16 +16,8 @@ from omegaconf import DictConfig, OmegaConf
 import clip
 from transformers import AutoProcessor, CLIPVisionModel
 
-from nd.datasets.datasets import (
-    YLabGODCLIPDataset,
-    YLabE0030CLIPDataset,
-    UHDCLIPDataset,
-    StyleGANCLIPDataset,
-    CollateFunctionForVideoHDF5,
-    NeuroDiffusionCLIPDatasetBase,
-)
-from nd.datasets import ThingsMEGCLIPDataset, ImageNetEEGCLIPDataset, ThingsEEG2CLIPDataset
-from nd.models import (
+from sbid.datasets import ThingsMEGCLIPDataset, ImageNetEEGCLIPDataset, ThingsEEG2CLIPDataset
+from sbid.models import (
     BrainEncoderBase,
     BrainEncoder,
     BrainDecoder,
@@ -43,48 +35,21 @@ from nd.models import (
     MLP,
     SubspaceMapper,
 )
-from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
-from nd.utils.loss import (
+from sbid.utils.layout import ch_locations_2d, DynamicChanLoc2d
+from sbid.utils.loss import (
     build_clip,
     VariationalCLIPLoss,
     CLIPWithClassCosFaceLoss,
 )
-from nd.utils.loss import VariationalLowerBound
-from nd.utils.train_utils import Models, sequential_apply, count_parameters
-from nd.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categories
+from sbid.utils.loss import VariationalLowerBound
+from sbid.utils.train_utils import Models, sequential_apply, count_parameters
+from sbid.utils.plots import plot_latents_2d, plot_2d_latents_with_sorted_categories
 
 
 def build_dataloaders(args, split=True):
     dataset = eval(f"{args.dataset}Dataset")(args)
-
-    if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
-        if args.split in ["shallow", "mixed_shallow"]:
-            train_size = int(len(dataset.X) * args.train_ratio)
-            test_size = len(dataset.X) - train_size
-            train_set, test_set = torch.utils.data.random_split(
-                dataset,
-                lengths=[train_size, test_size],
-                generator=torch.Generator().manual_seed(args.seed),
-            )
-
-        # NOTE: If not shallow, split is done inside dataset class
-        else:
-            train_set = dataset
-            test_set = eval(f"{args.dataset}CLIPDataset")(args, train=False)
-
-            assert len(dataset.Y_ref) == len(test_set.Y_ref), "train set Y_ref and test set Y_ref have different lengths."  # fmt: skip
-
-        if len(dataset.Y_ref) > 0:
-            collate_fn = CollateFunctionForVideoHDF5(
-                dataset.Y_ref,
-                # NOTE: Resampling in collate function is too costly.
-                # resample_nsamples=args.vision.resample_nsamples,
-                frame_size=args.vision_encoder.image_size,
-            )
-        else:
-            collate_fn = None
             
-    elif isinstance(dataset, ThingsEEG2CLIPDataset):
+    if isinstance(dataset, ThingsEEG2CLIPDataset):
         train_set = dataset
         test_set = ThingsEEG2CLIPDataset(args, train=False)
         
@@ -148,11 +113,7 @@ def build_models(args, dataset, device):
     vision_encoder, preprocess = None, None
 
     if args.vision.pretrained:
-        if isinstance(dataset, NeuroDiffusionCLIPDatasetBase):
-            vision_encoder, preprocess = clip.load(args.vision.pretrained_model)
-            vision_encoder = vision_encoder.eval().to(device)
-
-        elif args.vision_quantize:
+        if args.vision_quantize:
             assert args.vq is None, "Not expecting quantizing both vision and brain."  # fmt: skip
 
             vision_encoder = GumbelVectorQuantizer(
