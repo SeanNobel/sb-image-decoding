@@ -11,10 +11,40 @@ assets/*
 
 generated/
 
-nd/models/classifier.py
-nd/models/wav2vec2.py
-nd/models/_spatial_attn_impls.py
-nd/models/lightning/
+sbid/models/classifier.py
+sbid/models/wav2vec2.py
+sbid/models/_spatial_attn_impls.py
+sbid/models/lightning/
+
+sbid/preprocs/stylegan.py
+sbid/preprocs/things_autoencoder_kl.py
+sbid/preprocs/uhd.py
+sbid/preprocs/ylab_e0030.py
+sbid/preprocs/ylab_god.py
+
+sbid/datasets/datasets.py
+
+sbid/scripts/eval_image_decoder.py
+sbid/scripts/eval_image_pipeline.py
+sbid/scripts/sample_multi.py
+sbid/scripts/train_image_decoder.py
+sbid/scripts/train_prior.py
+
+sbid/utils/constants.py
+sbid/utils/face_preproc.py
+sbid/utils/stylegan_encoder.py
+sbid/utils/extractor.py
+sbid/utils/gTecUtils/
+sbid/utils/montages/electrodes_uhd.xml
+
+configs/stylegan/
+configs/uhd/
+configs/ylab/
+configs/_decoder.json
+configs/_diffusion_prior.json
+configs/thingsmeg/clip_eegnet.yaml
+configs/thingsmeg/clip_text.yaml
+configs/thingsmeg/decoder.yaml
 
 tmp/
 
