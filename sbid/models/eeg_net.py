@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from typing import Optional
 
-from nd.models.brain_encoder import TemporalAggregation
+from sbid.models.brain_encoder import TemporalAggregation
 
 
 class EEGNetDeep(nn.Module):

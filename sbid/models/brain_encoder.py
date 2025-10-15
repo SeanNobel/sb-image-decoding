@@ -17,8 +17,8 @@ from fairseq.modules import RelPositionalEncoding
 # from conformer.encoder import ConformerBlock as ConformerBlock2
 from conformer.conformer.encoder import ConformerBlock as ConformerBlock2
 
-from nd.models.vector_quantizer import get_vector_quantizer, AggregatedVectorQuantizer
-from nd.models.transformer import (
+from sbid.models.vector_quantizer import get_vector_quantizer, AggregatedVectorQuantizer
+from sbid.models.transformer import (
     SelfAttention,
     FeedForward,
     PreNorm,
@@ -26,14 +26,14 @@ from nd.models.transformer import (
     PositionalEncoding,  # positional_encoding,
     relative_positional_encoding,
 )
-from nd.models.crate import MSSA, ISTA
-from nd.models.dann import DANN
-from nd.models.utils import DropBlock1D
-from nd.models.subject_sa import SubjectBlockSA, SubjectBlockConvDynamic
-from nd.utils.layout import ch_locations_2d, DynamicChanLoc2d
-from nd.utils.train_utils import conv_output_size
-from nd.utils.power_spherical import PowerSpherical
-from nd.utils.von_mises_fisher import VonMisesFisher
+from sbid.models.crate import MSSA, ISTA
+from sbid.models.dann import DANN
+from sbid.models.utils import DropBlock1D
+from sbid.models.subject_sa import SubjectBlockSA, SubjectBlockConvDynamic
+from sbid.utils.layout import ch_locations_2d, DynamicChanLoc2d
+from sbid.utils.train_utils import conv_output_size
+from sbid.utils.power_spherical import PowerSpherical
+from sbid.utils.von_mises_fisher import VonMisesFisher
 
 
 def is_in(s: Optional[str], _s: str) -> bool:

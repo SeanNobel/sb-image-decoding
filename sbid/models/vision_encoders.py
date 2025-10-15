@@ -10,7 +10,7 @@ from einops.layers.torch import Rearrange
 
 from typing import Optional, Union
 
-from nd.utils.train_utils import conv_output_size
+from sbid.utils.train_utils import conv_output_size
 
 
 def pair(t):

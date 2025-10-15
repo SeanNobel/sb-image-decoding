@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from nd.utils.layout import DynamicChanLoc2d
+from sbid.utils.layout import DynamicChanLoc2d
 
 
 class SubjectSpatialAttention(nn.Module):

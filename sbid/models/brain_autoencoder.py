@@ -7,8 +7,8 @@ from einops import rearrange
 from termcolor import cprint
 from typing import Optional
 
-from nd.models import BrainEncoder, BrainDecoder
-from nd.models.transformer import PositionalEncoding
+from sbid.models import BrainEncoder, BrainDecoder
+from sbid.models.transformer import PositionalEncoding
 
 
 class BrainAutoencoder(nn.Module):
