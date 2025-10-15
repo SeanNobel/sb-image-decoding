@@ -8,7 +8,9 @@ from omegaconf import DictConfig, OmegaConf
 from termcolor import cprint
 from typing import Optional
 
-from nd.utils.constants import EMB_CHUNK_SIZE
+from sbid.utils.constants import EMB_CHUNK_SIZE
+
+EMB_CHUNK_SIZE = 100 # for saving
 
 
 class VisionSaver:
