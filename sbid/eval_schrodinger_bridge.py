@@ -15,8 +15,8 @@ from termcolor import cprint
 from uvit import libs, utils
 from uvit.tools.fid_score import calculate_fid_given_paths
 
-from nd.datasets.imagenet_eeg import ImageNetEEGEvalDataset
-from nd.utils.uvit_utils import Bridge, get_brain_encoder, sample2dir
+from sbid.datasets.imagenet_eeg import ImageNetEEGEvalDataset
+from sbid.utils.uvit_utils import Bridge, get_brain_encoder, sample2dir
 
 
 def evaluate(config):

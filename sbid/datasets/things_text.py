@@ -6,7 +6,7 @@ from termcolor import cprint
 
 import clip
 
-from nd.datasets.things_meg import ThingsCLIPDatasetBase
+from sbid.datasets.things_meg import ThingsCLIPDatasetBase
 
 
 class ThingsTextCLIPDataset(ThingsCLIPDatasetBase):

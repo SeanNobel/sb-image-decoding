@@ -12,7 +12,7 @@ from typing import Tuple, List, Dict, Optional
 import itertools
 import gc
 
-from nd.utils.eval_utils import get_run_dir
+from sbid.utils.eval_utils import get_run_dir
 
 
 class ThingsCLIPDatasetBase(torch.utils.data.Dataset):
