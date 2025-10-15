@@ -11,11 +11,11 @@ from tqdm import tqdm
 from termcolor import cprint
 from typing import Optional, Union, List
 
-from nd.datasets.things_meg import ThingsCLIPDatasetBase
-from nd.utils.power_spherical import PowerSpherical
-from nd.utils.power_spherical import HypersphericalUniform as HypersphericalUniformPS
-from nd.utils.von_mises_fisher import VonMisesFisher
-from nd.utils.von_mises_fisher import HypersphericalUniform as HypersphericalUniformVMF
+from sbid.datasets.things_meg import ThingsCLIPDatasetBase
+from sbid.utils.power_spherical import PowerSpherical
+from sbid.utils.power_spherical import HypersphericalUniform as HypersphericalUniformPS
+from sbid.utils.von_mises_fisher import VonMisesFisher
+from sbid.utils.von_mises_fisher import HypersphericalUniform as HypersphericalUniformVMF
 
 
 def build_clip(args, dataset, device):

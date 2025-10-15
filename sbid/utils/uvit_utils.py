@@ -18,8 +18,8 @@ from omegaconf import OmegaConf
 import clip
 from uvit import utils
 
-from nd.models import BrainEncoder, BrainAutoencoder, BrainMAE
-from nd.utils.eval_utils import update_with_eval, get_run_dir
+from sbid.models import BrainEncoder, BrainAutoencoder, BrainMAE
+from sbid.utils.eval_utils import update_with_eval, get_run_dir
 
 
 def get_config_name():
