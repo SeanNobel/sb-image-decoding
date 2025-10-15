@@ -1,14 +1,14 @@
 # ==== Preprocessing ==== #
 preproc_name: 3_caption # 2_huggingface
 
-thingsmeg_dir: /home/sensho/neuro-diffusion/data/raw/thingsmeg/
+thingsmeg_dir: /home/sensho/sb-image-decoding/data/raw/thingsmeg/
 # meg_dir: ${thingsmeg_dir}derivatives/preprocessed/
 
 # things_dir: /mnt/tsukuyomi/things/osfstorage/THINGS/
 # images_dir: ${things_dir}Images/
 # metadata_dir: ${things_dir}Metadata/
 
-root: /home/sensho/neuro-diffusion/
+root: /home/sensho/sb-image-decoding/
 preprocessed_data_dir: ${root}data/preprocessed/thingsmeg/
 
 # skip_meg: True

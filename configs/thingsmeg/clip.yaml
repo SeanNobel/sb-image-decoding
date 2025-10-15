@@ -1,7 +1,7 @@
 # ==== Preprocessing ==== #
 preproc_name: 3_caption # 2_huggingface
 
-root: /home/sensho/neuro-diffusion/ # /home/sensho/brain2face/
+root: /home/sensho/sb-image-decoding/ # /home/sensho/brain2face/
 
 thingsmeg_dir: ${root}data/raw/thingsmeg/ # /mnt/tsukuyomi/things-meg/
 meg_dir: ${thingsmeg_dir}derivatives/preprocessed/

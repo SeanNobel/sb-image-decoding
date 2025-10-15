@@ -1,7 +1,7 @@
 # ==== Preprocessing ==== #
 # preproc_name: 0_init # 2_subject
 
-root: /home/sensho/neuro-diffusion
+root: /home/sensho/sb-image-decoding/
 data_dir: ${root}/data/preprocessed/thingseeg2/
 # preproc_dir: ${root}/data/preprocessed/imageneteeg/
 
@@ -195,9 +195,7 @@ sweep_config:
 
 # ==== Evaluation ==== #
 eval:
-  loss: clip
-  pos_enc: sine_abs
-  clip_temp_init: 4.8
+  seed: 0
 
 save_vision: False
 as_h5: True

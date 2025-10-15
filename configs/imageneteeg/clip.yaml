@@ -1,7 +1,7 @@
 # ==== Preprocessing ==== #
 preproc_name: 0_init # 2_subject
 
-root: /home/sensho/neuro-diffusion
+root: /home/sensho/sb-image-decoding # Edit
 eeg_dir: ${root}/data/raw/eeg_cvpr_2017/
 preproc_dir: ${root}/data/preprocessed/imageneteeg/
 
